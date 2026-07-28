@@ -3451,7 +3451,7 @@ function FruitPickDialog({ title, note, current, onPick, onCancel }) {
         {note && <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-3">{note}</p>}
         {/* 実を選び直すたびに、木がふわっと差し替わる */}
         <div key={sel} className="flex justify-center mb-2 ft-grow">
-          <FruitTree stage={10} fruit={sel} size={128} />
+          <FruitTree stage={10} fruit={sel} size={150} />
         </div>
         <div className="grid grid-cols-5 gap-1.5 mb-5">
           {FRUITS.map((f) => (
@@ -3505,7 +3505,7 @@ function HarvestDialog({ fruit, onReplant, onLater }) {
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop text-center">
         <div className="flex justify-center mb-1 ft-grow">
-          <FruitTree stage={10} fruit={fruit} size={140} />
+          <FruitTree stage={10} fruit={fruit} size={160} />
         </div>
         <h3 className="font-display text-[18px] text-neutral-900 mb-1.5">{f.label}を収穫しました</h3>
         <p className="text-[13.5px] text-neutral-600 leading-relaxed mb-5">
@@ -3521,13 +3521,19 @@ function HarvestDialog({ fruit, onReplant, onLater }) {
 }
 
 /* ホーム画面の果樹。イラストとみことばだけを見せる */
+/* ホーム画面の木の大きさ。
+   **植える前と植えたあとで必ず同じ数にすること。**
+   別々にしていたため、植える前だけ小さく見えていた。
+   ここはホーム画面のいちばん大事な絵なので、大きめにとってある */
+const TREE_SIZE = 220;
+
 function TreeArea({ records, garden, onStart, onHarvest }) {
   const cycle = garden.cycle;
   if (!cycle) {
     return (
-      <button onClick={onStart} className="w-full flex flex-col items-center pt-2 pb-6 ft-tap">
-        <span className="flex ft-grow"><FruitTree stage={1} fruit="apple" size={168} /></span>
-        <span className="text-[13.5px] font-bold text-th-900 mt-2">種を選んで植える</span>
+      <button onClick={onStart} className="w-full flex flex-col items-center pt-1 pb-4 ft-tap">
+        <span className="flex ft-grow"><FruitTree stage={1} fruit="apple" size={TREE_SIZE} /></span>
+        <span className="text-[15.5px] font-bold text-th-900 mt-1">種を選んで植える</span>
       </button>
     );
   }
@@ -3545,21 +3551,21 @@ function TreeArea({ records, garden, onStart, onHarvest }) {
           ひとつの要素に2つ重ねると、あとに書いたほうだけが効いてしまうため */}
       <span className="flex ft-grow">
         <span className={"flex " + (canHarvest ? "ft-breathe" : "")}>
-          <FruitTree stage={st.n} fruit={cycle.fruit} size={190} sparkle={hasToday} />
+          <FruitTree stage={st.n} fruit={cycle.fruit} size={TREE_SIZE} sparkle={hasToday} />
         </span>
       </span>
-      <p className="text-[13.5px] text-neutral-700 leading-relaxed whitespace-pre-line text-center mt-3 px-2">{st.verse}</p>
-      <p className="text-[12.5px] text-neutral-500 mt-2">{st.ref}</p>
+      <p className="text-[13.5px] text-neutral-700 leading-relaxed whitespace-pre-line text-center mt-2 px-2">{st.verse}</p>
+      <p className="text-[12.5px] text-neutral-500 mt-1.5">{st.ref}</p>
     </>
   );
   if (canHarvest) {
     return (
-      <button onClick={onHarvest} className="w-full flex flex-col items-center pt-2 pb-6 ft-tap" aria-label="実を収穫する">
+      <button onClick={onHarvest} className="w-full flex flex-col items-center pt-1 pb-4 ft-tap" aria-label="実を収穫する">
         {inner}
       </button>
     );
   }
-  return <div className="w-full flex flex-col items-center pt-2 pb-6">{inner}</div>;
+  return <div className="w-full flex flex-col items-center pt-1 pb-4">{inner}</div>;
 }
 
 /* ＋を押したときに出る、記録の種類を選ぶシート */
@@ -3641,7 +3647,8 @@ function DraftDialog({ draft, onResume, onDiscard, names }) {
 
 function HomeScreen({ records, prefs, onOpenBackup, garden, onStartCycle, onHarvest }) {
   return (
-    <div className="pb-28">
+    /* 下の帯（タブ）に隠れない分だけの余白。＋ボタンが無い画面なので pb-28 まで要らない */
+    <div className="pb-20">
       <ScreenHeader title="ホーム" />
       {/* ヘッダは動かさず、中身だけがそっと立ち上がる（ヘッダは sticky なので動かすとぶれる） */}
       <div className="px-5 pt-4 ft-rise">
