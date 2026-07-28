@@ -7,9 +7,12 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Footprints" />
-    <link rel="manifest" href="./manifest.json" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="icon" type="image/png" href="./icon-192.png" />
+    <!-- アイコンの名前には版数（-v2）を付けている。
+         同じ名前のまま絵だけ差し替えても、端末とGitHubに残った古い画像が
+         出続けてアイコンが変わらない。描き替えたら必ず版数を上げること -->
+    <link rel="manifest" href="./manifest-v2.json" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon-v2.png" />
+    <link rel="icon" type="image/png" href="./icon-192-v2.png" />
     <title>Footprints</title>
     <style>
       .boot { font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
