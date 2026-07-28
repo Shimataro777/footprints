@@ -468,7 +468,15 @@ const PREF_KEY = "bible-tracker-prefs";
 /* motion＝画面の動きの演出。true で有効。
    古い保存内容には motion が入っていないが、loadPrefs で既定値と混ぜるため
    これまで使っていた人も自動的に「あり」で始まる */
-const DEFAULT_PREFS = { theme: "teal", showMascots: true, lastBackup: null, motion: true };
+/* fontSize＝文字の大きさ。"s"（これまでと同じ）／"m"／"l"。
+   古い保存内容には入っていないが、loadPrefs で既定値と混ぜるため
+   これまで使っていた人はこれまでどおりの大きさで始まる */
+const DEFAULT_PREFS = { theme: "teal", showMascots: true, lastBackup: null, motion: true, fontSize: "s" };
+const FONT_SIZES = [
+  { key: "s", label: "小" },
+  { key: "m", label: "中" },
+  { key: "l", label: "大" },
+];
 const BACKUP_REMIND_DAYS = 14; // これだけ日が空いたら、そっとお知らせする
 /* 前回の書き出し以降に作られた・書き直された記録の数 */
 function unsavedCount(records, prefs) {
@@ -958,7 +966,11 @@ function CountBadge({ n, size = 22, className = "" }) {
   );
 }
 
-const inputCls = "w-full rounded-xl bg-white border-2 border-neutral-300 px-3.5 py-3 text-[15.5px] leading-normal text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-4 focus:ring-th-800/20 focus:border-th-800 h-[48px]";
+/* 入力欄の文字は必ず16px以上にすること（ft-input が受け持つ）。
+   iPhoneのSafariは、16pxより小さい入力欄に触れると画面を勝手に拡大する。
+   拡大されると横にも動くようになり、書きづらくなる。
+   文字の大きさの設定（小・中・大）からも、入力欄だけは外している */
+const inputCls = "w-full rounded-xl bg-white border-2 border-neutral-300 px-3.5 py-3 ft-input leading-normal text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-4 focus:ring-th-800/20 focus:border-th-800 h-[48px]";
 
 /* 共通のボタン配色。主要な操作はすべて同じ深いティールに統一している */
 /* iPhoneの切り欠き（ノッチ・ダイナミックアイランド）に隠れないための上余白。
@@ -1322,7 +1334,24 @@ function DateInput({ className, value, onChange }) {
 
 function TextArea({ value, onChange, className, minRows, ...rest }) {
   const ref = useRef(null);
-  const resize = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; };
+  /* 中身に合わせて高さを測り直す。
+     測るときに一度 height を auto に戻すが、そのあいだ欄が縮むため、
+     何もしないとまわりの巻き物（スクロール位置）が動いてしまう。
+     「長い文章を書き始めると画面が勝手にずれる」のはこれが原因だった。
+     測る前に位置を覚えておき、直後に戻すこと */
+  const resize = () => {
+    const el = ref.current;
+    if (!el) return;
+    const holders = [];
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (p.scrollHeight > p.clientHeight + 1) holders.push([p, p.scrollTop]);
+    }
+    const winY = window.scrollY;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+    holders.forEach(([p, top]) => { if (p.scrollTop !== top) p.scrollTop = top; });
+    if (window.scrollY !== winY) window.scrollTo(0, winY);
+  };
   useEffect(() => { resize(); }, [value]);
   const style = minRows ? { minHeight: `${minRows * 1.7 + 1.5}em` } : undefined;
   /* rows={1} は必ず付けること。
@@ -1542,27 +1571,11 @@ function HighlightedText({ text, className }) {
 function highlightRefs(text) {
   if (!text) return null;
   const marks = [];
-  /* 聖句に追加できる範囲（本文＋引用）をまるごと色付けする */
-  const parenAll = /\([^)]*\)/g;
-  const blankLine = /\n[ \t]*\n/g;
-  let mm, lastEnd = 0;
-  while ((mm = parenAll.exec(text)) !== null) {
-    const refs = parseBibleRefs(mm[0]);
-    const citeEnd = mm.index + mm[0].length;
-    if (refs.length > 0) {
-      if (refs[0].verse) {
-        const zone = text.slice(lastEnd, mm.index);
-        let bl, start = lastEnd;
-        blankLine.lastIndex = 0;
-        while ((bl = blankLine.exec(zone)) !== null) start = lastEnd + bl.index + bl[0].length;
-        while (start < mm.index && /\s/.test(text[start])) start++;
-        marks.push([start, citeEnd]);
-      } else {
-        marks.push([mm.index, citeEnd]);
-      }
-      lastEnd = citeEnd;
-    }
-  }
+  /* 「聖句に追加」の対象になる範囲（本文＋聖書箇所）を、そのまま色付けの範囲に使う。
+     判定は splitByCitations に任せること。ここに同じ判定を書き直すと、
+     色が付く範囲と聖句に追加される範囲が食い違う */
+  splitByCitations(text).forEach((seg) => marks.push([seg.start, seg.end]));
+  /* 引用になっていない、ただの聖書箇所も色を付ける（本文のない箇所など） */
   let m;
   REF_REGEX.lastIndex = 0;
   while ((m = REF_REGEX.exec(text)) !== null) {
@@ -1594,34 +1607,67 @@ function RecognizedRefs({ text }) {
   return <div className="flex flex-wrap gap-1.5 mt-2">{refs.map((r, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-th-50 text-th-800 border border-th-300 ft-chip">{formatRef(r)}</span>)}</div>;
 }
 /* テキスト中に含まれる聖句引用ごとに、その部分だけを聖句へ追加できるようにする */
+/* 本文と、そのあとに続く聖書箇所を「ひとつの引用」として切り出す。
+   ここが「聖句に追加」の対象範囲になり、閲覧画面の色付けもこの範囲を使う。
+   **同じ判定を2か所に書かないこと。** 別々に書くと、色が付く範囲と
+   聖句に追加される範囲が食い違う（実際そうなっていた）。
+
+   引用と見なす書き方は2つ。
+   ① 括弧に入れる … 本文（ヨハネの福音書 3:16）
+   ② 行の終わりに置く … 本文のあとで改行し、その行に「ヨハネの第一の手紙 2:27」
+   ②は、行の終わりであることを条件にしている。
+   文の途中に出てくる箇所（「ヨハネ 3:16 について考えた」など）まで拾うと、
+   引用でないものを引用と見なしてしまうため。
+   返すのは { start, end, text, ref }。start〜end が色を付ける範囲 */
 function splitByCitations(text) {
   if (!text) return [];
-  const parenRegex = /\([^)]*\)/g;
   const blankLineRegex = /\n[ \t]*\n/g;
+
+  /* 引用の目印になる箇所を、文の前から順に集める */
+  const marks = [];
+  /* 全角の（）も見る。日本語で書くとこちらのほうが多い */
+  const paren = /[（(][^）)]*[）)]/g;
+  let m;
+  while ((m = paren.exec(text)) !== null) {
+    const refs = parseBibleRefs(m[0]);
+    if (refs.length && refs[0].verse) marks.push({ from: m.index, to: m.index + m[0].length, ref: refs[0] });
+  }
+  const inParen = (i) => marks.some((k) => i >= k.from && i < k.to);
+  /* 先に位置だけ全部集めてから中身を調べること。
+     調べる途中で parseBibleRefs を呼ぶと、同じ正規表現の読み取り位置が
+     先頭に戻されて、いつまでも終わらなくなる */
+  const hits = [];
+  REF_REGEX.lastIndex = 0;
+  let r;
+  while ((r = REF_REGEX.exec(text)) !== null) hits.push({ index: r.index, str: r[0] });
+  for (const h of hits) {
+    if (inParen(h.index)) continue;
+    const refs = parseBibleRefs(h.str);
+    if (!refs.length || !refs[0].verse) continue;
+    /* その行の終わりに置かれているか。うしろは空白か、訳名のような短い添え書きだけ */
+    const after = text.slice(h.index + h.str.length);
+    const rest = (after.match(/^[^\n]*/) || [""])[0];
+    if (!/^[\s　]*(（[^）\n]{0,12}）|\([^)\n]{0,12}\))?[\s　]*$/.test(rest)) continue;
+    marks.push({ from: h.index, to: h.index + h.str.length + rest.length, ref: refs[0] });
+  }
+  marks.sort((a, b) => a.from - b.from);
+
   const segments = [];
-  let match;
   let lastEnd = 0;
-  while ((match = parenRegex.exec(text)) !== null) {
-    const refs = parseBibleRefs(match[0]);
-    if (refs.length > 0) {
-      const citationEnd = match.index + match[0].length;
-      // 直前の引用（または文頭）から今回の引用までの範囲で、一番近い空行の直後を段落の開始位置とする
-      const zone = text.slice(lastEnd, match.index);
-      let blankMatch;
-      let start = lastEnd;
-      blankLineRegex.lastIndex = 0;
-      while ((blankMatch = blankLineRegex.exec(zone)) !== null) {
-        start = lastEnd + blankMatch.index + blankMatch[0].length;
-      }
-      /* 聖句に追加できるのは、節まで書かれている引用だけ。
-         追加する文は「本文＋書 章:節」の形にし、括弧や訳名（SKY17など）は含めない */
-      if (refs[0].verse) {
-        const body = text.slice(start, match.index).trim();
-        const chunk = (body ? body + "\n" : "") + formatRef(refs[0]);
-        if (body) segments.push({ text: chunk, ref: refs[0] });
-      }
-      lastEnd = citationEnd;
+  for (const k of marks) {
+    if (k.from < lastEnd) continue;
+    /* 直前の引用（または文頭）から今回までの範囲で、いちばん近い空行の直後が本文の始まり */
+    const zone = text.slice(lastEnd, k.from);
+    let start = lastEnd, bl;
+    blankLineRegex.lastIndex = 0;
+    while ((bl = blankLineRegex.exec(zone)) !== null) start = lastEnd + bl.index + bl[0].length;
+    while (start < k.from && /\s/.test(text[start])) start++;
+    const body = text.slice(start, k.from).trim();
+    if (body) {
+      /* 聖句に追加する文は「本文＋書 章:節」の形にし、括弧や訳名は含めない */
+      segments.push({ start, end: k.to, text: body + "\n" + formatRef(k.ref), ref: k.ref });
     }
+    lastEnd = k.to;
   }
   return segments;
 }
@@ -1659,8 +1705,35 @@ function useClosing(onClose, ms = 230) {
   return [closing, startClose];
 }
 
+/* 重なって出る画面が開いているあいだ、うしろの画面（本体）を動かないようにする。
+   iPhoneでは、入力欄に触れてキーボードが出るとき、
+   手前が position:fixed でも、うしろの画面のほうが勝手に動いてしまう。
+   「ちょうど良い位置に合わせて書き始めたのに、位置がずれる」のはこれが原因。
+   何枚か重なることがあるので、枚数を数えて最後の1枚が閉じたときだけ元に戻す */
+let overlayCount = 0;
+function useLockBackground() {
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const body = document.body;
+    if (overlayCount === 0) {
+      body.dataset.ftPrevOverflow = body.style.overflow || "";
+      body.style.overflow = "hidden";
+    }
+    overlayCount += 1;
+    return () => {
+      overlayCount -= 1;
+      if (overlayCount <= 0) {
+        overlayCount = 0;
+        body.style.overflow = body.dataset.ftPrevOverflow || "";
+        delete body.dataset.ftPrevOverflow;
+      }
+    };
+  }, []);
+}
+
 /* 重なって出る画面の入れ物。出るときと戻るときの動きを受け持つ */
 function OverlayScreen({ from = "right", closing, children, zIndex = 50 }) {
+  useLockBackground();
   const inCls = from === "bottom" ? "anim-up" : "anim-right";
   const outCls = from === "bottom" ? "anim-down-out" : "anim-right-out";
   return (
@@ -4500,6 +4573,25 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
           </div>
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
+            文字の大きさ
+            <HelpTip label="文字の大きさ" text="画面の文字をまとめて大きくできます。入力欄の文字は、書きやすさのため大きさを変えていません。" />
+          </h3>
+          <div className="flex gap-1.5 mb-6">
+            {FONT_SIZES.map((f) => {
+              const on = (prefDraft.fontSize || "s") === f.key;
+              return (
+                <button key={f.key} type="button" onClick={() => setPrefDraft({ ...prefDraft, fontSize: f.key })}
+                  aria-pressed={on}
+                  className={"flex-1 " + BTN_H + " rounded-xl border-2 font-bold ft-tap "
+                    + (on ? "border-th-800 bg-th-800 text-white" : "border-neutral-200 bg-white text-neutral-600")}>
+                  {/* 見本になるよう、それぞれの大きさで書いてある */}
+                  <span style={{ fontSize: f.key === "s" ? 14.5 : f.key === "m" ? 16.5 : 19 }}>{f.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
             動きの演出
             <HelpTip label="動きの演出" text="切ると、画面の切り替わりや、押したときに沈む動きが止まります。読み込み中の表示だけは残ります。" />
           </h3>
@@ -5642,7 +5734,9 @@ function AppMain() {
     <TypeNameContext.Provider value={typeDesc.name}>
     <MenuContext.Provider value={() => setMenuOpen(true)}>
     {/* ft-root ＝ 動きの効き先。「動きの演出」を切ると ft-still が付いて、すべて止まる */}
-    <div className={"min-h-screen bg-neutral-50 font-sans text-neutral-900 ft-root " + (prefs.motion === false ? "ft-still" : "")}>
+    <div className={"min-h-screen bg-neutral-50 font-sans text-neutral-900 ft-root "
+      + (prefs.motion === false ? "ft-still " : "")
+      + ("ft-font-" + (prefs.fontSize || "s"))}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@700;900&family=Noto+Sans+JP:wght@400;500;600;700;800&display=swap');
         .font-display { font-family: 'Zen Kaku Gothic New', 'Noto Sans JP', sans-serif; font-weight: 900; }
@@ -5814,6 +5908,48 @@ function AppMain() {
         /* 収穫できるときだけ、木がゆっくり息をして「押せる」ことを伝える */
         @keyframes ft-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.035); } }
         .ft-breathe { animation: ft-breathe 3.4s ease-in-out infinite; transform-origin: 50% 90%; }
+
+        /* ============================================================
+           文字の大きさ（小・中・大）
+           クラス名ごとに大きさを上書きする形にしている。
+           画面のあちこちに書かれた text-[…] を全部書き換えるのは現実的でなく、
+           ここ1か所で切り替えられるほうが取り違えが起きない。
+           **入力欄（.ft-input）は対象にしない。**
+           16pxより小さいとiPhoneが勝手に画面を拡大してしまうため、常に16pxに固定する
+           ============================================================ */
+        .ft-input { font-size: 16px; }
+
+        /* 文字の大きさ「中」。小さい字はしっかり、もともと大きい見出しは控えめに増やす。
+           全部を同じ倍率で拡げると、見出しが画面の幅に収まらなくなる */
+        .ft-font-m .text-\\[11\\.5px\\] { font-size: 13px; }
+        .ft-font-m .text-\\[12\\.5px\\] { font-size: 14px; }
+        .ft-font-m .text-\\[13\\.5px\\] { font-size: 15.5px; }
+        .ft-font-m .text-\\[14\\.5px\\] { font-size: 16.5px; }
+        .ft-font-m .text-\\[15\\.5px\\] { font-size: 17.5px; }
+        .ft-font-m .text-\\[16px\\] { font-size: 17px; }
+        .ft-font-m .text-\\[17px\\] { font-size: 18.5px; }
+        .ft-font-m .text-\\[18px\\] { font-size: 19.5px; }
+        .ft-font-m .text-\\[20px\\] { font-size: 21.5px; }
+        .ft-font-m .text-\\[24px\\] { font-size: 26px; }
+        .ft-font-m .text-\\[26px\\] { font-size: 28px; }
+        .ft-font-m .text-\\[27px\\] { font-size: 29px; }
+        .ft-font-m .text-\\[28px\\] { font-size: 30px; }
+
+        /* 文字の大きさ「大」。小さい字はしっかり、もともと大きい見出しは控えめに増やす。
+           全部を同じ倍率で拡げると、見出しが画面の幅に収まらなくなる */
+        .ft-font-l .text-\\[11\\.5px\\] { font-size: 15px; }
+        .ft-font-l .text-\\[12\\.5px\\] { font-size: 16px; }
+        .ft-font-l .text-\\[13\\.5px\\] { font-size: 17.5px; }
+        .ft-font-l .text-\\[14\\.5px\\] { font-size: 19px; }
+        .ft-font-l .text-\\[15\\.5px\\] { font-size: 20px; }
+        .ft-font-l .text-\\[16px\\] { font-size: 18.5px; }
+        .ft-font-l .text-\\[17px\\] { font-size: 20px; }
+        .ft-font-l .text-\\[18px\\] { font-size: 21px; }
+        .ft-font-l .text-\\[20px\\] { font-size: 23.5px; }
+        .ft-font-l .text-\\[24px\\] { font-size: 28px; }
+        .ft-font-l .text-\\[26px\\] { font-size: 30.5px; }
+        .ft-font-l .text-\\[27px\\] { font-size: 31.5px; }
+        .ft-font-l .text-\\[28px\\] { font-size: 32.5px; }
 
         /* --- 下からせり上がる小窓 ---
            高さは dvh（いま実際に見えている高さ）で決めること。
