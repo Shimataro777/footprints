@@ -5111,16 +5111,24 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
 /* ============================================================
    バックアップ画面
    ============================================================ */
-function BackupScreen({ records, artworks, garden, tagMaster, onClose, onRestore, onBackedUp }) {
+function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, typeDesc, onClose, onRestore, onBackedUp }) {
   const [closing, close] = useClosing(onClose);
   const readableText = useMemo(() => buildBackupText(records), [records]);
   const jsonText = useMemo(() => JSON.stringify({
-    app: "bible-tracker", version: 4, exportedAt: new Date().toISOString(),
+    app: "bible-tracker", version: 5, exportedAt: new Date().toISOString(),
     records, artworks: artworks || [], garden: garden || DEFAULT_GARDEN,
     /* タグの一覧も一緒に書き出す。これが無いと、機種を変えたときに
        まだ使っていないタグが消え、また作り直すことになる */
     tags: tagMaster || [],
-  }, null, 2), [records, artworks, garden, tagMaster]);
+    /* 画面の設定も一緒に書き出す（version 5 から）。
+       テーマ色・文字の大きさ・記録の種類の名前・ひとことなど、
+       せっかく整えたものが機種を変えるたびに消えてしまわないように。
+       最終バックアップ日（lastBackup）は入れない。
+       それは「この端末でいつ書き出したか」であって、持ち運ぶものではないため */
+    prefs: prefs ? { ...prefs, lastBackup: undefined } : undefined,
+    captions: captions || undefined,
+    typeDesc: typeDesc || undefined,
+  }, null, 2), [records, artworks, garden, tagMaster, prefs, captions, typeDesc]);
   const [previewMode, setPreviewMode] = useState("readable"); // readable | json
   const [previewOpen, setPreviewOpen] = useState(false);
   const [msg, setMsg] = useState(null); // {kind:'ok'|'warn'|'err', text}
@@ -5219,15 +5227,22 @@ function BackupScreen({ records, artworks, garden, tagMaster, onClose, onRestore
     reader.onload = async () => {
       try {
         const data = JSON.parse(reader.result);
-        let recs, arts = null, gard = null, tgs = null;
+        let recs, arts = null, gard = null, tgs = null, setting = null;
         if (Array.isArray(data)) recs = data;                       // 旧形式（記録のみ）
         else if (data && Array.isArray(data.records)) {             // 新形式
           recs = data.records;
           if (Array.isArray(data.artworks)) arts = data.artworks;
           if (data.garden && typeof data.garden === "object") gard = data.garden;
           if (Array.isArray(data.tags)) tgs = data.tags;            // タグの一覧（version 4 から）
+          /* 画面の設定（version 5 から）。古いファイルには入っていないので、
+             そのときは今の設定をそのまま残す */
+          setting = {
+            prefs: data.prefs && typeof data.prefs === "object" ? data.prefs : null,
+            captions: data.captions && typeof data.captions === "object" ? data.captions : null,
+            typeDesc: data.typeDesc && typeof data.typeDesc === "object" ? data.typeDesc : null,
+          };
         } else throw new Error("invalid");
-        await onRestore(recs, arts, gard, tgs);
+        await onRestore(recs, arts, gard, tgs, setting);
         setMsg({
           kind: "ok",
           text: `${recs.length}件の記録` + (arts && arts.length ? `と${arts.length}枚のイラスト` : "") + "を読み込みました。",
@@ -5267,6 +5282,14 @@ function BackupScreen({ records, artworks, garden, tagMaster, onClose, onRestore
               )}
               <span className="text-[12.5px] text-neutral-500 ml-auto">約{sizeKb}KB</span>
             </div>
+            {/* 何が入っているかを言葉でも書いておく。
+                「設定は戻るのか」が分からないままだと、機種変更のときに不安になる */}
+            <div className="mt-2">
+              <p className="text-[12.5px] text-neutral-500 leading-relaxed">
+                記録・イラスト・果樹・タグの一覧に加えて、テーマ色や文字の大きさ、
+                記録の種類の名前、ひとことなどの設定も一緒に保存されます。
+              </p>
+</div>
           </div>
 
           <div className="space-y-2.5 mb-4">
@@ -5692,7 +5715,21 @@ function AppMain() {
     if (dup) { setDupState({ pending, existing: dup, fromForm: false }); return; }
     commitSaveOrAdd(pending);
   };
-  const handleRestore = async (importedRecords, importedArtworks, importedGarden, importedTags) => {
+  const handleRestore = async (importedRecords, importedArtworks, importedGarden, importedTags, importedSetting) => {
+    /* 画面の設定を戻す。入っていない項目は今のまま残すこと。
+       最終バックアップ日だけは、この端末のものを守る */
+    if (importedSetting) {
+      if (importedSetting.prefs) {
+        await savePrefs({ ...prefs, ...importedSetting.prefs, lastBackup: prefs.lastBackup });
+      }
+      if (importedSetting.captions) await saveCaptions({ ...captions, ...importedSetting.captions });
+      if (importedSetting.typeDesc) {
+        await saveTypeDesc({
+          name: { ...typeDesc.name, ...(importedSetting.typeDesc.name || {}) },
+          desc: { ...typeDesc.desc, ...(importedSetting.typeDesc.desc || {}) },
+        });
+      }
+    }
     /* タグの一覧は足し合わせる。今ある分を消さないこと */
     if (Array.isArray(importedTags) && importedTags.length) {
       setTagMaster((prev) => {
@@ -6089,7 +6126,8 @@ function AppMain() {
             onCancel={() => setDupState(null)} />
         )}
 
-        {backupOpen && <BackupScreen records={records} artworks={artworks} garden={garden} tagMaster={tagMaster} onClose={() => setBackupOpen(false)} onRestore={handleRestore} onBackedUp={markBackedUp} />}
+        {backupOpen && <BackupScreen records={records} artworks={artworks} garden={garden} tagMaster={tagMaster}
+          prefs={prefs} captions={captions} typeDesc={typeDesc} onClose={() => setBackupOpen(false)} onRestore={handleRestore} onBackedUp={markBackedUp} />}
 
         {artOpen && <ArtworkScreen artworks={artworks} onChange={saveArtworks} captions={captions} onSaveCaptions={saveCaptions} prefs={prefs} onSavePrefs={savePrefs} onClose={() => setArtOpen(false)} typeDesc={typeDesc} onSaveTypeDesc={saveTypeDesc} />}
 
