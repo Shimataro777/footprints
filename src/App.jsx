@@ -5825,6 +5825,13 @@ function AppMain() {
   useEffect(() => { loadArtworks().then(setArtworks); }, []);
   useEffect(() => { loadCaptions().then(setCaptions); }, []);
   useEffect(() => { loadTagMaster().then(setTagMaster); }, []);
+  /* 読み込みが終わったら、起動中の覆いをふわっと外す。
+     覆いは index.html 側にあるので、そこが用意した手だてを呼ぶだけ。
+     アーティファクト版には覆いが無いので、無いときは何もしない */
+  useEffect(() => {
+    if (!loaded) return;
+    if (typeof window !== "undefined" && typeof window.__ftHideSplash === "function") window.__ftHideSplash();
+  }, [loaded]);
   useEffect(() => { loadPrefs().then(setPrefs); }, []);
   useEffect(() => { loadGarden().then(setGarden); }, []);
   useEffect(() => { loadTypeDesc().then(setTypeDesc); }, []);
@@ -6087,7 +6094,11 @@ function AppMain() {
     }
   };
 
-  if (!loaded) return <div className="min-h-screen bg-neutral-50 flex items-center justify-center"><p className="text-neutral-500 text-[14.5px] font-bold">読み込み中…</p></div>;
+  if (!loaded) {
+    /* ここは起動中の覆い（index.html の #splash）に隠れているので、
+       中身は見えない。覆いと同じ色にしておき、外れる瞬間に色が変わらないようにする */
+    return <div className="min-h-screen" style={{ background: "#F2FAFE" }} />;
+  }
 
   return (
     <ArtworkContext.Provider value={artworks}>
