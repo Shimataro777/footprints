@@ -767,6 +767,59 @@ function HelpTip({ text, label }) {
 }
 
 /* ============================================================
+   アプリの中でウェブサイトを見る小窓
+   下からせり上がって開く。外のブラウザに飛ばされると、
+   書きかけの記録に戻るのが面倒になるため。
+   ※サイトによっては「他所の画面の中に表示されること」を断っている。
+     その場合は中身が真っ白になるので、いつでも外のブラウザで
+     開き直せるボタンを必ず添えておくこと
+   ============================================================ */
+function WebViewSheet({ url, onClose }) {
+  const [closing, close] = useClosing(onClose, 200);
+  const [loading, setLoading] = useState(true);
+  const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } })();
+
+  return (
+    <div className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+      style={{ zIndex: 2147483200 }} onClick={close}>
+      <div className="absolute inset-0 bg-black/45" />
+      <div className={"relative w-full max-w-2xl bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-tall "
+        + (closing ? "anim-sheet-out" : "anim-sheet")}
+        onClick={(e) => e.stopPropagation()}>
+
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-neutral-200 shrink-0">
+          <span className="flex-1 min-w-0">
+            <span className="block text-[14.5px] font-bold text-neutral-800 truncate">{host}</span>
+            <span className="block text-[11.5px] text-neutral-400 truncate">{url}</span>
+          </span>
+          <a href={url} target="_blank" rel="noopener noreferrer" aria-label="ブラウザで開く"
+            className={BTN_SECONDARY + " " + BTN_H + " px-3 text-[13.5px] shrink-0"}>ブラウザで開く</a>
+          <button type="button" onClick={close} aria-label="閉じる"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon shrink-0"><X size={22} /></button>
+        </div>
+
+        <div className="relative flex-1 min-h-0 bg-neutral-50">
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center text-th-800">
+              <Spinner size={34} />
+            </div>
+          )}
+          <iframe title={host} src={url} onLoad={() => setLoading(false)}
+            className="w-full h-full border-0 relative"
+            referrerPolicy="no-referrer"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" />
+        </div>
+
+        <p className="shrink-0 text-[12.5px] text-neutral-500 px-4 py-2 border-t border-neutral-200 text-center"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}>
+          表示されないサイトは「ブラウザで開く」からご覧ください
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    記録をちょっと見る小窓
    「この箇所を含む記録」から呼ぶ。画面を移らずに中身を確かめられる。
    画面ごと移ってしまうと、読んでいた記録に戻るのが面倒なため
@@ -1673,29 +1726,63 @@ function MarkButton({ on, onClick, label, icon }) {
 /* 本文の中の聖書箇所を、テーマカラーで見えるようにする。
    括弧つきの引用（節まであるもの）はまとめて色を付け、
    本文中に出てくる「ヨハネの福音書 3:16」のような書き方にも色を付ける */
+/* 本文のURLを押したときに呼ばれる。AppMain が中身を配る。
+   受け取り手がいないときは、これまでどおり外のブラウザで開く */
+const WebViewContext = React.createContext(null);
+
 /* 引用（本文＋聖書箇所）と、それ以外の文に切り分ける。
-   引用の範囲は splitByCitations にまかせること（「聖句に追加」と同じ範囲になる） */
+   引用の範囲は splitByCitations にまかせること（「聖句に追加」と同じ範囲になる）。
+
+   区切りのところにある空行は、文字として残さず「空ける行数」として持ち回る。
+   ブロックの上端・下端に改行を残しても、端末によって表示されたりされなかったりして
+   間隔が安定しないため。書いたとおりの空きが出るように、あとで余白に直す */
 function splitByQuote(text) {
-  const trimEdges = (t) => t.replace(/^[\r\n]+/, "").replace(/[\s\r\n]+$/, "");
-  const out = [];
+  const raw = [];
   let pos = 0;
   splitByCitations(text).forEach((seg) => {
-    if (seg.start > pos) out.push({ quote: false, text: text.slice(pos, seg.start) });
-    out.push({ quote: true, text: text.slice(seg.start, seg.end) });
+    if (seg.start > pos) raw.push({ quote: false, text: text.slice(pos, seg.start) });
+    raw.push({ quote: true, text: text.slice(seg.start, seg.end) });
     pos = seg.end;
   });
-  if (pos < text.length) out.push({ quote: false, text: text.slice(pos) });
-  return out.map((b) => ({ ...b, text: trimEdges(b.text) })).filter((b) => b.text !== "");
+  if (pos < text.length) raw.push({ quote: false, text: text.slice(pos) });
+
+  const countNl = (t) => (t.match(/\n/g) || []).length;
+  const parts = raw.map((b) => {
+    const lead = (b.text.match(/^(?:[ \t]*\n)+/) || [""])[0];
+    const trail = (b.text.match(/(?:\n[ \t]*)+$/) || [""])[0];
+    const body = b.text.slice(lead.length, b.text.length - trail.length);
+    return { quote: b.quote, body, lead: countNl(lead), trail: countNl(trail) };
+  });
+
+  const out = [];
+  let carry = 0;   // 前の区切りから持ち越した改行の数
+  parts.forEach((p2) => {
+    const before = carry + p2.lead;
+    if (p2.body.trim() === "") { carry = before + p2.trail; return; }  // 空行だけの部分は間隔として次へ回す
+    /* 区切りそのもので1行ぶん改まるので、その1つを引いた残りを空ける */
+    out.push({ quote: p2.quote, text: p2.body, gapBefore: out.length === 0 ? 0 : Math.max(0, before - 1) });
+    carry = p2.trail;
+  });
+  return out;
 }
 
 /* 文の中のURLを押せるリンクにし、聖書箇所には印を付けて描く。
    withRefColor が false のときは箇所の色付けをしない（引用の中は全体を整えるため） */
+/* 本文の中のURL。押すと、アプリの中で開く小窓を呼び出す。
+   色はテーマカラーではなく落ち着いた青にしている。
+   テーマカラーだと聖書箇所の色と紛らわしく、本文の中で目立ちすぎるため */
+function InlineLink({ url, children }) {
+  const openWeb = React.useContext(WebViewContext);
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer"
+      onClick={(e) => { if (openWeb) { e.preventDefault(); e.stopPropagation(); openWeb(url); } }}
+      className="ft-link text-sky-700 break-all">{children}</a>
+  );
+}
+
 function renderInline(text, withRefColor) {
   return splitByUrl(text).map((sg, i) => sg.url
-    ? (
-      <a key={i} href={sg.url} target="_blank" rel="noopener noreferrer"
-        className="text-th-800 font-bold underline decoration-th-300 underline-offset-2 break-all">{sg.text}</a>
-    )
+    ? <InlineLink key={i} url={sg.url}>{sg.text}</InlineLink>
     : <React.Fragment key={i}>{withRefColor ? highlightRefs(sg.text) : sg.text}</React.Fragment>);
 }
 
@@ -1706,16 +1793,22 @@ function HighlightedText({ text, className }) {
      渡された指定の文字色だけを差し替えるので、大きさや行間は本文と揃ったまま */
   const quoteClass = (className || "").replace(/text-neutral-\d+/, "text-neutral-600");
 
+  /* かたまりの間隔。書いた空行の数だけ空ける。
+     空行が無いときも、引用と地の文が詰まらないよう最小限の間隔をとる */
+  const gapStyle = (b, i) => (i === 0 ? undefined
+    : { marginTop: b.gapBefore > 0 ? `${(b.gapBefore * 1.625).toFixed(2)}em` : "0.625rem" });
+
   return (
-    <div className="space-y-2.5">
+    <div>
       {blocks.map((b, i) => b.quote ? (
         /* 引用ブロック。左に縦線を引き、その分だけ字下げする。
            右端は入れ物の右端のままなので、ふつうの文とぴったり揃う */
-        <div key={i} className="pl-3.5 border-l-[3px] border-th-700/45 rounded-r-sm">
-          <p className={quoteClass + " italic"}>{renderInline(b.text, false)}</p>
+        <div key={i} className="ft-quote rounded-r-sm" style={gapStyle(b, i)}>
+          {/* 斜体にはしない。日本語だと読みづらくなるため（依頼により解除） */}
+          <p className={quoteClass}>{renderInline(b.text, false)}</p>
         </div>
       ) : (
-        <p key={i} className={className}>{renderInline(b.text, true)}</p>
+        <p key={i} className={className} style={gapStyle(b, i)}>{renderInline(b.text, true)}</p>
       ))}
     </div>
   );
@@ -5606,6 +5699,8 @@ function AppMain() {
   const [artOpen, setArtOpen] = useState(false);
   const [gardenOpen, setGardenOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  /* 本文のURLを押したときに、アプリの中で開くサイト */
+  const [webUrl, setWebUrl] = useState(null);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
   const [typeDesc, setTypeDesc] = useState({ desc: { ...DEFAULT_TYPE_DESC }, name: { ...DEFAULT_TYPE_NAME } });
@@ -5914,6 +6009,7 @@ function AppMain() {
     <PrefsContext.Provider value={prefs}>
     <UnsavedContext.Provider value={unsavedNow}>
     <TypeNameContext.Provider value={typeDesc.name}>
+    <WebViewContext.Provider value={setWebUrl}>
     <MenuContext.Provider value={() => setMenuOpen(true)}>
     {/* ft-root ＝ 動きの効き先。「動きの演出」を切ると ft-still が付いて、すべて止まる */}
     <div className={"min-h-screen bg-neutral-50 font-sans text-neutral-900 ft-root "
@@ -6143,9 +6239,31 @@ function AppMain() {
            探すの絞り込みで、いちばん下のボタンが隠れる原因になっていた */
         .ft-sheet-wrap { position: fixed; left: 0; right: 0; top: 0; height: 100vh; margin: 0; }
         .ft-sheet-box  { max-height: 82vh; }
+        /* 本文の中のリンク。**下線は引かない**（色だけで押せることを示す）。
+           クラスを外すだけでは消えない。<a> はブラウザが既定で下線を引くため、
+           こちらで打ち消しておくこと */
+        .ft-link { text-decoration: none; }
+
+        /* 引用ブロックの左の縦線。
+           **太さ・線種・色をこの1か所で決めること。**
+           Tailwind の border-l-[…] は「太さ」しか決めず、線種は土台の指定に頼る。
+           そのため環境によっては線種が none のままになり、線が出ない。
+           実際、色は当たっているのに太さ0・線種noneで見えない状態になっていた。
+           色はテーマ色を白と混ぜた淡いトーン。透かし（/30など）ではなく
+           混ぜた色にするのは、背景が変わっても濃さが変わらないようにするため。
+           color-mix が使えない場合に備えて、先に単色を置いてある */
+        .ft-quote {
+          border-left: 3px solid var(--th-600);
+          border-left-color: color-mix(in srgb, var(--th-700) 55%, #FFFFFF);
+          padding-left: 14px;
+        }
+
+        /* ウェブサイトを見る小窓は、読むために高めにとる */
+        .ft-sheet-tall { height: 88vh; max-height: 88vh; }
         @supports (height: 100dvh) {
           .ft-sheet-wrap { height: 100dvh; }
           .ft-sheet-box  { max-height: 82dvh; }
+          .ft-sheet-tall { height: 88dvh; max-height: 88dvh; }
         }
         /* 中の「一覧」の場所。**flex-1 を使わないこと。**
            flex-1 は基準の高さが0なので、まわりに余りが無いと高さ0までつぶれ、
@@ -6252,6 +6370,9 @@ function AppMain() {
             onOpenDetail={openDetail} onToggleMark={toggleMark} from={viewingFrom} />
         )}
 
+        {/* いちばん手前に出す。記録を書きながらでも開けるため */}
+        {webUrl && <WebViewSheet url={webUrl} onClose={() => setWebUrl(null)} />}
+
         {draftSaved && <DraftDialog draft={draftSaved} onResume={resumeDraft} onDiscard={discardDraft} names={typeDesc.name} />}
 
         {typePick && <TypePickSheet onPick={startNewOfType} onCancel={() => setTypePick(false)} descs={typeDesc.desc} names={typeDesc.name} />}
@@ -6356,6 +6477,7 @@ function AppMain() {
       </div>
     </div>
     </MenuContext.Provider>
+    </WebViewContext.Provider>
     </TypeNameContext.Provider>
     </UnsavedContext.Provider>
     </PrefsContext.Provider>
