@@ -766,6 +766,29 @@ function HelpTip({ text, label }) {
   );
 }
 
+/* YouTubeの動画ID（11けた）を取り出す。
+   youtu.be／watch?v=／embed／shorts／live のどれでも拾えるようにしている */
+function youtubeIdOf(url) {
+  if (!url) return null;
+  const m = String(url).match(
+    /(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/|v\/))([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+/* 小窓の中で開くためのURL。
+   YouTubeはそのままのURLだと「他所の画面の中に出すこと」を断られ、真っ白になる。
+   埋め込み用のURLに直せば、その場で再生できる。
+   ・rel=0        … 再生後に他人の動画を並べない
+   ・playsinline=1 … iPhoneで全画面に飛ばず、その場で再生する */
+function embedUrlOf(url) {
+  const id = youtubeIdOf(url);
+  if (!id) return { src: url, kind: "web" };
+  let start = "";
+  const t = String(url).match(/[?&](?:t|start)=(\d+)/);
+  if (t) start = `&start=${t[1]}`;
+  return { src: `https://www.youtube.com/embed/${id}?rel=0&playsinline=1${start}`, kind: "youtube" };
+}
+
 /* ============================================================
    アプリの中でウェブサイトを見る小窓
    下からせり上がって開く。外のブラウザに飛ばされると、
@@ -777,19 +800,53 @@ function HelpTip({ text, label }) {
 function WebViewSheet({ url, onClose }) {
   const [closing, close] = useClosing(onClose, 200);
   const [loading, setLoading] = useState(true);
+  /* つまみを下へ払って閉じる。
+     つまみと見出しの帯だけで受けること。中の画面で受けると、
+     ページを下へたどるだけで閉じてしまう */
+  const boxRef = useRef(null);
+  const dragRef = useRef(null);
+  const onDragStart = (e) => {
+    dragRef.current = { y: e.clientY, moved: 0 };
+    e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onDragMove = (e) => {
+    const d = dragRef.current;
+    if (!d || !boxRef.current) return;
+    d.moved = Math.max(0, e.clientY - d.y);
+    boxRef.current.style.transform = `translateY(${d.moved}px)`;
+    boxRef.current.style.transition = "none";
+  };
+  const onDragEnd = () => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (!d || !boxRef.current) return;
+    if (d.moved > 90) { close(); return; }
+    boxRef.current.style.transition = "transform .22s cubic-bezier(.22,1,.36,1)";
+    boxRef.current.style.transform = "";
+  };
+  const { src, kind } = embedUrlOf(url);
   const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } })();
+  const title = kind === "youtube" ? "YouTube" : host;
 
   return (
     <div className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
       style={{ zIndex: 2147483200 }} onClick={close}>
       <div className="absolute inset-0 bg-black/45" />
-      <div className={"relative w-full max-w-2xl bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-tall "
+      <div ref={boxRef} className={"relative w-full max-w-2xl bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-tall "
         + (closing ? "anim-sheet-out" : "anim-sheet")}
         onClick={(e) => e.stopPropagation()}>
 
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-neutral-200 shrink-0">
+        {/* つまみ。ここを下へ払っても閉じられる */}
+        <div className="shrink-0 pt-2 pb-1 flex justify-center cursor-grab"
+          style={{ touchAction: "none" }}
+          onPointerDown={onDragStart} onPointerMove={onDragMove}
+          onPointerUp={onDragEnd} onPointerCancel={onDragEnd}>
+          <span className="w-10 h-1.5 rounded-full bg-neutral-300" />
+        </div>
+
+        <div className="flex items-center gap-2 px-4 pb-2.5 border-b border-neutral-200 shrink-0">
           <span className="flex-1 min-w-0">
-            <span className="block text-[14.5px] font-bold text-neutral-800 truncate">{host}</span>
+            <span className="block text-[14.5px] font-bold text-neutral-800 truncate">{title}</span>
             <span className="block text-[11.5px] text-neutral-400 truncate">{url}</span>
           </span>
           <a href={url} target="_blank" rel="noopener noreferrer" aria-label="ブラウザで開く"
@@ -804,15 +861,24 @@ function WebViewSheet({ url, onClose }) {
               <Spinner size={34} />
             </div>
           )}
-          <iframe title={host} src={url} onLoad={() => setLoading(false)}
+          {/* 動画をその場で再生できるように、全画面と再生の許可を渡している。
+              allow-top-navigation は入れない。中のページからアプリごと
+              別の場所へ飛ばされてしまうため */}
+          <iframe title={title} src={src} onLoad={() => setLoading(false)}
             className="w-full h-full border-0 relative"
             referrerPolicy="no-referrer"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" />
+            allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write"
+            allowFullScreen
+            /* allow-popups は入れない。中のページが別窓を開こうとして、
+               iPhoneが確認を出すもとになる。allow-top-navigation も入れない */
+            sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" />
         </div>
 
         <p className="shrink-0 text-[12.5px] text-neutral-500 px-4 py-2 border-t border-neutral-200 text-center"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}>
-          表示されないサイトは「ブラウザで開く」からご覧ください
+{kind === "youtube"
+            ? "うまく再生できないときは「ブラウザで開く」からご覧ください"
+            : "表示されないサイトは「ブラウザで開く」からご覧ください"}
         </p>
       </div>
     </div>
@@ -1773,10 +1839,18 @@ function splitByQuote(text) {
    テーマカラーだと聖書箇所の色と紛らわしく、本文の中で目立ちすぎるため */
 function InlineLink({ url, children }) {
   const openWeb = React.useContext(WebViewContext);
+  /* **<a href> にしないこと。**
+     リンクとして置くと、iPhoneが「このリンクを開きますか？」という確認を出し、
+     2回押さないと開けなくなる（別のアプリで開くかどうかを尋ねてくる）。
+     ただの押しボタンにすれば、1回押すだけでその場の小窓に出せる。
+     受け取り手がいない場所では、これまでどおり外のブラウザで開く */
+  if (!openWeb) {
+    return <a href={url} target="_blank" rel="noopener noreferrer" className="ft-link text-sky-700 break-all">{children}</a>;
+  }
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer"
-      onClick={(e) => { if (openWeb) { e.preventDefault(); e.stopPropagation(); openWeb(url); } }}
-      className="ft-link text-sky-700 break-all">{children}</a>
+    <button type="button"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); openWeb(url); }}
+      className="ft-link text-sky-700 break-all text-left align-baseline">{children}</button>
   );
 }
 
@@ -3323,14 +3397,19 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
               <TextArea value={record.note} onChange={(e) => set({ note: e.target.value })} minRows={2} />
               <RefInserter onInsert={(ref) => set({ note: appendRef(record.note, ref) })} />
             </Field>
-            <div className="relative rounded-xl border-2 border-neutral-300 bg-white p-4 mb-3">
-              <label className="flex items-center gap-2.5 cursor-pointer select-none min-h-[40px] mb-1">
-                <input type="checkbox" checked={!!record.monthYear}
-                  onChange={(e) => e.target.checked ? wantMonth(curYear(), curMonth()) : (setSteal((p) => ({ ...p, month: null })), set({ monthYear: null, monthMonth: null }))}
-                  className="w-5 h-5 accent-th-700" />
-                <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><BookMarked size={15} className="text-th-800" /> 今月の聖句にする</span>
-              </label>
-              <span className="absolute right-3 top-3"><HelpTip label="今月の聖句" text="選んだ月のあいだ、ホーム画面に表示されます。" /></span>
+            {/* 高さは決め打ちにしない。上下の余白だけを指定して、
+                中の文字の大きさに合わせて自然に伸び縮みするようにしている。
+                「？」も横に並べて、全部が上下の真ん中でそろう */}
+            <div className="rounded-xl border-2 border-neutral-300 bg-white px-3.5 py-2 mb-2.5">
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none flex-1 min-w-0 py-1.5">
+                  <input type="checkbox" checked={!!record.monthYear}
+                    onChange={(e) => e.target.checked ? wantMonth(curYear(), curMonth()) : (setSteal((p) => ({ ...p, month: null })), set({ monthYear: null, monthMonth: null }))}
+                    className="w-5 h-5 accent-th-700 shrink-0" />
+                  <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><BookMarked size={15} className="text-th-800 shrink-0" /> 今月の聖句にする</span>
+                </label>
+                <HelpTip label="今月の聖句" text="選んだ月のあいだ、ホーム画面に表示されます。" />
+              </div>
               {record.monthYear && (
                 <div className="flex gap-2 mt-2">
                   <div className="flex-1"><DrumSelect value={record.monthYear} onChange={(v) => wantMonth(v, record.monthMonth)} placeholder="年" title="年を選択" options={yearOptions.map((y) => ({ value: y, label: `${y}年` }))} /></div>
@@ -3338,14 +3417,16 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
                 </div>
               )}
             </div>
-            <div className="relative rounded-xl border-2 border-th-700/30 bg-th-50/40 p-4">
-              <label className="flex items-center gap-2.5 cursor-pointer select-none min-h-[40px] mb-1">
-                <input type="checkbox" checked={!!record.themeYear}
-                  onChange={(e) => e.target.checked ? wantYear(curYear()) : (setSteal((p) => ({ ...p, year: null })), set({ themeYear: null }))}
-                  className="w-5 h-5 accent-th-700" />
-                <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><Sparkles size={15} className="text-th-800" /> 今年の聖句にする</span>
-              </label>
-              <span className="absolute right-3 top-3"><HelpTip label="今年の聖句" text="1年を通して、ホーム画面のいちばん上に表示されます。" /></span>
+            <div className="rounded-xl border-2 border-th-700/30 bg-th-50/40 px-3.5 py-2">
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none flex-1 min-w-0 py-1.5">
+                  <input type="checkbox" checked={!!record.themeYear}
+                    onChange={(e) => e.target.checked ? wantYear(curYear()) : (setSteal((p) => ({ ...p, year: null })), set({ themeYear: null }))}
+                    className="w-5 h-5 accent-th-700 shrink-0" />
+                  <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><Sparkles size={15} className="text-th-800 shrink-0" /> 今年の聖句にする</span>
+                </label>
+                <HelpTip label="今年の聖句" text="1年を通して、ホーム画面のいちばん上に表示されます。" />
+              </div>
               {record.themeYear && (
                 <div className="mt-2">
                   <DrumSelect value={record.themeYear} onChange={(v) => wantYear(v)} placeholder="年" title="年を選択" options={yearOptions.map((y) => ({ value: y, label: `${y}年` }))} />
@@ -3983,16 +4064,20 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
         {/* 通読のつづきは、記録画面のいちばん上に置く */}
         <ContinueCard records={records} onStart={onStartReading} />
         <h3 className="text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-3">最近の記録</h3>
-        <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5">
-          {recent.length === 0 && (
-            <div className="rounded-2xl border-2 border-dashed border-neutral-300 p-6 text-center flex flex-col items-center">
-              <Mascot seed="records-empty" size={140} withNotes />
-              <p className="text-[14.5px] font-bold text-neutral-700 mb-1 mt-2">最初の一歩を記録しませんか</p>
-              <p className="text-[13.5px] text-neutral-500">右下の＋から、今日読んだ箇所や心に残ったことばを残せます。</p>
-            </div>
-          )}
-          {recent.map((r) => <RecordCard key={r.id} r={r} onClick={() => onOpenDetail(r)} />)}
-        </div>
+        {/* 記録がまだ無いときの案内は、2列の並びの中に入れない。
+            中に入れると、横長の画面で左半分だけに寄ってしまう。
+            記録があるときの2列はそのまま */}
+        {recent.length === 0 ? (
+          <div className="rounded-2xl border-2 border-dashed border-neutral-300 p-6 text-center flex flex-col items-center">
+            <Mascot seed="records-empty" size={140} withNotes />
+            <p className="text-[14.5px] font-bold text-neutral-700 mb-1 mt-2">最初の一歩を記録しませんか</p>
+            <p className="text-[13.5px] text-neutral-500">右下の＋から、今日読んだ箇所や心に残ったことばを残せます。</p>
+          </div>
+        ) : (
+          <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5">
+            {recent.map((r) => <RecordCard key={r.id} r={r} onClick={() => onOpenDetail(r)} />)}
+          </div>
+        )}
         {recent.length > 0 && (
           <div className="flex flex-col items-center pt-6 pb-2 opacity-75">
             <Mascot seed="records-end" size={96} />
@@ -4229,7 +4314,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags }) {
         {searching || !searched ? null : (
         <div key={resultKey} className="ft-seq space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5 lg:items-start">
           {sortedRecords.length === 0 && (
-            <div className="flex flex-col items-center py-6 lg:col-span-2 no-anim">
+            <div className="flex flex-col items-center py-6 lg:col-span-2 ft-noresult">
               <Mascot seed="search-empty" size={118} />
               <p className="text-[14.5px] text-neutral-500 mt-1">該当する記録がありません</p>
             </div>
@@ -6239,6 +6324,17 @@ function AppMain() {
            探すの絞り込みで、いちばん下のボタンが隠れる原因になっていた */
         .ft-sheet-wrap { position: fixed; left: 0; right: 0; top: 0; height: 100vh; margin: 0; }
         .ft-sheet-box  { max-height: 82vh; }
+        /* --- 見つからなかったときの現れ方 ---
+           ぱっと切り替わると「本当に探したのか」が分かりにくい。
+           絵がふわりと出て、少し遅れて文が続くようにする */
+        @keyframes ft-noresult {
+          from { opacity: 0; transform: translateY(10px) scale(0.96); }
+          to   { opacity: 1; transform: none; }
+        }
+        .ft-noresult > * { animation: ft-noresult 0.42s cubic-bezier(0.22,1,0.36,1) backwards; }
+        .ft-noresult > *:nth-child(1) { animation-delay: 0.04s; }
+        .ft-noresult > *:nth-child(2) { animation-delay: 0.18s; }
+
         /* 本文の中のリンク。**下線は引かない**（色だけで押せることを示す）。
            クラスを外すだけでは消えない。<a> はブラウザが既定で下線を引くため、
            こちらで打ち消しておくこと */
@@ -6259,11 +6355,11 @@ function AppMain() {
         }
 
         /* ウェブサイトを見る小窓は、読むために高めにとる */
-        .ft-sheet-tall { height: 88vh; max-height: 88vh; }
+        .ft-sheet-tall { height: 90vh; max-height: 90vh; }
         @supports (height: 100dvh) {
           .ft-sheet-wrap { height: 100dvh; }
           .ft-sheet-box  { max-height: 82dvh; }
-          .ft-sheet-tall { height: 88dvh; max-height: 88dvh; }
+          .ft-sheet-tall { height: 90dvh; max-height: 90dvh; }
         }
         /* 中の「一覧」の場所。**flex-1 を使わないこと。**
            flex-1 は基準の高さが0なので、まわりに余りが無いと高さ0までつぶれ、
