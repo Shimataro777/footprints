@@ -1673,21 +1673,51 @@ function MarkButton({ on, onClick, label, icon }) {
 /* 本文の中の聖書箇所を、テーマカラーで見えるようにする。
    括弧つきの引用（節まであるもの）はまとめて色を付け、
    本文中に出てくる「ヨハネの福音書 3:16」のような書き方にも色を付ける */
+/* 引用（本文＋聖書箇所）と、それ以外の文に切り分ける。
+   引用の範囲は splitByCitations にまかせること（「聖句に追加」と同じ範囲になる） */
+function splitByQuote(text) {
+  const trimEdges = (t) => t.replace(/^[\r\n]+/, "").replace(/[\s\r\n]+$/, "");
+  const out = [];
+  let pos = 0;
+  splitByCitations(text).forEach((seg) => {
+    if (seg.start > pos) out.push({ quote: false, text: text.slice(pos, seg.start) });
+    out.push({ quote: true, text: text.slice(seg.start, seg.end) });
+    pos = seg.end;
+  });
+  if (pos < text.length) out.push({ quote: false, text: text.slice(pos) });
+  return out.map((b) => ({ ...b, text: trimEdges(b.text) })).filter((b) => b.text !== "");
+}
+
+/* 文の中のURLを押せるリンクにし、聖書箇所には印を付けて描く。
+   withRefColor が false のときは箇所の色付けをしない（引用の中は全体を整えるため） */
+function renderInline(text, withRefColor) {
+  return splitByUrl(text).map((sg, i) => sg.url
+    ? (
+      <a key={i} href={sg.url} target="_blank" rel="noopener noreferrer"
+        className="text-th-800 font-bold underline decoration-th-300 underline-offset-2 break-all">{sg.text}</a>
+    )
+    : <React.Fragment key={i}>{withRefColor ? highlightRefs(sg.text) : sg.text}</React.Fragment>);
+}
+
 function HighlightedText({ text, className }) {
   if (!text) return null;
-  /* URLは押せるリンクにしたいので、先にURLの前後で切り分け、
-     URLでない部分だけ、これまでどおり聖書箇所の色付けをかける */
-  const segs = splitByUrl(text);
+  const blocks = splitByQuote(text);
+  /* 引用の中は、本文よりすこし落ち着いた色にする。
+     渡された指定の文字色だけを差し替えるので、大きさや行間は本文と揃ったまま */
+  const quoteClass = (className || "").replace(/text-neutral-\d+/, "text-neutral-600");
 
   return (
-    <p className={className}>
-      {segs.map((sg, i) => sg.url
-        ? (
-          <a key={i} href={sg.url} target="_blank" rel="noopener noreferrer"
-            className="text-th-800 font-bold underline decoration-th-300 underline-offset-2 break-all">{sg.text}</a>
-        )
-        : <React.Fragment key={i}>{highlightRefs(sg.text)}</React.Fragment>)}
-    </p>
+    <div className="space-y-2.5">
+      {blocks.map((b, i) => b.quote ? (
+        /* 引用ブロック。左に縦線を引き、その分だけ字下げする。
+           右端は入れ物の右端のままなので、ふつうの文とぴったり揃う */
+        <div key={i} className="pl-3.5 border-l-[3px] border-th-700/45 rounded-r-sm">
+          <p className={quoteClass + " italic"}>{renderInline(b.text, false)}</p>
+        </div>
+      ) : (
+        <p key={i} className={className}>{renderInline(b.text, true)}</p>
+      ))}
+    </div>
   );
 }
 
