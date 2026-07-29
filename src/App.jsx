@@ -1233,9 +1233,10 @@ function WheelColumn({ items, value, onChange, minWidth = 72 }) {
   );
 }
 
-function WheelSheet({ title, onClose, onConfirm, children }) {
+/* zIndex ＝ 重なり順。ほかの小窓の上にさらに重ねるときは、大きい数を渡すこと */
+function WheelSheet({ title, onClose, onConfirm, children, zIndex = 2147483000 }) {
   return (
-    <div className="ft-sheet-wrap flex items-end justify-center" style={{ zIndex: 2147483000 }} onClick={onClose}>
+    <div className="ft-sheet-wrap flex items-end justify-center" style={{ zIndex }} onClick={onClose}>
       <div className="absolute inset-0 bg-black/40" />
       <div className="relative w-full max-w-lg bg-white rounded-t-2xl border-t border-neutral-200 shadow-xl anim-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200">
@@ -1285,48 +1286,171 @@ function DrumSelect({ value, onChange, options, placeholder = "選択", title, c
 }
 
 /* 日付：年・月・日の3連ドラム。onChangeは従来通り e.target.value 形式で返す */
+/* ============================================================
+   カレンダーの見出し（＜ 年月 今日 ＞）と、年月をまとめて選ぶ小窓。
+   実績画面のカレンダーと、日付を選ぶ欄で共通に使う。
+   **同じものを2か所に書かないこと。** 押しやすさや動きが片方だけ古くなる
+   ============================================================ */
+function MonthNavHeader({ label, onPrev, onNext, onJump, onToday }) {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <button type="button" onClick={onPrev} aria-label="前へ"
+        className="min-w-[56px] min-h-[56px] flex items-center justify-center rounded-2xl border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 ft-tap ft-tap-icon shadow-sm"><ChevronLeft size={26} /></button>
+      <div className="flex items-center gap-1 min-w-0">
+        <button type="button" onClick={onJump} aria-label="年月を選ぶ"
+          className="flex items-center gap-1 px-2 min-h-[44px] rounded-lg hover:bg-neutral-100 ft-tap">
+          <span className="font-display text-[17px] text-neutral-900 whitespace-nowrap">{label}</span>
+          <ChevronDown size={16} className="text-neutral-500 shrink-0" />
+        </button>
+        {onToday && (
+          <button type="button" onClick={onToday}
+            className="min-h-[36px] px-2.5 rounded-lg text-[12.5px] font-bold text-th-800 hover:bg-th-50 ft-tap">今日</button>
+        )}
+      </div>
+      <button type="button" onClick={onNext} aria-label="次へ"
+        className="min-w-[56px] min-h-[56px] flex items-center justify-center rounded-2xl border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 ft-tap ft-tap-icon shadow-sm"><ChevronRight size={26} /></button>
+    </div>
+  );
+}
+
+/* 年と月をドラムで選ぶ小窓。
+   zIndex は、重ねる相手より大きい数を渡すこと（日付を選ぶ小窓の上に出すため） */
+function MonthJumpSheet({ year, month, years, onClose, onConfirm, zIndex }) {
+  const [y, setY] = useState(year);
+  const [m, setM] = useState(month);
+  return (
+    <WheelSheet title="表示する期間" onClose={onClose} onConfirm={() => onConfirm(y, m)} zIndex={zIndex}>
+      <WheelColumn minWidth={96} value={y} onChange={setY} items={years.map((v) => ({ value: v, label: `${v}年` }))} />
+      <WheelColumn minWidth={78} value={m} onChange={setM} items={Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1}月` }))} />
+    </WheelSheet>
+  );
+}
+
+/* 年の候補。いまの年と、示している年のまわりを並べる */
+function jumpYears(shownY, extra = []) {
+  const set = new Set([new Date().getFullYear(), shownY, ...extra]);
+  const arr = [...set].filter((n) => !Number.isNaN(n)).sort((a, b) => a - b);
+  const lo = arr[0] - 1, hi = arr[arr.length - 1] + 1;
+  return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+}
+
+/* 日付を選ぶ欄。
+   ドラム式だと曜日が分からず「いつの話か」が思い浮かびにくいので、
+   カレンダーから選ぶ形にしている。
+   日付を登録するところは、すべてこの部品を使うこと（記録の日付・探すの期間） */
+const WEEK_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
+const weekColor = (i) => (i === 0 ? "text-rose-600" : i === 6 ? "text-sky-700" : "text-neutral-500");
+
 function DateInput({ className, value, onChange }) {
   const [open, setOpen] = useState(false);
   const today = new Date();
   const parse = (v) => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || "");
-    if (m) return { y: +m[1], mo: +m[2], d: +m[3] };
-    return { y: today.getFullYear(), mo: today.getMonth() + 1, d: today.getDate() };
+    return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
   };
-  const [tmp, setTmp] = useState(() => parse(value));
+  const p = parse(value);
+  /* いま開いている月と、選んでいる日 */
+  const [cursor, setCursor] = useState(() => (p ? { y: p.y, mo: p.mo } : { y: today.getFullYear(), mo: today.getMonth() + 1 }));
+  const [picked, setPicked] = useState(() => value || "");
+  const [closing, close] = useClosing(() => setOpen(false), 200);
+  /* 年月をまとめて選ぶ小窓。日付を選ぶ小窓の上に重ねるので、重なり順を大きくする */
+  const [jumpOpen, setJumpOpen] = useState(false);
 
-  const years = Array.from({ length: 21 }, (_, i) => today.getFullYear() - 12 + i);
-  const months = Array.from({ length: 12 }, (_, i) => i + 1);
-  const daysInMonth = new Date(tmp.y, tmp.mo, 0).getDate();
-  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-
-  const openSheet = () => { setTmp(parse(value)); setOpen(true); };
-  const confirm = () => {
-    const d = Math.min(tmp.d, new Date(tmp.y, tmp.mo, 0).getDate());
-    const str = `${tmp.y}-${String(tmp.mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    onChange && onChange({ target: { value: str } });
-    setOpen(false);
+  const openSheet = () => {
+    const q = parse(value);
+    setCursor(q ? { y: q.y, mo: q.mo } : { y: today.getFullYear(), mo: today.getMonth() + 1 });
+    setPicked(value || "");
+    setOpen(true);
   };
+  const shiftMonth = (delta) => setCursor((c) => {
+    let mo = c.mo + delta, y = c.y;
+    if (mo < 1) { mo = 12; y -= 1; }
+    if (mo > 12) { mo = 1; y += 1; }
+    return { y, mo };
+  });
+  const confirm = () => { onChange && onChange({ target: { value: picked } }); setOpen(false); };
 
-  const p = value ? parse(value) : null;
+  /* その月のマス目。前後の空きは null で埋める */
+  const firstDow = new Date(cursor.y, cursor.mo - 1, 1).getDay();
+  const lastDay = new Date(cursor.y, cursor.mo, 0).getDate();
+  const cells = [...Array(firstDow).fill(null), ...Array.from({ length: lastDay }, (_, i) => i + 1)];
+  const key = (d) => `${cursor.y}-${String(cursor.mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const todayKey = ymd(today);
+
   return (
     <>
       <button type="button" onClick={openSheet}
-        className={"h-[48px] rounded-xl border-2 border-neutral-300 bg-white flex items-center justify-between px-3 text-left " + (className || "w-[170px]")}>
-        <span className={p ? "text-[15.5px] text-neutral-900" : "text-[15.5px] text-neutral-400"}>
+        className={"h-[48px] rounded-xl border-2 border-neutral-300 bg-white flex items-center justify-between px-3 text-left ft-tap ft-tap-card " + (className || "w-[170px]")}>
+        <span className={"text-[15.5px] truncate " + (p ? "text-neutral-900" : "text-neutral-400")}>
           {p ? `${p.y}/${p.mo}/${p.d}` : "日付を選択"}
         </span>
         <ChevronDown size={18} className="text-neutral-500 shrink-0 ml-1" />
       </button>
+
       {open && (
-        <WheelSheet title="日付を選択" onClose={() => setOpen(false)} onConfirm={confirm}>
-          <WheelColumn minWidth={92} value={tmp.y} onChange={(y) => setTmp((t) => ({ ...t, y }))}
-            items={years.map((y) => ({ value: y, label: `${y}年` }))} />
-          <WheelColumn minWidth={72} value={tmp.mo} onChange={(mo) => setTmp((t) => ({ ...t, mo }))}
-            items={months.map((m) => ({ value: m, label: `${m}月` }))} />
-          <WheelColumn minWidth={72} value={Math.min(tmp.d, daysInMonth)} onChange={(d) => setTmp((t) => ({ ...t, d }))}
-            items={days.map((d) => ({ value: d, label: `${d}日` }))} />
-        </WheelSheet>
+        <div className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+          style={{ zIndex: 2147483000 }} onClick={close}>
+          <div className="absolute inset-0 bg-black/45" />
+          <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-box "
+            + (closing ? "anim-sheet-out" : "anim-sheet")}
+            onClick={(e) => e.stopPropagation()}>
+
+            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 shrink-0">
+              <span className="font-display text-[17px] text-neutral-900 tracking-wide">日付を選ぶ</span>
+              <button type="button" onClick={close} aria-label="閉じる"
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={24} /></button>
+            </div>
+
+            <div className="ft-sheet-body overflow-y-auto px-4 py-3">
+              {/* 見出しは実績画面のカレンダーと同じ部品。年月を押すと期間を選べる */}
+              <MonthNavHeader
+                label={`${cursor.y}年 ${cursor.mo}月`}
+                onPrev={() => shiftMonth(-1)}
+                onNext={() => shiftMonth(1)}
+                onJump={() => setJumpOpen(true)}
+                onToday={() => { setCursor({ y: today.getFullYear(), mo: today.getMonth() + 1 }); setPicked(todayKey); }}
+              />
+
+              <div className="grid grid-cols-7 gap-1 text-center text-[12.5px] font-bold mb-1">
+                {WEEK_LABELS.map((d, i) => <div key={d} className={weekColor(i)}>{d}</div>)}
+              </div>
+
+              <div className="grid grid-cols-7 gap-1">
+                {cells.map((d, i) => {
+                  if (d === null) return <div key={"e" + i} />;
+                  const ds = key(d);
+                  const isPicked = ds === picked;
+                  const isToday = ds === todayKey;
+                  const dow = (firstDow + d - 1) % 7;
+                  return (
+                    <button key={ds + (isPicked ? "-s" : "")} type="button" onClick={() => setPicked(ds)}
+                      className={"aspect-square min-h-[42px] rounded-lg text-[15.5px] font-bold flex items-center justify-center border-2 ft-tap "
+                        + (isPicked ? "bg-th-800 border-th-800 text-white ft-daypop"
+                          : isToday ? "border-th-300 bg-th-50 " + weekColor(dow)
+                            : "border-transparent " + weekColor(dow) + " hover:bg-neutral-100")}>
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+
+            </div>
+
+            <div className="shrink-0 flex gap-2.5 px-4 py-3 border-t border-neutral-200"
+              style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+              <button type="button" onClick={close} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
+              <button type="button" onClick={confirm} disabled={!picked}
+                className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>決定</button>
+            </div>
+
+            {jumpOpen && (
+              <MonthJumpSheet year={cursor.y} month={cursor.mo} years={jumpYears(cursor.y)}
+                zIndex={2147483100}
+                onClose={() => setJumpOpen(false)}
+                onConfirm={(y, mo) => { setCursor({ y, mo }); setJumpOpen(false); }} />
+            )}
+          </div>
+        </div>
       )}
     </>
   );
@@ -3280,12 +3404,9 @@ function CalendarView({ records, onOpenDay }) {
   const [jumpOpen, setJumpOpen] = useState(false);
   const shownY = viewMode === "week" ? weekStart.getFullYear() : cursor.y;
   const shownM = viewMode === "week" ? weekStart.getMonth() + 1 : cursor.m + 1;
-  const [jumpY, setJumpY] = useState(shownY);
-  const [jumpM, setJumpM] = useState(shownM);
-  const openJump = () => { setJumpY(shownY); setJumpM(shownM); setJumpOpen(true); };
-  const doJump = () => {
-    if (viewMode === "week") setWeekStart(startOfWeek(new Date(jumpY, jumpM - 1, 1)));
-    else setCursor({ y: jumpY, m: jumpM - 1 });
+  const doJump = (y, m) => {
+    if (viewMode === "week") setWeekStart(startOfWeek(new Date(y, m - 1, 1)));
+    else setCursor({ y, m: m - 1 });
     setSelectedDate(null);
     setJumpOpen(false);
   };
@@ -3295,13 +3416,8 @@ function CalendarView({ records, onOpenDay }) {
     else setCursor({ y: now.getFullYear(), m: now.getMonth() });
     setSelectedDate(null);
   };
-  const yearsForJump = (() => {
-    const years = new Set([new Date().getFullYear(), shownY]);
-    records.forEach((r) => { if (r.date) years.add(Number(r.date.slice(0, 4))); });
-    const arr = [...years].filter((n) => !Number.isNaN(n)).sort((a, b) => a - b);
-    const lo = arr[0] - 1, hi = arr[arr.length - 1] + 1;
-    return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
-  })();
+  /* 記録のある年も候補に入れて、古い記録まで一気に飛べるようにする */
+  const yearsForJump = jumpYears(shownY, records.map((r) => (r.date ? Number(r.date.slice(0, 4)) : NaN)));
 
 
   const renderDayCell = (d, ds, key) => {
@@ -3347,29 +3463,23 @@ function CalendarView({ records, onOpenDay }) {
         <button onClick={() => setViewMode("month")} className={"flex-1 min-h-[40px] rounded-lg text-[13.5px] font-bold border-2 ft-tap " + (viewMode === "month" ? "bg-th-50 border-th-800 text-th-900" : "border-neutral-300 text-neutral-600")}>月間</button>
       </div>
 
-      <div className="flex items-center justify-between mb-3">
-        <button onClick={() => shift(-1)} aria-label="前へ" className="min-w-[56px] min-h-[56px] flex items-center justify-center rounded-2xl border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 ft-tap ft-tap-icon shadow-sm"><ChevronLeft size={26} /></button>
-        <div className="flex items-center gap-1">
-          <button onClick={openJump} className="flex items-center gap-1 px-2 min-h-[44px] rounded-lg hover:bg-neutral-100">
-            <span className="font-display text-[17px] text-neutral-900">{shownY}年 {shownM}月</span>
-            <ChevronDown size={16} className="text-neutral-500" />
-          </button>
-          <button onClick={goToday} className="min-h-[36px] px-2.5 rounded-lg text-[12.5px] font-bold text-th-800 hover:bg-th-50">今日</button>
-        </div>
-        <button onClick={() => shift(1)} aria-label="次へ" className="min-w-[56px] min-h-[56px] flex items-center justify-center rounded-2xl border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 ft-tap ft-tap-icon shadow-sm"><ChevronRight size={26} /></button>
-      </div>
+      {/* 見出しは、日付を選ぶ欄と同じ部品 */}
+      <MonthNavHeader
+        label={`${shownY}年 ${shownM}月`}
+        onPrev={() => shift(-1)}
+        onNext={() => shift(1)}
+        onJump={() => setJumpOpen(true)}
+        onToday={goToday}
+      />
 
       {jumpOpen && (
-        <WheelSheet title="表示する期間" onClose={() => setJumpOpen(false)} onConfirm={doJump}>
-          <WheelColumn minWidth={96} value={jumpY} onChange={setJumpY} items={yearsForJump.map((y) => ({ value: y, label: `${y}年` }))} />
-          <WheelColumn minWidth={78} value={jumpM} onChange={setJumpM} items={Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1}月` }))} />
-        </WheelSheet>
+        <MonthJumpSheet year={shownY} month={shownM} years={yearsForJump}
+          onClose={() => setJumpOpen(false)} onConfirm={doJump} />
       )}
 
       <div className="grid grid-cols-7 gap-1 text-center text-[12.5px] font-bold mb-1">
-        {["日", "月", "火", "水", "木", "金", "土"].map((d, i) => (
-          <div key={d} className={i === 0 ? "text-rose-600" : i === 6 ? "text-sky-700" : "text-neutral-500"}>{d}</div>
-        ))}
+        {/* 曜日の並びと色は、日付を選ぶ欄と同じものを使う（食い違わないように） */}
+        {WEEK_LABELS.map((d, i) => <div key={d} className={weekColor(i)}>{d}</div>)}
       </div>
 
       {viewMode === "week" ? (
