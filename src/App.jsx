@@ -3275,7 +3275,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
           <>
             {/* テーマ（礼拝メッセージの題）。
                 ここに聖書箇所を挿入する仕組みは付けない。題を書く場所なので不要 */}
-            <Field label="テーマ" help="礼拝や集会のメッセージの題を書いておくと、あとで見つけやすくなります。">
+            <Field label="テーマ">
               <TextInput value={record.theme || ""} onChange={(e) => set({ theme: e.target.value })} />
             </Field>
             <Field label="聖書箇所">
@@ -3927,14 +3927,16 @@ function TypePickSheet({ onPick, onCancel, descs, names, onImportFile }) {
                   e.target.value = "";
                   if (f) onImportFile(f);
                 }} />
+              {/* 上の種類の行（TypeRow）と、絵と字の位置がぴったりそろうようにする。
+                  枠の大きさ・すきま・字の大きさは TypeRow と同じ数にすること */}
               <button type="button" onClick={() => fileRef.current && fileRef.current.click()}
                 className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-neutral-50 ft-tap ft-tap-card">
-                <span className="w-10 h-10 rounded-xl bg-neutral-100 border border-neutral-200 flex items-center justify-center shrink-0 text-neutral-600">
-                  <Download size={20} />
+                <span className="w-11 h-11 rounded-xl bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-600 shrink-0">
+                  <Download size={22} />
                 </span>
                 <span className="flex-1 min-w-0">
-                  <span className="block text-[15.5px] font-bold text-neutral-800">ファイルから取り込む</span>
-                  <span className="block text-[12.5px] text-neutral-500">ほかの人から受け取った記録など</span>
+                  <span className="block text-[15.5px] font-bold text-neutral-900">ファイルから取り込む</span>
+                  <span className="block text-[12.5px] text-neutral-500 mt-0.5">ほかの人から受け取った記録など</span>
                 </span>
                 <ChevronRight size={18} className="text-neutral-400 shrink-0" />
               </button>
@@ -4610,7 +4612,9 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
         <Pencil size={26} />
       </button>
 
-      <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
+      {/* pb-28 は鉛筆ボタンのぶんの逃げ場。
+          これが無いと、いちばん下に置いたものがボタンに隠れて押せなくなる */}
+      <div className="flex-1 overflow-y-auto px-5 pt-5 pb-28 max-w-2xl mx-auto w-full">
         {/* 上から「見出し」「本文」「関連」の3つのかたまり。
             かたまりの間だけを広くとり、中は詰める。
             余白を項目ごとにばらばらに付けると、詰まって見える所と空きすぎる所が混ざる */}
@@ -6497,7 +6501,8 @@ function AppMain() {
             位置の基準がその入れ物になり、上から落ちてくるように見えてしまう */}
         {tab === "record" && (
           <button onClick={openNew} aria-label="新しい記録を追加"
-            className="fixed bottom-24 right-5 z-20 w-16 h-16 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab">
+            /* z-40 にすること。下の帯（z-30）より小さいと、帯の下に潜って欠けて見える */
+            className="fixed bottom-24 right-5 z-40 w-16 h-16 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab">
             <Plus size={30} />
           </button>
         )}
