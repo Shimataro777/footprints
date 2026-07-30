@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
-  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, Pin, Bookmark
+  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, Pin, Bookmark, Tag
 } from "lucide-react";
 
 /* ============================================================
@@ -513,11 +513,14 @@ async function persistTagMaster(list) {
 }
 
 const CAPTION_KEY = "bible-tracker-captions";
+/* 記録画面の下に添えるひとこと。
+   改行をそのまま活かして、絵の下に中央そろえで出す。
+   変えたいときはカスタマイズ画面から */
 const DEFAULT_CAPTIONS = {
-  reading: "今日も、みことばに触れられましたね",
-  message: "受け取ったことを、書き残しておきましょう",
-  memorization: "くり返し口ずさんでみましょう",
-  memo: "気づいたことを、忘れないうちに",
+  reading: "私はあなたのみことばを心に蓄えます。\nあなたの前に罪ある者とならないために。\n詩篇 119:11",
+  message: "みことばを行う人になりなさい。自分を欺いて、ただ聞くだけの者となってはいけません。\nヤコブの手紙 1:22",
+  memorization: "キリストのことばが、あなたがたのうちに豊かに住むようにしなさい。知恵を尽くして互いに教え、忠告し合い、詩と賛美と霊の歌により、感謝をもって心から神に向かって歌いなさい。\nコロサイ人への手紙 3:16",
+  memo: "主を恐れることは知恵の初め、\n聖なる方を知ることは悟ることである。\n箴言 9:10",
   empty: "",
 };
 async function loadCaptions() {
@@ -2489,6 +2492,7 @@ const MASCOT_SPOTS = [
   { seed: "book-empty", group: "empty", label: "書別・記録なし" },
   /* 通読 */
   { seed: "form-reading", group: "reading", form: "reading" },
+  { seed: "progress-foot", group: "reading", label: "実績の最後" },
   /* 学び */
   { seed: "form-message", group: "message", form: "message" },
   { seed: "records-end", group: "message", label: "記録一覧の最後" },
@@ -2497,7 +2501,8 @@ const MASCOT_SPOTS = [
   { seed: "home-banner", group: "memorization", label: "ホーム上部" },
   /* その他 */
   { seed: "form-memo", group: "memo", form: "memo" },
-  { seed: "progress-foot", group: "memo", label: "実績の最後" },
+  /* 実績の最後の絵は「通読」と同じものを使う（依頼による）。
+     まとまり（group）を変えると、既定の絵もそのまとまりのものになる */
   { seed: "menu", group: "memo", label: "メニュー" },
   { seed: "tags-empty", group: "empty", label: "タグの整理・タグなし" },
   { seed: "help", group: "memo", label: "ヘルプ画面" },
@@ -3320,7 +3325,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
                   <input type="checkbox" checked={!!record.monthYear}
                     onChange={(e) => e.target.checked ? wantMonth(curYear(), curMonth()) : (setSteal((p) => ({ ...p, month: null })), set({ monthYear: null, monthMonth: null }))}
                     className="w-5 h-5 accent-th-700 shrink-0" />
-                  <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><BookMarked size={15} className="text-th-800 shrink-0" /> 今月の聖句にする</span>
+                  <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><Star size={15} className="text-th-800 shrink-0" /> 今月の聖句にする</span>
                 </label>
                 <HelpTip label="今月の聖句" text="選んだ月のあいだ、ホーム画面に表示されます。" />
               </div>
@@ -3337,7 +3342,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
                   <input type="checkbox" checked={!!record.themeYear}
                     onChange={(e) => e.target.checked ? wantYear(curYear()) : (setSteal((p) => ({ ...p, year: null })), set({ themeYear: null }))}
                     className="w-5 h-5 accent-th-700 shrink-0" />
-                  <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><Sparkles size={15} className="text-th-800 shrink-0" /> 今年の聖句にする</span>
+                  <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><Star size={15} className="text-th-800 shrink-0" /> 今年の聖句にする</span>
                 </label>
                 <HelpTip label="今年の聖句" text="1年を通して、ホーム画面のいちばん上に表示されます。" />
               </div>
@@ -3363,7 +3368,8 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
         <div className="flex flex-col items-center pt-3 pb-1">
           <div className="opacity-70"><Mascot seed={"form-" + type} size={84} /></div>
           {((captions && captions[type]) || "").trim() && (
-            <p className="text-[12.5px] text-neutral-500 mt-1 text-center px-4">{captions[type]}</p>
+            /* 改行をそのまま出す。ひとことは何行になってもよい */
+            <p className="text-[12.5px] text-neutral-500 mt-1.5 text-center px-4 leading-relaxed whitespace-pre-line">{captions[type]}</p>
           )}
         </div>
       </div>
@@ -3617,19 +3623,103 @@ function CalendarView({ records, onOpenDay }) {
 }
 
 /* 今年・今月の聖句カード。「続きから」など他のカードと同じ形にそろえている */
-function VerseCard({ label, text, open, onToggle }) {
+/* VerseCard（積み上げて並べる聖句カード）は廃止した。
+   HighlightBanner が「今月／今年」の切り替えで1枚だけ出す作りに変えたため */
+function HighlightBanner({ records }) {
+  /* 今月・今年を切り替えて1枚だけ出す。
+     2枚並べると縦に長くなり、ホーム画面のほかのものが押しやすさを損なうため。
+     はじめは「今月」を選んでおく */
+  const [tab, setTab] = useState("month");
+  const [open, setOpen] = useState(false);
+  /* どちら向きに入れ替わったか。押した側から入ってくるように見せる */
+  const [dir, setDir] = useState("r");
+  const pickTab = (id) => {
+    if (id === tab) return;
+    setDir(id === "year" ? "r" : "l");
+    setTab(id);
+    setOpen(false);
+  };
+  const yearly = useMemo(() => {
+    const list = records.filter((r) => r.type === "memorization" && r.themeYear === curYear());
+    return list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))[0] || null;
+  }, [records]);
+  const monthly = useMemo(() => {
+    const list = records.filter((r) => r.type === "memorization" && r.monthYear === curYear() && r.monthMonth === curMonth());
+    return list[0] || null;
+  }, [records]);
+
+  /* 片方しか無いときは、あるほうを見せる */
+  const shown = tab === "month" ? (monthly || yearly) : (yearly || monthly);
+  const shownIsMonth = shown && shown === monthly;
+
+  if (!yearly && !monthly) {
+    return (
+      <div className="rounded-2xl border-2 border-dashed border-neutral-300 p-3 mb-3 flex items-center gap-3">
+        <Mascot seed="home-banner" size={56} className="shrink-0" />
+        <p className="text-[12.5px] text-neutral-500 flex-1">
+          聖句の記録で「今年の聖句にする」「今月の聖句にする」を選ぶと、ここに出ます。
+        </p>
+      </div>
+    );
+  }
+
+  const Tab = ({ id, children }) => {
+    const on = tab === id;
+    const has = id === "month" ? !!monthly : !!yearly;
+    return (
+      <button type="button" onClick={() => pickTab(id)} aria-pressed={on}
+        className={"flex-1 min-h-[40px] rounded-lg text-[13.5px] font-bold ft-tap transition-colors duration-200 "
+          + (on ? "bg-white text-th-900 shadow-sm" : "text-neutral-500")
+          + (has ? "" : " opacity-45")}>
+        {/* 選ばれた側の字が軽く弾む。下のタブと同じ手ざわり */}
+        <span key={on ? "on" : "off"} className={on ? "inline-block ft-tabpop" : ""}>{children}</span>
+      </button>
+    );
+  };
+
   return (
-    <button onClick={onToggle}
-      className="w-full text-left rounded-2xl border-2 border-th-700/25 bg-white p-4 mb-3 flex items-start gap-3 ft-tap ft-tap-card shadow-sm">
-      <span className="w-11 h-11 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center shrink-0">
-        <BookMarked size={20} className="text-th-800" />
-      </span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-[11.5px] font-bold tracking-wider text-th-800/70">{label}</span>
-        <span className="block text-[14.5px] leading-relaxed text-neutral-900 whitespace-pre-line mt-0.5">{open ? text : clampText(text, 2)}</span>
-      </span>
-      <ChevronDown size={18} className={"text-neutral-400 shrink-0 mt-3 ft-chev " + (open ? "ft-chev-on" : "")} />
-    </button>
+    <div className="rounded-2xl border-2 border-th-700/25 bg-white p-3 mb-3 shadow-sm">
+      {/* 切り替え。両方あるときだけ出す。片方しか無いなら選ぶ意味がない */}
+      {yearly && monthly && (
+        <div className="flex gap-1 p-1 rounded-xl bg-neutral-100 mb-2.5">
+          <Tab id="month">今月</Tab>
+          <Tab id="year">今年</Tab>
+        </div>
+      )}
+      {/* key を変えて、切り替えるたびに入ってくる動きをやり直させる */}
+      <button key={tab} onClick={() => setOpen((v) => !v)}
+        className={"w-full text-left flex items-start gap-3 ft-tap rounded-xl "
+          + (dir === "r" ? "ft-swap-r" : "ft-swap-l")}>
+        <span className="w-11 h-11 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center shrink-0">
+          {/* 聖句の絵は Star。BookMarked は「その他」の絵なので使わない */}
+          <Star size={20} className="text-th-800" />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block text-[11.5px] font-bold tracking-wider text-th-800/70">
+            {shownIsMonth ? `${curMonth()}月の聖句` : `${curYear()}年の聖句`}
+          </span>
+          {/* たたんでいるときは、見た目で2行に切る。
+              **clampText は使わないこと。** あれは「改行の数」で切るので、
+              1行に長々と書かれた聖句だと何も切られず、開いても閉じても同じに見える。
+              line-clamp を使うが、そのときは改行をそのまま出す指定を外すこと。
+              一緒に使うとiPhoneで高さだけ全文ぶん確保されてしまう */}
+          {open ? (
+            <span className="block text-[14.5px] leading-relaxed text-neutral-900 whitespace-pre-line mt-0.5">
+              {shown.text}
+            </span>
+          ) : (
+            /* **block を一緒に付けないこと。** line-clamp は display を
+               -webkit-box に変える指定なので、block と取り合いになり、
+               どちらが勝つかで切れたり切れなかったりする */
+            <span className="text-[14.5px] leading-relaxed text-neutral-900 mt-0.5 line-clamp-2"
+              style={{ minHeight: "3.25em" }}>
+              {shown.text.replace(/\s*\n\s*/g, " ")}
+            </span>
+          )}
+        </span>
+        <ChevronDown size={18} className={"text-neutral-400 shrink-0 mt-3 ft-chev " + (open ? "ft-chev-on" : "")} />
+      </button>
+    </div>
   );
 }
 
@@ -3670,50 +3760,6 @@ function ContinueCard({ records, onStart }) {
       </span>
       <ChevronRight size={20} className="text-neutral-400 shrink-0" />
     </button>
-  );
-}
-
-function HighlightBanner({ records }) {
-  const [openKey, setOpenKey] = useState(null);
-  const yearly = useMemo(() => {
-    const list = records.filter((r) => r.type === "memorization" && r.themeYear === curYear());
-    return list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))[0] || null;
-  }, [records]);
-  const monthly = useMemo(() => {
-    const list = records.filter((r) => r.type === "memorization" && r.monthYear === curYear() && r.monthMonth === curMonth());
-    return list[0] || null;
-  }, [records]);
-
-  if (!yearly && !monthly) {
-    return (
-      <div className="rounded-2xl border-2 border-dashed border-neutral-300 p-3 mb-3 flex items-center gap-3">
-        <Mascot seed="home-banner" size={56} className="shrink-0" />
-        <p className="text-[12.5px] text-neutral-500 flex-1">
-          聖句の記録で「今年の聖句にする」「今月の聖句にする」を選ぶと、ここに出ます。
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      {yearly && (
-        <VerseCard
-          label={`${curYear()}年の聖句`}
-          text={yearly.text}
-          open={openKey === "y"}
-          onToggle={() => setOpenKey(openKey === "y" ? null : "y")}
-        />
-      )}
-      {monthly && (
-        <VerseCard
-          label={`${curMonth()}月の聖句`}
-          text={monthly.text}
-          open={openKey === "m"}
-          onToggle={() => setOpenKey(openKey === "m" ? null : "m")}
-        />
-      )}
-    </>
   );
 }
 
@@ -4026,7 +4072,7 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
         {recent.length > 0 && (
           <div className="flex flex-col items-center pt-6 pb-2 opacity-75">
             <Mascot seed="records-end" size={96} />
-            <p className="text-[12.5px] text-neutral-500 mt-1">ここまで読みました</p>
+            <p className="text-[12.5px] text-neutral-500 mt-1">直近10件はここまで</p>
           </div>
         )}
       </div>
@@ -4423,8 +4469,12 @@ function ProgressScreen({ records, onOpenDetail, onOpenBook, onOpenDay }) {
             );
           })}
         </div>
-        <div className="flex justify-center pt-8 pb-2 opacity-70">
-          <Mascot seed="progress-foot" size={100} />
+        {/* いちばん下に添えることば。絵の下に中央そろえで置く */}
+        <div className="flex flex-col items-center pt-8 pb-2">
+          <div className="opacity-70"><Mascot seed="progress-foot" size={100} /></div>
+          <p className="text-[12.5px] text-neutral-500 mt-1.5 text-center px-4 leading-relaxed whitespace-pre-line">
+            {"聖書はすべて神の霊感によるもので、教えと戒めと矯正と義の訓練のために有益です。\nテモテへの手紙 第二 3:16"}
+          </p>
         </div>
       </div>
     </div>
@@ -4654,12 +4704,12 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
           <div className="mt-5 flex flex-wrap gap-1.5">
             {record.monthYear && (
               <span className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-full bg-th-50 text-th-900 border-2 border-th-200">
-                <BookMarked size={14} /> {record.monthYear}年{record.monthMonth}月の聖句
+                <Star size={14} /> {record.monthYear}年{record.monthMonth}月の聖句
               </span>
             )}
             {record.themeYear && (
               <span className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-full bg-th-800 text-white border-2 border-th-800">
-                <Sparkles size={14} /> {record.themeYear}年の聖句
+                <Star size={14} /> {record.themeYear}年の聖句
               </span>
             )}
           </div>
@@ -6262,6 +6312,16 @@ function AppMain() {
            ここで位置を動かすと、中の sticky なヘッダがぶれてしまう */
         .ft-tabswap { animation: ft-fade-in 0.2s ease-out backwards; }
 
+        /* --- ホームの聖句を「今月／今年」で入れ替えるとき ---
+           押した側から中身がすっと入ってくる。
+           下のタブの切り替え（ft-tabswap）と同じ調子にし、
+           動く量は控えめにしてある。カードの中だけの入れ替えなので、
+           大きく動かすと落ち着かない */
+        @keyframes ft-swap-r { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+        @keyframes ft-swap-l { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+        .ft-swap-r { animation: ft-swap-r 0.26s cubic-bezier(0.22,1,0.36,1) backwards; }
+        .ft-swap-l { animation: ft-swap-l 0.26s cubic-bezier(0.22,1,0.36,1) backwards; }
+
         /* --- 下のタブ：選んだアイコンが軽く弾み、下線が伸びる --- */
         @keyframes ft-tabpop { 0% { transform: scale(1); } 34% { transform: scale(1.24); } 100% { transform: scale(1); } }
         .ft-tabpop { animation: ft-tabpop 0.38s cubic-bezier(0.34,1.3,0.5,1) backwards; }
@@ -6612,7 +6672,7 @@ function AppMain() {
             {
               label: "タグの整理",
               desc: (knownTags.length ? `${knownTags.length}個のタグ` : "タグの追加・名前の変更・削除"),
-              icon: <BookMarked size={20} />,
+              icon: <Tag size={20} />,
               onClick: () => goFromMenu(() => setTagsOpen(true)),
             },
             {
