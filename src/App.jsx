@@ -249,8 +249,8 @@ function recordAllText(r) {
   const parts = [];
   if (r.type === "reading") { parts.push(r.notes); }
   else if (r.type === "message") {
-    parts.push(r.passageText, r.purpose, r.mainVerseText, r.notes);
-
+    /* 新しい項目を足したら、ここにも足すこと。忘れると言葉で探せない */
+    parts.push(r.theme, r.passageText, r.purpose, r.mainVerseText, r.notes);
   }
   else if (r.type === "memorization") { parts.push(r.text, r.note); }
   else if (r.type === "memo") { parts.push(r.notes); }
@@ -766,123 +766,39 @@ function HelpTip({ text, label }) {
   );
 }
 
-/* YouTubeの動画ID（11けた）を取り出す。
-   youtu.be／watch?v=／embed／shorts／live のどれでも拾えるようにしている */
-function youtubeIdOf(url) {
-  if (!url) return null;
-  const m = String(url).match(
-    /(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/|v\/))([A-Za-z0-9_-]{11})/);
-  return m ? m[1] : null;
-}
-
-/* 小窓の中で開くためのURL。
-   YouTubeはそのままのURLだと「他所の画面の中に出すこと」を断られ、真っ白になる。
-   埋め込み用のURLに直せば、その場で再生できる。
-   ・rel=0        … 再生後に他人の動画を並べない
-   ・playsinline=1 … iPhoneで全画面に飛ばず、その場で再生する */
-function embedUrlOf(url) {
-  const id = youtubeIdOf(url);
-  if (!id) return { src: url, kind: "web" };
-  let start = "";
-  const t = String(url).match(/[?&](?:t|start)=(\d+)/);
-  if (t) start = `&start=${t[1]}`;
-  return { src: `https://www.youtube.com/embed/${id}?rel=0&playsinline=1${start}`, kind: "youtube" };
-}
-
 /* ============================================================
-   アプリの中でウェブサイトを見る小窓
-   下からせり上がって開く。外のブラウザに飛ばされると、
-   書きかけの記録に戻るのが面倒になるため。
-   ※サイトによっては「他所の画面の中に表示されること」を断っている。
-     その場合は中身が真っ白になるので、いつでも外のブラウザで
-     開き直せるボタンを必ず添えておくこと
+   記録を1件だけ、ファイルにして受け渡す
+   Footprintsを使う人どうしで記録を分け合うため。
+   バックアップ（全件）とは別物なので、目印（app）も分けてある
    ============================================================ */
-function WebViewSheet({ url, onClose }) {
-  const [closing, close] = useClosing(onClose, 200);
-  const [loading, setLoading] = useState(true);
-  /* つまみを下へ払って閉じる。
-     つまみと見出しの帯だけで受けること。中の画面で受けると、
-     ページを下へたどるだけで閉じてしまう */
-  const boxRef = useRef(null);
-  const dragRef = useRef(null);
-  const onDragStart = (e) => {
-    dragRef.current = { y: e.clientY, moved: 0 };
-    e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const onDragMove = (e) => {
-    const d = dragRef.current;
-    if (!d || !boxRef.current) return;
-    d.moved = Math.max(0, e.clientY - d.y);
-    boxRef.current.style.transform = `translateY(${d.moved}px)`;
-    boxRef.current.style.transition = "none";
-  };
-  const onDragEnd = () => {
-    const d = dragRef.current;
-    dragRef.current = null;
-    if (!d || !boxRef.current) return;
-    if (d.moved > 90) { close(); return; }
-    boxRef.current.style.transition = "transform .22s cubic-bezier(.22,1,.36,1)";
-    boxRef.current.style.transform = "";
-  };
-  const { src, kind } = embedUrlOf(url);
-  const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } })();
-  const title = kind === "youtube" ? "YouTube" : host;
+const ONE_RECORD_APP = "footprints-record";
 
-  return (
-    <div className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
-      style={{ zIndex: 2147483200 }} onClick={close}>
-      <div className="absolute inset-0 bg-black/45" />
-      <div ref={boxRef} className={"relative w-full max-w-2xl bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-tall "
-        + (closing ? "anim-sheet-out" : "anim-sheet")}
-        onClick={(e) => e.stopPropagation()}>
+function oneRecordJson(record) {
+  /* 受け渡しに要らないものは落とす。
+     id は取り込む側で新しく振り直すので入れない（重なりを避けるため）。
+     ピン留めやブックマークも、その人の目印なので持ち出さない */
+  const r = { ...record };
+  delete r.id; delete r.pinned; delete r.bookmarked;
+  return JSON.stringify({
+    app: ONE_RECORD_APP, version: 1, exportedAt: new Date().toISOString(),
+    record: r,
+  }, null, 2);
+}
 
-        {/* つまみ。ここを下へ払っても閉じられる */}
-        <div className="shrink-0 pt-2 pb-1 flex justify-center cursor-grab"
-          style={{ touchAction: "none" }}
-          onPointerDown={onDragStart} onPointerMove={onDragMove}
-          onPointerUp={onDragEnd} onPointerCancel={onDragEnd}>
-          <span className="w-10 h-1.5 rounded-full bg-neutral-300" />
-        </div>
-
-        <div className="flex items-center gap-2 px-4 pb-2.5 border-b border-neutral-200 shrink-0">
-          <span className="flex-1 min-w-0">
-            <span className="block text-[14.5px] font-bold text-neutral-800 truncate">{title}</span>
-            <span className="block text-[11.5px] text-neutral-400 truncate">{url}</span>
-          </span>
-          <a href={url} target="_blank" rel="noopener noreferrer" aria-label="ブラウザで開く"
-            className={BTN_SECONDARY + " " + BTN_H + " px-3 text-[13.5px] shrink-0"}>ブラウザで開く</a>
-          <button type="button" onClick={close} aria-label="閉じる"
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon shrink-0"><X size={22} /></button>
-        </div>
-
-        <div className="relative flex-1 min-h-0 bg-neutral-50">
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center text-th-800">
-              <Spinner size={34} />
-            </div>
-          )}
-          {/* 動画をその場で再生できるように、全画面と再生の許可を渡している。
-              allow-top-navigation は入れない。中のページからアプリごと
-              別の場所へ飛ばされてしまうため */}
-          <iframe title={title} src={src} onLoad={() => setLoading(false)}
-            className="w-full h-full border-0 relative"
-            referrerPolicy="no-referrer"
-            allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write"
-            allowFullScreen
-            /* allow-popups は入れない。中のページが別窓を開こうとして、
-               iPhoneが確認を出すもとになる。allow-top-navigation も入れない */
-            sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" />
-        </div>
-
-        <p className="shrink-0 text-[12.5px] text-neutral-500 px-4 py-2 border-t border-neutral-200 text-center"
-          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}>
-{kind === "youtube"
-            ? "うまく再生できないときは「ブラウザで開く」からご覧ください"
-            : "表示されないサイトは「ブラウザで開く」からご覧ください"}
-        </p>
-      </div>
-    </div>
-  );
+/* 受け取ったファイルから記録を取り出す。
+   1件だけのファイルと、バックアップ（全件）のどちらでも受け取れるようにしておく。
+   人から送られたものがどちらの形かは、送った人しか分からないため */
+function recordsFromFile(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { throw new Error("形式が読み取れません"); }
+  const out = [];
+  if (data && data.record && typeof data.record === "object") out.push(data.record);
+  else if (Array.isArray(data.records)) out.push(...data.records);
+  else if (Array.isArray(data)) out.push(...data);
+  else throw new Error("Footprintsの記録が見つかりません");
+  const cleaned = out.filter((r) => r && typeof r === "object" && r.type);
+  if (!cleaned.length) throw new Error("Footprintsの記録が見つかりません");
+  return cleaned;
 }
 
 /* ============================================================
@@ -1792,10 +1708,6 @@ function MarkButton({ on, onClick, label, icon }) {
 /* 本文の中の聖書箇所を、テーマカラーで見えるようにする。
    括弧つきの引用（節まであるもの）はまとめて色を付け、
    本文中に出てくる「ヨハネの福音書 3:16」のような書き方にも色を付ける */
-/* 本文のURLを押したときに呼ばれる。AppMain が中身を配る。
-   受け取り手がいないときは、これまでどおり外のブラウザで開く */
-const WebViewContext = React.createContext(null);
-
 /* 引用（本文＋聖書箇所）と、それ以外の文に切り分ける。
    引用の範囲は splitByCitations にまかせること（「聖句に追加」と同じ範囲になる）。
 
@@ -1837,20 +1749,17 @@ function splitByQuote(text) {
 /* 本文の中のURL。押すと、アプリの中で開く小窓を呼び出す。
    色はテーマカラーではなく落ち着いた青にしている。
    テーマカラーだと聖書箇所の色と紛らわしく、本文の中で目立ちすぎるため */
+/* 本文の中のURL。
+   色はテーマカラーではなく落ち着いた青。下線は引かない。
+
+   **自前で確認を出さないこと。**
+   iPhoneはリンクを押すと必ず「このリンクを開きますか？」を出すので、
+   こちらでも確認を出すと二度手間になる（実際そうなって戻した）。
+   開いたあとの見せ方（下からせり上がるアプリ内ブラウザ）も端末が受け持つ */
 function InlineLink({ url, children }) {
-  const openWeb = React.useContext(WebViewContext);
-  /* **<a href> にしないこと。**
-     リンクとして置くと、iPhoneが「このリンクを開きますか？」という確認を出し、
-     2回押さないと開けなくなる（別のアプリで開くかどうかを尋ねてくる）。
-     ただの押しボタンにすれば、1回押すだけでその場の小窓に出せる。
-     受け取り手がいない場所では、これまでどおり外のブラウザで開く */
-  if (!openWeb) {
-    return <a href={url} target="_blank" rel="noopener noreferrer" className="ft-link text-sky-700 break-all">{children}</a>;
-  }
   return (
-    <button type="button"
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); openWeb(url); }}
-      className="ft-link text-sky-700 break-all text-left align-baseline">{children}</button>
+    <a href={url} target="_blank" rel="noopener noreferrer"
+      className="ft-link text-sky-700 break-all">{children}</a>
   );
 }
 
@@ -3082,7 +2991,7 @@ function TypeBadge({ type }) { const N = useTypeName(); return <span className={
 function emptyRecord(type) {
   const base = { id: uid(), type, createdAt: new Date().toISOString(), tags: [] };
   if (type === "reading") return { ...base, date: todayStr(), book: "", chapters: [], passageText: "", notes: "" };
-  if (type === "message") return { ...base, date: todayStr(), passageText: "", mainVerseText: "", notes: "" };
+  if (type === "message") return { ...base, date: todayStr(), theme: "", passageText: "", mainVerseText: "", notes: "" };
   if (type === "memorization") return { ...base, date: todayStr(), text: "", note: "", monthYear: null, monthMonth: null, themeYear: null };
   /* その他は「日付・メモ・タグ」だけの、いちばん自由な記録 */
   return { ...base, date: todayStr(), notes: "" };
@@ -3364,6 +3273,11 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
 
         {type === "message" && (
           <>
+            {/* テーマ（礼拝メッセージの題）。
+                ここに聖書箇所を挿入する仕組みは付けない。題を書く場所なので不要 */}
+            <Field label="テーマ" help="礼拝や集会のメッセージの題を書いておくと、あとで見つけやすくなります。">
+              <TextInput value={record.theme || ""} onChange={(e) => set({ theme: e.target.value })} />
+            </Field>
             <Field label="聖書箇所">
               <TextInput value={record.passageText} onChange={(e) => set({ passageText: e.target.value })} />
               <RecognizedRefs text={record.passageText} />
@@ -3505,7 +3419,8 @@ function DuplicateDialog({ existing, onRegister, onViewExisting, onCancel }) {
    ============================================================ */
 function recordTitle(r) {
   if (r.type === "reading") return `${r.book || "（書が未選択）"} ${formatChapterList(r.chapters)}`;
-  if (r.type === "message") return r.passageText || formatRef(primaryRef(r.mainVerseText)) || "学び";
+  /* 学びは、題（テーマ）があればそれがいちばん分かりやすい */
+  if (r.type === "message") return (r.theme || "").trim() || r.passageText || formatRef(primaryRef(r.mainVerseText)) || "学び";
   if (r.type === "memorization") return formatRef(primaryRef(r.text)) || "聖句";
   if (r.type === "memo") return (r.tags || [])[0] || (r.notes || "").split("\n")[0].slice(0, 40) || "その他";
   return "";
@@ -3523,7 +3438,10 @@ function recordSections(r) {
   if (!r) return [];
   if (r.type === "reading") return r.notes ? [{ label: null, text: r.notes }] : [];
   if (r.type === "message") {
+    /* 並びは入力画面と同じ順にすること。見る側と書く側で順が違うと戸惑う */
     const out = [];
+    if (r.theme) out.push({ label: "テーマ", text: r.theme });
+    if (r.passageText) out.push({ label: "聖書箇所", text: r.passageText });
     if (r.mainVerseText) out.push({ label: "主題聖句", text: r.mainVerseText });
     if (r.notes) out.push({ label: "メモ", text: r.notes });
     return out;
@@ -3979,8 +3897,9 @@ function TypeRow({ t, names, descs, onPick }) {
   );
 }
 
-function TypePickSheet({ onPick, onCancel, descs, names }) {
+function TypePickSheet({ onPick, onCancel, descs, names, onImportFile }) {
   const [closing, close] = useClosing(onCancel, 240);
+  const fileRef = useRef(null);
   return (
     <div className="ft-sheet-wrap flex items-end justify-center" style={{ zIndex: 2147483000 }} onClick={close}>
       <div className={"absolute inset-0 bg-black/40 " + (closing ? "anim-fade-out" : "anim-fade")} />
@@ -3997,6 +3916,30 @@ function TypePickSheet({ onPick, onCancel, descs, names }) {
           {TYPE_GUIDE.map((t) => (
             <TypeRow key={t.key} t={t} names={names} descs={descs} onPick={onPick} />
           ))}
+          {/* 人から受け取ったファイルを取り込む口。
+              いちばん下に置く。ふだん使うのは上の種類なので、じゃまにならないように */}
+          {onImportFile && (
+            <>
+              <div className="border-t border-neutral-200 mx-2 my-1.5" />
+              <input ref={fileRef} type="file" accept="application/json,.json" className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files && e.target.files[0];
+                  e.target.value = "";
+                  if (f) onImportFile(f);
+                }} />
+              <button type="button" onClick={() => fileRef.current && fileRef.current.click()}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-neutral-50 ft-tap ft-tap-card">
+                <span className="w-10 h-10 rounded-xl bg-neutral-100 border border-neutral-200 flex items-center justify-center shrink-0 text-neutral-600">
+                  <Download size={20} />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[15.5px] font-bold text-neutral-800">ファイルから取り込む</span>
+                  <span className="block text-[12.5px] text-neutral-500">ほかの人から受け取った記録など</span>
+                </span>
+                <ChevronRight size={18} className="text-neutral-400 shrink-0" />
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -4605,6 +4548,41 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
   const [swapping, setSwapping] = useState(false);
   const [relatedOpen, setRelatedOpen] = useState(false);
   const [peek, setPeek] = useState(null);
+  const [shareMsg, setShareMsg] = useState(null);
+  const shareTimer = useRef(null);
+  const tellShare = (text) => {
+    clearTimeout(shareTimer.current);
+    setShareMsg(text);
+    shareTimer.current = setTimeout(() => setShareMsg(null), 2600);
+  };
+  useEffect(() => () => clearTimeout(shareTimer.current), []);
+
+  /* この記録だけをファイルにして送る。
+     共有シートが使える端末ではそこから、使えない端末では書き出しで受け取れるようにする */
+  const shareOne = async () => {
+    const name = `Footprints-record-${todayStr()}.json`;
+    const text = oneRecordJson(record);
+    try {
+      const file = new File([text], name, { type: "application/json" });
+      if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+        await navigator.share({ files: [file], title: "Footprints の記録" });
+        return;
+      }
+    } catch (e) {
+      /* 取り消されたときもここに来る。書き出しには進まず、そのまま終える */
+      if (e && e.name === "AbortError") return;
+    }
+    try {
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      tellShare("ファイルを書き出しました");
+    } catch (e) {
+      tellShare("書き出せませんでした");
+    }
+  };
   const swapTimer = useRef(null);
   useEffect(() => () => clearTimeout(swapTimer.current), []);
   const goRelated = (r) => {
@@ -4644,6 +4622,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
               label="ピン留め" icon={<Pin size={18} />} />
             <MarkButton on={!!record.bookmarked} onClick={() => onToggleMark(record.id, "bookmarked")}
               label="ブックマーク" icon={<Bookmark size={18} />} />
+            <MarkButton on={false} onClick={shareOne} label="この記録をファイルにして送る" icon={<Upload size={18} />} />
           </span>
         </div>
         <TagChips tags={record.tags} className="mb-5" />
@@ -4708,6 +4687,10 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
             )}
           </div>
         </div>)}
+
+        {shareMsg && (
+          <p className="mt-4 text-[13.5px] font-bold text-th-900 bg-th-50 border-2 border-th-200 rounded-xl px-3.5 py-2.5">{shareMsg}</p>
+        )}
 
         {peek && (
           <RecordPeekDialog record={peek}
@@ -5463,13 +5446,27 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
        記号は半角のハイフンだけにすること。空白や日本語を混ぜると、
        共有や送信の途中で文字が化けることがある */
     const filename = `Footprints-backup-${todayStr()}.json`;
+    /* 読むためのテキストも一緒に出す。
+       **中身は「内容を確認する → 読みやすい形式」と同じものにすること。**
+       別に組み立て直すと、画面で見えているものと食い違う */
+    const txtName = `Footprints-backup-${todayStr()}.txt`;
+    const saveTxt = () => {
+      try {
+        const url = URL.createObjectURL(new Blob([readableText], { type: "text/plain;charset=utf-8" }));
+        const a = document.createElement("a");
+        a.href = url; a.download = txtName;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 20000);
+      } catch (e) { /* 読む用は無くても復元はできるので、失敗しても進める */ }
+    };
 
     // 1) 共有シート（iPhoneはここから「ファイルに保存」で任意の場所に保存できる）
     //    ※ await を挟むと iOS が「ユーザー操作による呼び出し」と認識しなくなるため、最初に試す
     try {
       const file = new File([jsonText], filename, { type: "application/json" });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: "Footprints のバックアップ" });
+      const txtFile = new File([readableText], txtName, { type: "text/plain" });
+      if (navigator.canShare && navigator.canShare({ files: [file, txtFile] })) {
+        await navigator.share({ files: [file, txtFile], title: "Footprints のバックアップ" });
         onBackedUp && onBackedUp();
         setMsg(null);
         return;
@@ -5488,8 +5485,10 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
         const writable = await handle.createWritable();
         await writable.write(jsonText);
         await writable.close();
+        /* 読む用のテキストは、場所を二度も尋ねないよう、そのまま書き出す */
+        saveTxt();
         onBackedUp && onBackedUp();
-        setMsg({ kind: "ok", text: "指定した場所に保存しました。" });
+        setMsg({ kind: "ok", text: "指定した場所に保存しました。読む用のテキストも書き出しました。" });
         return;
       } catch (e) {
         if (e && e.name === "AbortError") return;
@@ -5508,8 +5507,9 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
         a.download = filename;
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 20000);
+        saveTxt();
         onBackedUp && onBackedUp();
-        setMsg({ kind: "ok", text: `「${filename}」を保存しました。` });
+        setMsg({ kind: "ok", text: `「${filename}」と「${txtName}」を保存しました。` });
         return;
       } catch (e) { /* 次の方法へ */ }
     }
@@ -5784,8 +5784,6 @@ function AppMain() {
   const [artOpen, setArtOpen] = useState(false);
   const [gardenOpen, setGardenOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  /* 本文のURLを押したときに、アプリの中で開くサイト */
-  const [webUrl, setWebUrl] = useState(null);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
   const [typeDesc, setTypeDesc] = useState({ desc: { ...DEFAULT_TYPE_DESC }, name: { ...DEFAULT_TYPE_NAME } });
@@ -5971,6 +5969,54 @@ function AppMain() {
     setEditing(emptyRecord(t));
   };
   const closeForm = () => { setEditing(null); setIsNew(false); setTypeLocked(false); clearDraft(); setDraftSaved(null); };
+  const [importMsg, setImportMsg] = useState(null);
+  /* 知らせを出すときは、前の消しタイマーを必ず止めること。
+     止めないと、続けて操作したときに前のタイマーが新しい知らせを消してしまう */
+  const importTimer = useRef(null);
+  const tellImport = (text, ms = 4200) => {
+    clearTimeout(importTimer.current);
+    setImportMsg(text);
+    importTimer.current = setTimeout(() => setImportMsg(null), ms);
+  };
+  useEffect(() => () => clearTimeout(importTimer.current), []);
+  /* 人から受け取ったファイルを取り込む。
+     **いまある記録は消さないこと。** 受け取った分を新しい記録として足すだけにする。
+     idは必ず振り直す。送り手のidをそのまま使うと、
+     たまたま同じidの記録を持っていた場合に上書きしてしまう */
+  const importOneFile = async (file) => {
+    setTypePick(false);
+    try {
+      const text = await file.text();
+      const incoming = recordsFromFile(text);
+      /* **数え上げを setRecords の中でやらないこと。**
+         あの中の処理は2回呼ばれることがあり、数がずれる（実際ずれた）。
+         足すものを先に決めてから、まとめて渡す */
+      const sameKey = (r) => [r.type, r.date || "", recordAllText(r)].join("\u0000");
+      const known = new Set(records.map(sameKey));
+      const add = [];
+      let skipped = 0;
+      incoming.forEach((raw) => {
+        const rec = migrateRecord({ ...raw, id: uid() });
+        delete rec.pinned; delete rec.bookmarked;
+        rec.createdAt = rec.createdAt || new Date().toISOString();
+        /* 中身がそっくり同じものは足さない。同じファイルを二度取り込んだときのため */
+        if (known.has(sameKey(rec))) { skipped += 1; return; }
+        known.add(sameKey(rec));
+        add.push(rec);
+      });
+      const added = add.length;
+      if (added) setRecords((prev) => [...add, ...prev]);
+      /* 受け取った記録に付いていたタグも、選べるように控えておく */
+      incoming.forEach((raw) => normalizeTags(raw.tags).forEach((t) => addTagToMaster(t)));
+      tellImport(added > 0
+        ? `${added}件の記録を取り込みました` + (skipped ? `（${skipped}件は同じ内容のため見送りました）` : "")
+        : "同じ内容の記録がすでにあるため、取り込みませんでした");
+      setTab("record");
+    } catch (e) {
+      tellImport("取り込めませんでした：" + (e && e.message ? e.message : "原因不明"));
+    }
+  };
+
   const openNewReading = (patch) => { setIsNew(true); setTypeLocked(true); setEditing({ ...emptyRecord("reading"), ...patch }); setTab("record"); };
   /* from を指定すると、その向きから画面が出てくる。
      指定しなければ、これまでどおり右から */
@@ -6105,7 +6151,6 @@ function AppMain() {
     <PrefsContext.Provider value={prefs}>
     <UnsavedContext.Provider value={unsavedNow}>
     <TypeNameContext.Provider value={typeDesc.name}>
-    <WebViewContext.Provider value={setWebUrl}>
     <MenuContext.Provider value={() => setMenuOpen(true)}>
     {/* ft-root ＝ 動きの効き先。「動きの演出」を切ると ft-still が付いて、すべて止まる */}
     <div className={"min-h-screen bg-neutral-50 font-sans text-neutral-900 ft-root "
@@ -6365,12 +6410,11 @@ function AppMain() {
           padding-left: 14px;
         }
 
-        /* ウェブサイトを見る小窓は、読むために高めにとる */
-        .ft-sheet-tall { height: 90vh; max-height: 90vh; }
+
         @supports (height: 100dvh) {
           .ft-sheet-wrap { height: 100dvh; }
           .ft-sheet-box  { max-height: 82dvh; }
-          .ft-sheet-tall { height: 90dvh; max-height: 90dvh; }
+
         }
         /* 中の「一覧」の場所。**flex-1 を使わないこと。**
            flex-1 は基準の高さが0なので、まわりに余りが無いと高さ0までつぶれ、
@@ -6477,12 +6521,16 @@ function AppMain() {
             onOpenDetail={openDetail} onToggleMark={toggleMark} from={viewingFrom} />
         )}
 
-        {/* いちばん手前に出す。記録を書きながらでも開けるため */}
-        {webUrl && <WebViewSheet url={webUrl} onClose={() => setWebUrl(null)} />}
+        {importMsg && (
+          <div className="fixed left-0 right-0 flex justify-center px-5 anim-fade"
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 96px)", zIndex: 2147483300 }}>
+            <p className="max-w-md w-full text-center text-[13.5px] font-bold text-white bg-neutral-900/90 rounded-xl px-4 py-3 shadow-xl">{importMsg}</p>
+          </div>
+        )}
 
         {draftSaved && <DraftDialog draft={draftSaved} onResume={resumeDraft} onDiscard={discardDraft} names={typeDesc.name} />}
 
-        {typePick && <TypePickSheet onPick={startNewOfType} onCancel={() => setTypePick(false)} descs={typeDesc.desc} names={typeDesc.name} />}
+        {typePick && <TypePickSheet onPick={startNewOfType} onCancel={() => setTypePick(false)} descs={typeDesc.desc} names={typeDesc.name} onImportFile={importOneFile} />}
 
         {editing && (
           <RecordForm key={editing.id} initial={isNew ? null : editing} draft={isNew ? editing : null}
@@ -6584,7 +6632,6 @@ function AppMain() {
       </div>
     </div>
     </MenuContext.Provider>
-    </WebViewContext.Provider>
     </TypeNameContext.Provider>
     </UnsavedContext.Provider>
     </PrefsContext.Provider>
