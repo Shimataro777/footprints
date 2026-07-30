@@ -3882,7 +3882,7 @@ function TreeArea({ records, garden, onStart, onHarvest }) {
   const cycle = garden.cycle;
   if (!cycle) {
     return (
-      <button onClick={onStart} className="w-full flex flex-col items-center pt-1 pb-4 ft-tap">
+      <button onClick={onStart} className="w-full flex flex-col items-center pt-1 pb-2 ft-tap">
         <span className="flex ft-grow"><FruitTree stage={1} fruit="apple" size={TREE_SIZE} /></span>
         <span className="text-[15.5px] font-bold text-th-900 mt-1">種を選んで植える</span>
       </button>
@@ -3906,17 +3906,17 @@ function TreeArea({ records, garden, onStart, onHarvest }) {
         </span>
       </span>
       <p className="text-[13.5px] text-neutral-700 leading-relaxed whitespace-pre-line text-center mt-2 px-2">{st.verse}</p>
-      <p className="text-[12.5px] text-neutral-500 mt-1.5">{st.ref}</p>
+      <p className="text-[12.5px] text-neutral-500 mt-1">{st.ref}</p>
     </>
   );
   if (canHarvest) {
     return (
-      <button onClick={onHarvest} className="w-full flex flex-col items-center pt-1 pb-4 ft-tap" aria-label="実を収穫する">
+      <button onClick={onHarvest} className="w-full flex flex-col items-center pt-1 pb-2 ft-tap" aria-label="実を収穫する">
         {inner}
       </button>
     );
   }
-  return <div className="w-full flex flex-col items-center pt-1 pb-4">{inner}</div>;
+  return <div className="w-full flex flex-col items-center pt-1 pb-2">{inner}</div>;
 }
 
 /* ＋を押したときに出る、記録の種類を選ぶシート */
@@ -4025,8 +4025,11 @@ function DraftDialog({ draft, onResume, onDiscard, names }) {
 
 function HomeScreen({ records, prefs, onOpenBackup, garden, onStartCycle, onHarvest }) {
   return (
-    /* 下の帯（タブ）に隠れない分だけの余白。＋ボタンが無い画面なので pb-28 まで要らない */
-    <div className="pb-20">
+    /* 下の帯（タブ）は高さ84pxほどあり、この上に重なって出る。
+       余白がそれより狭いと、いちばん下の文が帯すれすれになって 読みづらい。
+       pb-28（112px）で28pxほどの逃げ場をとっている。
+       ここを広げすぎると、木と段階の聖句がある画面が縦に収まらなくなる */
+    <div className="pb-28">
       <ScreenHeader title="ホーム" />
       {/* ヘッダは動かさず、中身だけがそっと立ち上がる（ヘッダは sticky なので動かすとぶれる） */}
       <div className="px-5 pt-4 ft-rise">
@@ -4049,7 +4052,7 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
     .sort((a, b) => ((b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "")))
     .slice(0, 10), [records]);
   return (
-    <div className="pb-28">
+    <div className="pb-32">
       <ScreenHeader title="記録" />
       <div className="px-5 pt-4 ft-rise">
         {/* 通読のつづきは、記録画面のいちばん上に置く */}
@@ -4400,7 +4403,7 @@ function ProgressScreen({ records, onOpenDetail, onOpenBook, onOpenDay }) {
     setOpenGroups((prev) => (prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]));
 
   return (
-    <div className="pb-28">
+    <div className="pb-32">
       <ScreenHeader title="実績" />
       <div className="px-5 pt-4 ft-rise">
         <div className="rounded-2xl bg-gradient-to-br from-th-700 to-th-900 text-white p-5 mb-3 flex items-center gap-4">
