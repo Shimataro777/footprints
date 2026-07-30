@@ -1365,11 +1365,18 @@ function MonthJumpSheet({ year, month, years, onClose, onConfirm, zIndex }) {
 }
 
 /* 年の候補。いまの年と、示している年のまわりを並べる */
+/* 年の選び方。今年をまんなかに、前後100年ぶんを並べる。
+   それより外の年の記録を持っている人のために、その年までは足しておく
+   （足さないと、その記録の年月へ飛べなくなる） */
+const YEARS_SPAN = 100;
 function jumpYears(shownY, extra = []) {
-  const set = new Set([new Date().getFullYear(), shownY, ...extra]);
-  const arr = [...set].filter((n) => !Number.isNaN(n)).sort((a, b) => a - b);
-  const lo = arr[0] - 1, hi = arr[arr.length - 1] + 1;
-  return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+  const now = new Date().getFullYear();
+  const cands = [shownY, ...extra].filter((n) => Number.isFinite(n));
+  const lo = Math.min(now - YEARS_SPAN, ...cands);
+  const hi = Math.max(now + YEARS_SPAN, ...cands);
+  const out = [];
+  for (let y = lo; y <= hi; y++) out.push(y);
+  return out;
 }
 
 /* 日付を選ぶ欄。
@@ -2468,6 +2475,18 @@ const MASCOT_GROUPS = [
   { key: "memo" },
   { key: "empty" },
 ];
+/* 何枚目の絵が、どの場所に出るかを見分けるための色。
+   絵の枠と、その絵が出る場所の枠を同じ色にする。
+   MASCOT_SPOTS の並び順＝割り当ての順なので、番号で対応が取れる */
+const PAIR_COLORS = [
+  { ring: "#0EA5E9", bg: "#F0F9FF" },   // 青
+  { ring: "#F59E0B", bg: "#FFFBEB" },   // 橙
+  { ring: "#8B5CF6", bg: "#F5F3FF" },   // 紫
+  { ring: "#10B981", bg: "#ECFDF5" },   // 緑
+  { ring: "#EC4899", bg: "#FDF2F8" },   // 桃
+];
+const pairColor = (i) => PAIR_COLORS[i % PAIR_COLORS.length];
+
 /* イラストのまとまりの見出し。
    **書き決めにしないこと。** 記録の種類の名前はカスタマイズ画面で変えられるので、
    書き決めにすると「通読」を別の名前にしたときに、ここだけ古い名前が残ってしまう */
@@ -5045,24 +5064,55 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
                   {open && (
                     <div className="border-t-2 border-neutral-100 px-3 py-3 space-y-3 ft-open-y">
-                      <button
-                        onClick={() => { setTargetGroup(g.key); inputRef.current && inputRef.current.click(); }}
-                        disabled={busy || draft.length >= ART_MAX}
-                        className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px]"}>
-                        <Plus size={16} /> ここに絵を追加
-                      </button>
+                      {/* 場所の数より多く登録しても、あまった絵は出番がない。
+                          それなら初めから足せないようにしておくほうが分かりやすい */}
+                      {(() => {
+                        const full = mine.length >= spots.length;
+                        const over = draft.length >= ART_MAX;
+                        return (
+                          <>
+                            <button
+                              onClick={() => { setTargetGroup(g.key); inputRef.current && inputRef.current.click(); }}
+                              disabled={busy || full || over}
+                              className={((full || over) ? BTN_BASE + " bg-neutral-100 border-2 border-neutral-200 text-neutral-400" : BTN_SECONDARY)
+                                + " w-full " + BTN_H + " text-[14.5px]"}>
+                              <Plus size={16} /> ここに絵を追加
+                            </button>
+                            {(full || over) && (
+                              <p className="text-[11.5px] text-neutral-500 -mt-1">
+                                {full
+                                  ? `この${spots.length}か所ぶんはそろいました。差し替えるときは、いらない絵を消してから足してください。`
+                                  : `登録できるのは全部で${ART_MAX}枚までです。`}
+                              </p>
+                            )}
+                          </>
+                        );
+                      })()}
                       <div>
                         <p className="text-[11.5px] text-neutral-400 mb-1">出てくる場所</p>
                         <div className="flex flex-wrap gap-1">
-                          {spots.map((sp) => (
-                            <span key={sp.seed} className="text-[11.5px] px-2 py-0.5 rounded-full bg-neutral-50 text-neutral-400 border border-neutral-200">{mascotSpotLabel(sp, nameDraft)}</span>
-                          ))}
+                          {spots.map((sp, i) => {
+                            /* その場所に実際に出る絵に合わせて色を付ける。
+                               絵が1枚しかないときは、どの場所にも同じ絵が出るので同じ色になる。
+                               **pairColor(i) にしないこと。** 場所の順番で色を決めると、
+                               1枚しか無いのに2つ目だけ違う色になり、対応が読み取れない */
+                            const c = mine.length ? pairColor(i % mine.length) : null;
+                            return (
+                              <span key={sp.seed} className="text-[11.5px] px-2 py-0.5 rounded-full border"
+                                style={c
+                                  ? { borderColor: c.ring, background: c.bg, color: "#525252" }
+                                  : { borderColor: "#E5E5E5", background: "#FAFAFA", color: "#A3A3A3" }}>
+                                {mascotSpotLabel(sp, nameDraft)}
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
                       {mine.length > 0 && (
                         <div className="flex flex-wrap gap-2">
-                          {mine.map((a) => (
-                            <div key={a.id} className="relative w-20 h-20 rounded-lg border-2 border-neutral-200 bg-neutral-50 flex items-center justify-center">
+                          {mine.map((a, i) => (
+                            <div key={a.id} className="relative w-20 h-20 rounded-lg border-2 flex items-center justify-center"
+                              style={{ borderColor: pairColor(i).ring, background: pairColor(i).bg }}>
                               <img src={a.src} alt="" className="max-w-full max-h-full object-contain p-1" />
                               <button onClick={() => setPendingId(a.id)} aria-label="削除"
                                 className="absolute -top-1.5 -right-1.5 w-7 h-7 rounded-full bg-white border-2 border-neutral-200 flex items-center justify-center text-neutral-600 hover:text-rose-700 hover:bg-rose-50">
@@ -5731,6 +5781,8 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
               そのときも「データ復元」で元どおりに戻せます。
             </p>
           </div>
+          {/* いちばん下の逃げ場。無いと注意書きが画面の端すれすれになる */}
+          <div className="h-16" />
         </div>
       </div>
 
@@ -6151,11 +6203,17 @@ function AppMain() {
     commitSaveOrAdd(pending);
   };
   const handleRestore = async (importedRecords, importedArtworks, importedGarden, importedTags, importedSetting) => {
-    /* 画面の設定を戻す。入っていない項目は今のまま残すこと。
-       最終バックアップ日だけは、この端末のものを守る */
+    /* 読み込んだ記録は、もう書き出し済みのもの。
+       そのままだと「まだ書き出していない記録が…」と促してしまい、
+       同じ内容をもう一度書き出すことになる。
+       読み込んだ時刻を「最後に書き出した日」として控えておく */
+    const restoredAt = new Date().toISOString();
+    /* 画面の設定を戻す。入っていない項目は今のまま残すこと */
     if (importedSetting) {
       if (importedSetting.prefs) {
-        await savePrefs({ ...prefs, ...importedSetting.prefs, lastBackup: prefs.lastBackup });
+        await savePrefs({ ...prefs, ...importedSetting.prefs, lastBackup: restoredAt });
+      } else {
+        await savePrefs({ ...prefs, lastBackup: restoredAt });
       }
       if (importedSetting.captions) await saveCaptions({ ...captions, ...importedSetting.captions });
       if (importedSetting.typeDesc) {
@@ -6164,6 +6222,8 @@ function AppMain() {
           desc: { ...typeDesc.desc, ...(importedSetting.typeDesc.desc || {}) },
         });
       }
+    } else {
+      await savePrefs({ ...prefs, lastBackup: restoredAt });
     }
     /* タグの一覧は足し合わせる。今ある分を消さないこと */
     if (Array.isArray(importedTags) && importedTags.length) {
