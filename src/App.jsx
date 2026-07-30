@@ -5000,14 +5000,23 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
                   </button>
                   {open && (
                     <div className="px-3.5 pb-3.5 border-t-2 border-neutral-100 pt-3 space-y-2.5 ft-open-y">
-                      <div>
-                        <p className="text-[11.5px] font-bold text-neutral-500 mb-1">名前</p>
-                        <TextInput value={(nameDraft && nameDraft[k]) || ""} onChange={(e) => setNameDraft({ ...nameDraft, [k]: e.target.value })} />
+                      {/* ラベルは入力欄の左に置いて、縦に使う場所を減らしている。
+                          **入力欄そのものは小さくしないこと。**
+                          16pxより小さくすると、iPhoneが触れたときに画面を勝手に拡大する。
+                          ラベルの幅（w-12）だけを削り、入力欄の高さと文字は元のまま */}
+                      <div className="flex items-center gap-2.5">
+                        <p className="w-12 shrink-0 text-[11.5px] font-bold text-neutral-500">名前</p>
+                        <div className="flex-1 min-w-0">
+                          <TextInput value={(nameDraft && nameDraft[k]) || ""} onChange={(e) => setNameDraft({ ...nameDraft, [k]: e.target.value })} />
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-[11.5px] font-bold text-neutral-500 mb-1">説明</p>
-                        {/* 高さは上の「名前」の入力欄とそろえる。書き足すと自然に伸びる */}
-                        <TextArea value={(descDraft && descDraft[k]) || ""} onChange={(e) => setDescDraft({ ...descDraft, [k]: e.target.value })} className="ft-h-field" />
+                      <div className="flex items-start gap-2.5">
+                        {/* 説明は書き足すと伸びるので、ラベルは1行目の高さに合わせて少し下げる */}
+                        <p className="w-12 shrink-0 text-[11.5px] font-bold text-neutral-500 pt-3.5">説明</p>
+                        <div className="flex-1 min-w-0">
+                          {/* 高さは「名前」の入力欄とそろえる。書き足すと自然に伸びる */}
+                          <TextArea value={(descDraft && descDraft[k]) || ""} onChange={(e) => setDescDraft({ ...descDraft, [k]: e.target.value })} className="ft-h-field" />
+                        </div>
                       </div>
                       <button type="button"
                         onClick={() => { setNameDraft({ ...nameDraft, [k]: DEFAULT_TYPE_NAME[k] }); setDescDraft({ ...descDraft, [k]: DEFAULT_TYPE_DESC[k] }); }}
