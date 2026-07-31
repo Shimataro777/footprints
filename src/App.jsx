@@ -471,7 +471,13 @@ const PREF_KEY = "bible-tracker-prefs";
 /* fontSize＝文字の大きさ。"s"（これまでと同じ）／"m"／"l"。
    古い保存内容には入っていないが、loadPrefs で既定値と混ぜるため
    これまで使っていた人はこれまでどおりの大きさで始まる */
-const DEFAULT_PREFS = { theme: "teal", showMascots: true, lastBackup: null, motion: true, fontSize: "s" };
+const DEFAULT_PREFS = { theme: "teal", showMascots: true, lastBackup: null, motion: true, fontSize: "s", sortMode: "book" };
+/* 並び順の選択肢。**探す・ブックマークなど、並べ替えを出す所すべてで同じものを使うこと** */
+const SORT_MODES = [
+  { key: "book", label: "目次順" },
+  { key: "dateDesc", label: "新しい順" },
+  { key: "dateAsc", label: "古い順" },
+];
 const FONT_SIZES = [
   { key: "s", label: "小" },
   { key: "m", label: "中" },
@@ -3221,7 +3227,8 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
   const { stripRef, screenRef } = useEdgeSwipeBack(onCancel, guardClose);
 
   return (
-    <OverlayScreen from="bottom" closing={closing || savingClose}>
+    /* 閲覧画面（60）より手前に出す。閲覧から編集を開くため */
+    <OverlayScreen from="bottom" closing={closing || savingClose} zIndex={70}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
       <div className="flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
@@ -3789,9 +3796,9 @@ function BackupReminder({ records, prefs, onOpenBackup }) {
   if (!records.length || n === 0) return null;
   const last = prefs && prefs.lastBackup ? new Date(prefs.lastBackup) : null;
   const days = last ? Math.floor((Date.now() - last.getTime()) / 86400000) : null;
-  const byDays = !last || days >= BACKUP_REMIND_DAYS;
-  const byCount = n >= BACKUP_REMIND_COUNT;
-  if (!byDays && !byCount) return null;
+  /* **書き出していない記録が1件でもあれば知らせること。**
+     件数の敷居を設けていたため、1件書いても何も出ず、
+     保存忘れを防ぐという役目を果たしていなかった */
   const lastLabel = last ? `${last.getFullYear()}年${last.getMonth() + 1}月${last.getDate()}日` : null;
   return (
     <button onClick={onOpenBackup}
@@ -4117,7 +4124,7 @@ function FilterPill({ on, onClick, children }) {
   );
 }
 
-function SearchScreen({ records, setRecords, openDetail, allKnownTags }) {
+function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSort }) {
   const typeNames = useTypeName();
   const [keyword, setKeyword] = useState("");
   const [filterBook, setFilterBook] = useState("");
@@ -4189,7 +4196,8 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags }) {
     return true;
   }), [records, applied]);
 
-  const [sortMode, setSortMode] = useState("book");
+  /* はじめの並び順は、カスタマイズで決めたもの。指定が無ければ目次順 */
+  const [sortMode, setSortMode] = useState(() => defaultSort || "book");
   const sortedRecords = useMemo(() => {
     const arr = [...baseFiltered];
     if (sortMode === "dateDesc") arr.sort((a, b) => (b.date || b.createdAt || "").localeCompare(a.date || a.createdAt || ""));
@@ -4309,9 +4317,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags }) {
             </h3>
             <div className="w-[150px] shrink-0">
               <Select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
-                <option value="book">目次順</option>
-                <option value="dateDesc">新しい順</option>
-                <option value="dateAsc">古い順</option>
+                {SORT_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
               </Select>
             </div>
           </div>
@@ -4546,8 +4552,9 @@ function DayRecordsScreen({ date, records, onClose, onOpenDetail }) {
   );
 }
 
-function BookRecordsScreen({ book, records, onClose, onOpenDetail }) {
-  const [sortMode, setSortMode] = useState("book");
+function BookRecordsScreen({ book, records, onClose, onOpenDetail, defaultSort }) {
+  /* はじめの並び順は、カスタマイズで決めたもの。指定が無ければ目次順 */
+  const [sortMode, setSortMode] = useState(() => defaultSort || "book");
   const sortFn = (a, b) => {
     if (sortMode === "dateDesc") return (b.date || b.createdAt || "").localeCompare(a.date || a.createdAt || "");
     if (sortMode === "dateAsc") return (a.date || a.createdAt || "").localeCompare(b.date || b.createdAt || "");
@@ -4579,9 +4586,7 @@ function BookRecordsScreen({ book, records, onClose, onOpenDetail }) {
           <p className="text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase">{list.length}件の記録</p>
           <div className="ml-auto w-[150px]">
             <Select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
-              <option value="book">目次順</option>
-              <option value="dateDesc">新しい順</option>
-              <option value="dateAsc">古い順</option>
+              {SORT_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
             </Select>
           </div>
         </div>
@@ -4617,6 +4622,9 @@ function relatedRecords(records, target) {
 /* from ＝ どちらから出てくるか。ふつうは右から。
    ちょっと見る小窓から「この記録を開く」で来たときだけ、下からせり上がる。
    小窓が下から出ているので、そのまま続けて上がってくるほうが自然なため */
+/* zIndex は既定（50）より大きくすること。
+   ブックマークやタグの整理など、ほかの重なる画面から開くことがあり、
+   同じ高さだと、あとに書かれた画面の下に隠れてしまう（実際そうなっていた） */
 function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail, onToggleMark, from = "right" }) {
   /* 関連する記録を押したときも、右から新しい画面が来るように見せる */
   const [swapping, setSwapping] = useState(false);
@@ -4670,7 +4678,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
   const { stripRef, screenRef } = useEdgeSwipeBack(close);
 
   return (
-    <OverlayScreen from={from} closing={closing || swapping}>
+    <OverlayScreen from={from} closing={closing || swapping} zIndex={60}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
       <div className="flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
@@ -4865,6 +4873,8 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
   const [openGroup, setOpenGroup] = useState(null);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [targetGroup, setTargetGroup] = useState(MASCOT_GROUPS[0].key);
+  /* いま選ぼうとしているまとまりに、あと何枚入るか */
+  const [pickRoom, setPickRoom] = useState(1);
   const inputRef = useRef(null);
 
   const dirty =
@@ -4874,12 +4884,23 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
   const guardCloseRef = useRef(() => true);
   const { stripRef, screenRef } = useEdgeSwipeBack(onClose, () => guardCloseRef.current());
 
+  /* このまとまりに、あと何枚入れられるか。
+     場所の数を超えて登録しても、あまった絵は出番がないので受け取らない。
+     全体の上限（ART_MAX）とのうち、少ないほうに合わせる */
+  const roomFor = (groupKey) => {
+    const spots = MASCOT_SPOTS.filter((sp) => sp.group === groupKey).length;
+    const mine = draft.filter((a) => a.group === groupKey).length;
+    return Math.max(0, Math.min(spots - mine, ART_MAX - draft.length));
+  };
+
   const addFiles = async (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = "";
     if (!files.length) return;
-    const room = ART_MAX - draft.length;
-    if (room <= 0) { setMsg({ kind: "warn", text: `登録できるのは${ART_MAX}枚までです。` }); return; }
+    const room = roomFor(targetGroup);
+    if (room <= 0) { setMsg({ kind: "warn", text: "この場所ぶんはもうそろっています。" }); return; }
+    /* 多く選ばれたときは、入るぶんだけ受け取って、そのことを伝える */
+    const over = files.length - room;
     setBusy(true);
     const added = [];
     for (const f of files.slice(0, room)) {
@@ -4891,7 +4912,9 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     setDraft([...draft, ...added]);
     setOpenGroup(targetGroup);
     const gl = mascotGroupLabel(targetGroup, nameDraft);
-    setMsg({ kind: "warn", text: `「${gl}」に${added.length}枚を追加しました。下の「保存」を押すと反映されます。` });
+    setMsg({ kind: "warn", text: `「${gl}」に${added.length}枚を追加しました。`
+      + (over > 0 ? `（${over}枚は出てくる場所がないため受け取っていません）` : "")
+      + "下の「保存」を押すと反映されます。" });
   };
 
   const save = async () => {
@@ -4945,6 +4968,24 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
                     {on && <Check size={16} className="text-white ft-check-in" strokeWidth={3} />}
                   </span>
                   <span className={"text-[12.5px] " + (on ? "font-bold text-neutral-900" : "text-neutral-600")}>{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
+            並び順のはじめの選び方
+            <HelpTip label="並び順" text="「探す」やブックマークを開いたときに、はじめに選ばれている並び順です。あとから画面で切り替えることもできます。" />
+          </h3>
+          <div className="flex gap-1.5 mb-6">
+            {SORT_MODES.map((m) => {
+              const on = (prefDraft.sortMode || "book") === m.key;
+              return (
+                <button key={m.key} type="button" onClick={() => setPrefDraft({ ...prefDraft, sortMode: m.key })}
+                  aria-pressed={on}
+                  className={"flex-1 " + BTN_H + " rounded-xl border-2 text-[13.5px] font-bold ft-tap "
+                    + (on ? "border-th-800 bg-th-800 text-white" : "border-neutral-200 bg-white text-neutral-600")}>
+                  {m.label}
                 </button>
               );
             })}
@@ -5081,7 +5122,12 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
                         return (
                           <>
                             <button
-                              onClick={() => { setTargetGroup(g.key); inputRef.current && inputRef.current.click(); }}
+                              onClick={() => {
+                                setTargetGroup(g.key);
+                                setPickRoom(spots.length - mine.length);
+                                /* 複数選べるかどうかを描き直してから開く */
+                                setTimeout(() => inputRef.current && inputRef.current.click(), 0);
+                              }}
                               disabled={busy || full || over}
                               className={((full || over) ? BTN_BASE + " bg-neutral-100 border-2 border-neutral-200 text-neutral-400" : BTN_SECONDARY)
                                 + " w-full " + BTN_H + " text-[14.5px]"}>
@@ -5148,7 +5194,12 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
               );
             })}
           </div>
-          <input ref={inputRef} type="file" accept="image/*" multiple onChange={addFiles} className="hidden" />
+          {/* あと1枚しか入らないときは複数選べないようにする。
+              端末の写真選択では枚数の上限を細かく指定できないため、
+              せめて「1枚だけ」と「何枚でも」は選び分けておく。
+              多く選ばれたぶんは addFiles 側で受け取らずに知らせる */}
+          <input ref={inputRef} type="file" accept="image/*" {...(pickRoom > 1 ? { multiple: true } : {})}
+            onChange={addFiles} className="hidden" />
 
         </div>
 
@@ -5179,10 +5230,11 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
    バックアップ画面
    ============================================================ */
 /* ブックマークした記録の一覧。三本線メニューから開く */
-function BookmarkScreen({ records, onClose, onOpenDetail }) {
+function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
   const [closing, close] = useClosing(onClose);
   const { stripRef, screenRef } = useEdgeSwipeBack(close);
-  const [sortMode, setSortMode] = useState("book");
+  /* はじめの並び順は、カスタマイズで決めたもの。指定が無ければ目次順 */
+  const [sortMode, setSortMode] = useState(() => defaultSort || "book");
   const list = useMemo(() => {
     const marked = (records || []).filter((r) => r.bookmarked);
     return marked.sort((a, b) => {
@@ -5206,9 +5258,7 @@ function BookmarkScreen({ records, onClose, onOpenDetail }) {
           <p className="text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase">{list.length}件</p>
           <div className="ml-auto w-[150px]">
             <Select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
-              <option value="book">目次順</option>
-              <option value="dateDesc">新しい順</option>
-              <option value="dateAsc">古い順</option>
+              {SORT_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
             </Select>
           </div>
         </div>
@@ -5235,7 +5285,7 @@ function BookmarkScreen({ records, onClose, onOpenDetail }) {
    名前を変えたり消したりすると、記録に付いているタグにも同じことをする。
    一覧だけ直して記録を放っておくと、名前が食い違ってしまうため
    ============================================================ */
-function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onClose }) {
+function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, onClose }) {
   const [closing, close] = useClosing(onClose);
   const { stripRef, screenRef } = useEdgeSwipeBack(close);
   const [draft, setDraft] = useState("");
@@ -5243,6 +5293,61 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onClose }) 
   const [deleting, setDeleting] = useState(null);
 
   const list = normalizeTags(tags);
+
+  /* ============================================================
+     並び替え（三本線をつまんで上下に動かす）
+     動かしている札だけを指について動かし、ほかの札は
+     1枚ぶんずつ「よける」。並びを入れ替えるのは指を離したときだけ。
+     途中で並びを作り直すと、そのたび画面が組み直されて跳ねてしまう
+     ============================================================ */
+  const listRef = useRef(null);
+  const [drag, setDrag] = useState(null);   // { from, to, dy }
+  const dragRef = useRef(null);
+
+  const rowHeight = () => {
+    const el = listRef.current;
+    if (!el || el.children.length < 2) return 64;
+    const a = el.children[0].getBoundingClientRect();
+    const b = el.children[1].getBoundingClientRect();
+    return Math.max(1, b.top - a.top);
+  };
+
+  const onGrab = (i) => (e) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { from: i, startY: e.clientY, h: rowHeight() };
+    setDrag({ from: i, to: i, dy: 0 });
+  };
+  const onMoveRow = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dy = e.clientY - d.startY;
+    const to = Math.max(0, Math.min(list.length - 1, d.from + Math.round(dy / d.h)));
+    setDrag({ from: d.from, to, dy });
+  };
+  const onDrop = () => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setDrag((cur) => {
+      if (d && cur && cur.to !== cur.from && onReorder) {
+        const next = [...list];
+        const [moved] = next.splice(cur.from, 1);
+        next.splice(cur.to, 0, moved);
+        onReorder(next);
+      }
+      return null;
+    });
+  };
+  /* 動かしていない札が、よけるぶんのずれ */
+  const shiftOf = (i) => {
+    if (!drag) return 0;
+    const { from, to } = drag;
+    const h = (dragRef.current && dragRef.current.h) || rowHeight();
+    if (i === from) return null;                      // これは指について動く
+    if (from < to && i > from && i <= to) return -h;
+    if (to < from && i >= to && i < from) return h;
+    return 0;
+  };
   const countOf = (t) => (records || []).filter((r) => (r.tags || []).some((x) => x === t)).length;
   const canAdd = !!draft.trim() && !list.some((t) => t.toLowerCase() === draft.trim().toLowerCase());
   const renameOk = renaming && !!renaming.to.trim() && renaming.to.trim() !== renaming.from
@@ -5276,11 +5381,23 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onClose }) 
             <p className="text-[14.5px] text-neutral-500 mt-1">まだタグがありません</p>
           </div>
         ) : (
-          <div className="space-y-2 ft-seq">
-            {list.map((t) => {
+          <div ref={listRef} className={"space-y-2 " + (drag ? "" : "ft-seq")}>
+            {list.map((t, i) => {
               const n = countOf(t);
+              const held = drag && drag.from === i;
+              const shift = shiftOf(i);
               return (
-                <div key={t} className="flex items-center gap-2 rounded-xl border-2 border-neutral-200 bg-white px-3.5 py-2.5">
+                <div key={t}
+                  className={"flex items-center gap-2 rounded-xl border-2 bg-white px-3.5 py-2.5 "
+                    + (held ? "border-th-700 shadow-xl" : "border-neutral-200")}
+                  style={{
+                    transform: held ? `translateY(${drag.dy}px) scale(1.02)` : `translateY(${shift || 0}px)`,
+                    /* つまんでいる札は指にぴたりと付く。よける札だけ滑らかに動かす */
+                    transition: held ? "none" : "transform .18s cubic-bezier(.22,1,.36,1)",
+                    position: held ? "relative" : undefined,
+                    zIndex: held ? 5 : undefined,
+                    touchAction: drag ? "none" : undefined,
+                  }}>
                   <span className="flex-1 min-w-0">
                     <span className="block text-[15.5px] font-bold text-neutral-900 truncate">{t}</span>
                     <span className="block text-[12.5px] text-neutral-500">{n > 0 ? `${n}件の記録で使用中` : "まだ使われていません"}</span>
@@ -5289,6 +5406,16 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onClose }) 
                     className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl border-2 border-neutral-200 text-neutral-600 hover:bg-neutral-50 ft-tap ft-tap-icon"><Pencil size={16} /></button>
                   <button type="button" onClick={() => setDeleting({ tag: t, n })} aria-label={`${t} を削除`}
                     className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl border-2 border-rose-200 text-rose-700 hover:bg-rose-50 ft-tap ft-tap-icon"><Trash2 size={16} /></button>
+                  {/* つまんで上下に動かす取っ手。
+                      **ここだけ touchAction を none にすること。**
+                      札ぜんたいに付けると、指で画面を送れなくなる */}
+                  <span role="button" tabIndex={0} aria-label={`${t} の並びを変える`}
+                    onPointerDown={onGrab(i)} onPointerMove={onMoveRow}
+                    onPointerUp={onDrop} onPointerCancel={onDrop}
+                    style={{ touchAction: "none" }}
+                    className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl text-neutral-300 hover:text-neutral-500 cursor-grab">
+                    <Menu size={18} />
+                  </span>
                 </div>
               );
             })}
@@ -6024,6 +6151,16 @@ function AppMain() {
      こうしておけば、前の版から引き継いだ記録のタグも最初から選べる */
   const knownTags = useMemo(() => normalizeTags([...tagMaster, ...allTagsOf(records)]), [tagMaster, records]);
   /* 新しく作られたタグは一覧に控える。記録を消してもタグは選べるまま残る */
+  /* タグの並び順を入れ替える。
+     **画面に出ている全部を保存すること。**
+     一覧（tagMaster）に無いタグ（記録から拾ったもの）を落とすと、
+     せっかく並べ替えても、そのタグだけ最後尾に戻ってしまう */
+  const reorderTags = useCallback((next) => {
+    const list = normalizeTags(next);
+    setTagMaster(list);
+    persistTagMaster(list);
+  }, []);
+
   const addTagToMaster = useCallback((t) => {
     setTagMaster((prev) => {
       const next = normalizeTags([...prev, t]);
@@ -6625,7 +6762,7 @@ function AppMain() {
         <div key={tab} className="ft-tabswap">
         {tab === "home" && <HomeScreen records={records} prefs={prefs} onOpenBackup={() => setBackupOpen(true)} garden={garden} onStartCycle={() => setPickFruit(true)} onHarvest={harvestFruit} />}
         {tab === "record" && <RecordScreen records={records} onOpenDetail={openDetail} onStartReading={openNewReading} />}
-        {tab === "search" && <SearchScreen records={records} setRecords={setRecords} openDetail={openDetail} allKnownTags={knownTags} />}
+        {tab === "search" && <SearchScreen records={records} setRecords={setRecords} openDetail={openDetail} allKnownTags={knownTags} defaultSort={prefs.sortMode} />}
         {tab === "progress" && <ProgressScreen records={records} onOpenDetail={openDetail} onOpenBook={openBook} onOpenDay={setViewingDay} />}
         </div>
 
@@ -6645,7 +6782,7 @@ function AppMain() {
           <DayRecordsScreen date={viewingDay} records={records} onClose={closeDay} onOpenDetail={openDetailFromBook} />
         )}
         {viewingBook && (
-          <BookRecordsScreen book={viewingBook} records={records} onClose={closeBook} onOpenDetail={openDetailFromBook} />
+          <BookRecordsScreen book={viewingBook} records={records} onClose={closeBook} onOpenDetail={openDetailFromBook} defaultSort={prefs.sortMode} />
         )}
 
         {viewing && (
@@ -6689,10 +6826,10 @@ function AppMain() {
 
         {artOpen && <ArtworkScreen artworks={artworks} onChange={saveArtworks} captions={captions} onSaveCaptions={saveCaptions} prefs={prefs} onSavePrefs={savePrefs} onClose={() => setArtOpen(false)} typeDesc={typeDesc} onSaveTypeDesc={saveTypeDesc} />}
 
-        {bookmarkOpen && <BookmarkScreen records={records} onClose={() => setBookmarkOpen(false)} onOpenDetail={openDetail} />}
+        {bookmarkOpen && <BookmarkScreen records={records} onClose={() => setBookmarkOpen(false)} onOpenDetail={openDetail} defaultSort={prefs.sortMode} />}
 
         {tagsOpen && <TagManageScreen tags={knownTags} records={records}
-        onAdd={addTagToMaster} onRename={renameTag} onDelete={deleteTag}
+        onAdd={addTagToMaster} onRename={renameTag} onDelete={deleteTag} onReorder={reorderTags}
         onClose={() => setTagsOpen(false)} />}
       {helpOpen && <HelpScreen onClose={() => setHelpOpen(false)} />}
       {gardenOpen && <GardenScreen garden={garden} records={records} onClose={() => setGardenOpen(false)} onChangeFruit={plantFruit} />}
