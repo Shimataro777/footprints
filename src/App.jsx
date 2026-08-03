@@ -5341,6 +5341,15 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
     const to = Math.max(0, Math.min(list.length - 1, d.from + Math.round(dy / d.h)));
     setDrag({ from: d.from, to, dy });
   };
+  /* 入れ替えた直後は、いっさい動かさない。
+     並びが変わると札は新しい位置へ移るのに、
+     よけるために付けていたずれ（translateY）も同時に0へ戻ろうとする。
+     どちらも動くと、札が1つぶん跳ね上がって見える（実際そうなった）。
+     ひと呼吸だけ動きを止めて、静かに入れ替わったように見せる */
+  const [settling, setSettling] = useState(false);
+  const settleTimer = useRef(null);
+  useEffect(() => () => clearTimeout(settleTimer.current), []);
+
   const onDrop = () => {
     const d = dragRef.current;
     dragRef.current = null;
@@ -5349,6 +5358,9 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
         const next = [...list];
         const [moved] = next.splice(cur.from, 1);
         next.splice(cur.to, 0, moved);
+        setSettling(true);
+        clearTimeout(settleTimer.current);
+        settleTimer.current = setTimeout(() => setSettling(false), 260);
         onReorder(next);
       }
       return null;
@@ -5413,7 +5425,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
                        行き過ぎてから戻るので、札が跳ねて見える。
                        まっすぐ動く ease-out にしておくこと。
                        つまんだ札を大きくするのもやめた（動かすたびに膨らんで落ち着かない） */
-                    transition: held ? "none" : "transform .16s ease-out",
+                    transition: (held || settling) ? "none" : "transform .16s ease-out",
                     position: held ? "relative" : undefined,
                     zIndex: held ? 5 : undefined,
                     touchAction: drag ? "none" : undefined,
