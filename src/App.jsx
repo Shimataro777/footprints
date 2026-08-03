@@ -1023,6 +1023,10 @@ const inputCls = "w-full rounded-xl bg-white border-2 border-neutral-300 px-3.5 
 /* iPhoneの切り欠き（ノッチ・ダイナミックアイランド）に隠れないための上余白。
    index.html で viewport-fit=cover にしているため、自分で余白を取る必要がある */
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
+/* 画面の下端も同じ理由で自分で余白を取る。
+   ホームバー（下端の横線）のぶんに、さらに余白を足して読みやすくする。
+   重なる画面の一覧は、いちばん下の記録がホームバーに寄りすぎないよう SAFE_BOTTOM(28) */
+const SAFE_BOTTOM = (extra) => ({ paddingBottom: `calc(env(safe-area-inset-bottom) + ${extra}px)` });
 
 const BTN_H = "btn-h"; // 全ボタン共通の高さ（実際の値はグローバルCSSの .btn-h で定義）
 /* 押したときの手ごたえ。少し沈み、色がわずかに暗くなる。
@@ -4339,7 +4343,10 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
 
         {searching && <LoadingOverlay label="探しています" />}
         {searching || !searched ? null : (
-        <div key={resultKey} className="ft-seq space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5 lg:items-start">
+        /* pb-8 は、いちばん下の記録が下の帯（タブ）に潜らないための逃げ場。
+           外側は pb-20 のまま（探す前の画面がスクロールなしで収まる高さを保つため）で、
+           結果の一覧にだけ足している。合わせて 112px＝ほかの画面の pb-28 と同じになる */
+        <div key={resultKey} className="ft-seq pb-8 space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5 lg:items-start">
           {sortedRecords.length === 0 && (
             <div className="flex flex-col items-center py-6 lg:col-span-2 ft-noresult">
               <Mascot seed="search-empty" size={118} />
@@ -5262,7 +5269,8 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ブックマーク</h2>
         <MenuButton />
       </div>
-      <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
+      {/* いちばん下の記録が画面の下端やホームバーに寄りついてしまうため、下だけ余白を足す */}
+      <div className="flex-1 overflow-y-auto px-5 pt-5 max-w-2xl mx-auto w-full" style={SAFE_BOTTOM(28)}>
         <div className="flex items-center gap-2 mb-3">
           <p className="text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase">{list.length}件</p>
           <div className="ml-auto w-[150px]">
