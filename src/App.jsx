@@ -2871,7 +2871,12 @@ function MenuIconWithBadge({ size, unsaved, ringClass }) {
   );
 }
 
-function MenuButton({ size = 46 }) {
+/* 重なって出る画面の三本線。
+   **大きさはタブの見出し（ScreenHeader）とそろえること。**
+   別々の数にしていたため、画面を移ると三本線の大きさが変わって見えた */
+const MENU_BTN = 56;
+const MENU_ICON = 32;
+function MenuButton({ size = MENU_BTN }) {
   const openMenu = React.useContext(MenuContext);
   const unsaved = React.useContext(UnsavedContext);
   if (!openMenu) return null;
@@ -2879,7 +2884,7 @@ function MenuButton({ size = 46 }) {
     <button onClick={openMenu} aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
       className="relative flex items-center justify-center rounded-xl text-neutral-800 hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0"
       style={{ minWidth: size, minHeight: size }}>
-      <MenuIconWithBadge size={26} unsaved={unsaved} ringClass="border-white" />
+      <MenuIconWithBadge size={MENU_ICON} unsaved={unsaved} ringClass="border-white" />
     </button>
   );
 }
@@ -2898,8 +2903,8 @@ function ScreenHeader({ title, right }) {
           {openMenu && (
             <button onClick={openMenu} aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
               className="relative flex items-center justify-center rounded-xl text-neutral-800 hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0"
-              style={{ minWidth: 56, minHeight: 56 }}>
-              <MenuIconWithBadge size={32} unsaved={unsaved} ringClass="border-neutral-50" />
+              style={{ minWidth: MENU_BTN, minHeight: MENU_BTN }}>
+              <MenuIconWithBadge size={MENU_ICON} unsaved={unsaved} ringClass="border-neutral-50" />
             </button>
           )}
         </div>
@@ -4528,7 +4533,7 @@ function DayRecordsScreen({ date, records, onClose, onOpenDetail }) {
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-neutral-700 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
+        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">{date}</h2>
         <MenuButton />
       </div>
@@ -4576,7 +4581,7 @@ function BookRecordsScreen({ book, records, onClose, onOpenDetail, defaultSort }
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
       <div className="flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-neutral-700 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
+        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 flex-1 min-w-0 truncate tracking-wide">{book}</h2>
         <MenuButton />
       </div>
@@ -4647,7 +4652,8 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
     try {
       const file = new File([text], name, { type: "application/json" });
       if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
-        await navigator.share({ files: [file], title: "Footprints の記録" });
+        /* title は渡さない（余分なテキストが作られるため） */
+        await navigator.share({ files: [file] });
         return;
       }
     } catch (e) {
@@ -4682,7 +4688,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
       <div className="flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-neutral-700 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
+        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[17px] text-neutral-900 flex-1 min-w-0 truncate">{recordTitle(record)}</h2>
         <MenuButton />
       </div>
@@ -4949,7 +4955,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
         <div className="flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
-          <button onClick={handleCloseAttempt} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-neutral-700 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</button>
+          <button onClick={handleCloseAttempt} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</button>
           <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">画面のカスタマイズ</h2>
           <MenuButton />
         </div>
@@ -5249,7 +5255,7 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-neutral-700 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
+        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ブックマーク</h2>
         <MenuButton />
       </div>
@@ -5303,6 +5309,15 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
   const listRef = useRef(null);
   const [drag, setDrag] = useState(null);   // { from, to, dy }
   const dragRef = useRef(null);
+  /* 一覧が「順に現れる」動きは、画面を開いたときの一度だけにする。
+     並び替えのあとも掛かるままにすると、指を離した瞬間に
+     札が一斉に出直して点滅して見える（実際そうなっていた）。
+     並びが変わると札の順番も入れ替わるので、動きが必ず掛け直されてしまう */
+  const [seq, setSeq] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setSeq(false), 800);
+    return () => clearTimeout(t);
+  }, []);
 
   const rowHeight = () => {
     const el = listRef.current;
@@ -5314,6 +5329,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
 
   const onGrab = (i) => (e) => {
     e.preventDefault();
+    setSeq(false);   // つまんだ時点で、現れる動きは二度と掛けない
     e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = { from: i, startY: e.clientY, h: rowHeight() };
     setDrag({ from: i, to: i, dy: 0 });
@@ -5358,7 +5374,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-neutral-700 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
+        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">タグの整理</h2>
         <MenuButton />
       </div>
@@ -5381,7 +5397,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
             <p className="text-[14.5px] text-neutral-500 mt-1">まだタグがありません</p>
           </div>
         ) : (
-          <div ref={listRef} className={"space-y-2 " + (drag ? "" : "ft-seq")}>
+          <div ref={listRef} className={"space-y-2 " + (seq && !drag ? "ft-seq" : "")}>
             {list.map((t, i) => {
               const n = countOf(t);
               const held = drag && drag.from === i;
@@ -5523,7 +5539,7 @@ function HelpScreen({ onClose }) {
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-neutral-700 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
+        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ヘルプ</h2>
         <MenuButton />
       </div>
@@ -5578,7 +5594,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-neutral-700 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
+        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">収穫した実</h2>
         <MenuButton />
       </div>
@@ -5709,7 +5725,10 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
       const file = new File([jsonText], filename, { type: "application/json" });
       const txtFile = new File([readableText], txtName, { type: "text/plain" });
       if (navigator.canShare && navigator.canShare({ files: [file, txtFile] })) {
-        await navigator.share({ files: [file, txtFile], title: "Footprints のバックアップ" });
+        /* **title を渡さないこと。**
+           iPhoneはこれを「共有する文章」と見なし、
+           その文字だけを書いた余分なテキストまで作ってしまう */
+        await navigator.share({ files: [file, txtFile] });
         onBackedUp && onBackedUp();
         setMsg(null);
         return;
@@ -5833,7 +5852,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
         <div className="flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
-          <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-neutral-700 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
+          <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
           <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">バックアップ</h2>
           <MenuButton />
         </div>
@@ -6043,6 +6062,10 @@ function AppMain() {
      （＝「収穫した実」）だけが手前に出続けてしまう。
      重なって出る画面はどれも同じ高さ（z-index 50）なので、
      並び順がそのまま前後関係になる点に注意 */
+  /* メニューから画面へ移るとき。
+     **いま重なって出ている画面を、ひとつ残らず閉じること。**
+     閉じ忘れると、その画面が下に残ったままになり、
+     戻ったときに前の画面が出てくる（記録の閲覧・書ごと・日ごとが抜けていた） */
   const goFromMenu = (fn) => {
     setMenuInstant(true);
     setBackupOpen(false);
@@ -6051,6 +6074,9 @@ function AppMain() {
     setGardenOpen(false);
     setHelpOpen(false);
     setTagsOpen(false);
+    setViewing(null);
+    setViewingBook(null);
+    setViewingDay(null);
     fn();
     setMenuOpen(false);
   };
