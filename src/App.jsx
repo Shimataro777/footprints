@@ -278,17 +278,20 @@ function recordRefs(r) {
 }
 function primarySortRef(r) {
   if (r.type === "reading") return { book: r.book || null, chapter: r.chapters && r.chapters.length ? Math.min(...r.chapters) : null, verse: null };
-  if (r.type === "memo") return { book: r.book || null, chapter: null, verse: null };
+  /* 「その他」は「書」の欄を廃止したので、書いた文から拾う。
+     ここで拾わないと書が無いものとして扱われ、目次順で最後尾に落ちる */
+  if (r.type === "memo") return primaryRef(recordAllText(r)) || (r.book ? { book: r.book, chapter: null, verse: null } : {});
   if (r.type === "message") return primaryRef(r.mainVerseText) || primaryRef(recordAllText(r)) || {};
-  if (r.type === "memorization") return primaryRef(r.text) || {};
+  /* 聖句も、ことばの欄に箇所が無ければメモ欄などから拾う（学びと同じ扱い） */
+  if (r.type === "memorization") return primaryRef(r.text) || primaryRef(recordAllText(r)) || {};
   return {};
 }
 function compareForSearch(a, b) {
   const ra = primarySortRef(a), rb = primarySortRef(b);
   const ba = bookIndexOf(ra.book), bb = bookIndexOf(rb.book);
   if (ba !== bb) return ba - bb;
-  const ma = a.type === "memo" ? 0 : 1, mb = b.type === "memo" ? 0 : 1;
-  if (ma !== mb) return ma - mb;
+  /* 以前は同じ書のなかで「その他」を先頭に寄せていた（書だけを持ち、章が無かったため）。
+     いまは章まで拾えるので、種類ではなく章・節の順に並べる */
   const ca = ra.chapter ?? 9999, cb = rb.chapter ?? 9999;
   if (ca !== cb) return ca - cb;
   const va = ra.verse ?? 9999, vb = rb.verse ?? 9999;
