@@ -5407,9 +5407,13 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
                   className={"flex items-center gap-2 rounded-xl border-2 bg-white px-3.5 py-2.5 "
                     + (held ? "border-th-700 shadow-xl" : "border-neutral-200")}
                   style={{
-                    transform: held ? `translateY(${drag.dy}px) scale(1.02)` : `translateY(${shift || 0}px)`,
-                    /* つまんでいる札は指にぴたりと付く。よける札だけ滑らかに動かす */
-                    transition: held ? "none" : "transform .18s cubic-bezier(.22,1,.36,1)",
+                    transform: held ? `translateY(${drag.dy}px)` : `translateY(${shift || 0}px)`,
+                    /* つまんでいる札は指にぴたりと付く。よける札だけ滑らかに動かす。
+                       **勢いのある動き方（cubic-bezier(.22,1,…)）は使わないこと。**
+                       行き過ぎてから戻るので、札が跳ねて見える。
+                       まっすぐ動く ease-out にしておくこと。
+                       つまんだ札を大きくするのもやめた（動かすたびに膨らんで落ち着かない） */
+                    transition: held ? "none" : "transform .16s ease-out",
                     position: held ? "relative" : undefined,
                     zIndex: held ? 5 : undefined,
                     touchAction: drag ? "none" : undefined,
