@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
-  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, Pin, Bookmark, Tag
+  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, Pin, Bookmark, Tag, Copy, ClipboardPaste
 } from "lucide-react";
 
 /* ============================================================
@@ -816,6 +816,61 @@ function recordsFromFile(text) {
   const cleaned = out.filter((r) => r && typeof r === "object" && r.type);
   if (!cleaned.length) throw new Error("Footprintsの記録が見つかりません");
   return cleaned;
+}
+
+/* ============================================================
+   文字を貼りつけて取り込む小窓
+   ファイルを選ぶ道すじだけだと、
+   保存先が分かりにくい端末（Androidなど）で行き詰まる。
+   メモ帳などに控えた文字から、そのまま戻せるようにしておく
+   ============================================================ */
+function PasteDialog({ title, hint, actionLabel, onCancel, onSubmit }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { const t = setTimeout(() => ref.current && ref.current.focus(), 260); return () => clearTimeout(t); }, []);
+
+  /* 端末が許すなら、貼り付け先から直に読み取る。
+     許さない端末でも、下の欄に手で貼れば同じことができる */
+  const pasteFromClipboard = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const t = await navigator.clipboard.readText();
+        if (t) { setText(t); return; }
+      }
+    } catch (e) { /* 読めない端末では、手で貼ってもらう */ }
+    ref.current && ref.current.focus();
+  };
+
+  const go = async () => {
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    await onSubmit(text);
+    setBusy(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center px-5"
+      style={{ zIndex: 2147483400 }} onClick={onCancel}>
+      <div className="bg-white rounded-2xl p-5 max-w-md w-full border-2 border-neutral-200 shadow-xl anim-pop"
+        onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-1.5">{title}</h3>
+        <p className="text-[13.5px] text-neutral-600 mb-3 leading-relaxed">{hint}</p>
+        <textarea ref={ref} value={text} onChange={(e) => setText(e.target.value)}
+          placeholder="ここに貼りつけてください"
+          className="w-full h-40 rounded-xl border-2 border-neutral-300 p-3.5 ft-input leading-relaxed text-neutral-900 placeholder-neutral-400 resize-none focus:outline-none focus:ring-4 focus:ring-th-800/20 focus:border-th-800" />
+        <button type="button" onClick={pasteFromClipboard}
+          className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px] mt-2"}>
+          <Download size={16} /> 貼り付け先から読み取る
+        </button>
+        <div className="flex gap-2.5 mt-4">
+          <button type="button" onClick={onCancel} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
+          <button type="button" onClick={go} disabled={!text.trim() || busy}
+            className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>{busy ? "読み込み中…" : actionLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ============================================================
@@ -3956,7 +4011,7 @@ function TypeRow({ t, names, descs, onPick }) {
   );
 }
 
-function TypePickSheet({ onPick, onCancel, descs, names, onImportFile }) {
+function TypePickSheet({ onPick, onCancel, descs, names, onImportFile, onPasteImport }) {
   const [closing, close] = useClosing(onCancel, 240);
   const fileRef = useRef(null);
   return (
@@ -4000,6 +4055,18 @@ function TypePickSheet({ onPick, onCancel, descs, names, onImportFile }) {
                 <span className="flex-1 min-w-0">
                   <span className="block text-[15.5px] font-bold text-neutral-900">ファイルから取り込む</span>
                   <span className="block text-[12.5px] text-neutral-500 mt-0.5">ほかの人から受け取った記録など</span>
+                </span>
+                <ChevronRight size={18} className="text-neutral-400 shrink-0" />
+              </button>
+              {/* ファイルの行方が分かりにくい端末のために、文字から取り込む道すじも用意する */}
+              <button type="button" onClick={onPasteImport}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-neutral-50 ft-tap ft-tap-card">
+                <span className="w-11 h-11 rounded-xl bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-600 shrink-0">
+                  <ClipboardPaste size={22} />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[15.5px] font-bold text-neutral-900">文字から取り込む</span>
+                  <span className="block text-[12.5px] text-neutral-500 mt-0.5">メモやチャットに貼られた記録から</span>
                 </span>
                 <ChevronRight size={18} className="text-neutral-400 shrink-0" />
               </button>
@@ -4630,6 +4697,15 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
   };
   useEffect(() => () => clearTimeout(shareTimer.current), []);
 
+  /* この記録を文字でコピーする。
+     ファイルの行方が分かりにくい端末では、こちらのほうが確かに残せる */
+  const copyOne = async () => {
+    const ok = await copyToClipboard(oneRecordJson(record));
+    tellShare(ok
+      ? "コピーしました。メモやチャットに貼りつけて渡せます。"
+      : "コピーできませんでした。");
+  };
+
   /* この記録だけをファイルにして送る。
      共有シートが使える端末ではそこから、使えない端末では書き出しで受け取れるようにする */
   const shareOne = async () => {
@@ -4703,6 +4779,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
             <MarkButton on={!!record.bookmarked} onClick={() => onToggleMark(record.id, "bookmarked")}
               label="ブックマーク" icon={<Bookmark size={18} />} />
             <MarkButton on={false} onClick={shareOne} label="この記録をファイルにして送る" icon={<Upload size={18} />} />
+            <MarkButton on={false} onClick={copyOne} label="この記録を文字でコピーする" icon={<Copy size={18} />} />
           </span>
         </div>
         <TagChips tags={record.tags} className="mb-5" />
@@ -5808,6 +5885,27 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
     }
   };
 
+  /* まるごと文字でコピーする。
+     **コピーも「書き出した」として数えること。**
+     貼り付け先に残しておけば、そこから戻せるため。
+     ただし貼り忘れると失われるので、そのことも伝える */
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const copyWholeBackup = async () => {
+    const ok = await copyToClipboard(buildBackupFile(readableText, jsonText));
+    if (ok) {
+      onBackedUp && onBackedUp();
+      setMsg({ kind: "ok", text: "コピーしました。メモ帳やチャットなど、あとで開ける場所に貼りつけて残してください。" });
+    } else {
+      setPreviewOpen(true);
+      setMsg({ kind: "err", text: "コピーできませんでした。下の「内容を確認する」から、手でコピーしてください。" });
+    }
+  };
+  /* 貼りつけた文字から戻す。ファイルを選んだときと同じ道すじを通す */
+  const restoreFromText = async (text) => {
+    setPasteOpen(false);
+    await readBackupText(text);
+  };
+
   const copyText = async (text, label) => {
     const ok = await copyToClipboard(text);
     if (ok) {
@@ -5818,14 +5916,15 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
     }
   };
 
-  const handleFile = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
+  /* 画面の左端から払って戻る仕組み。切り出しの折に落とさないこと */
+  const { stripRef, screenRef } = useEdgeSwipeBack(close);
+
+  /* 読み込みの中身。ファイルからでも、貼りつけた文字からでも同じ道すじを通す。
+     **2つに分けて書かないこと。** 片方だけ直すと食い違う */
+  const readBackupText = async (text) => {
       try {
         /* 読める文が前に付いていても、そこは飛ばして復元用データだけを読む */
-        const data = JSON.parse(extractBackupJson(reader.result));
+        const data = JSON.parse(extractBackupJson(text));
         let recs, arts = null, gard = null, tgs = null, setting = null;
         if (Array.isArray(data)) recs = data;                       // 旧形式（記録のみ）
         else if (data && Array.isArray(data.records)) {             // 新形式
@@ -5845,7 +5944,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
              ここで受け取らないと「正しいファイルを選んでください」と突き返してしまう。
              送られた側は違いを知らないので、どちらの形でも受け取れるようにしておく。
              **いまの記録は消さず、足すだけにすること** */
-          onImportOne && onImportOne(reader.result);
+          onImportOne && onImportOne(text);
           setMsg(null);
           return;
         } else throw new Error("invalid");
@@ -5857,17 +5956,23 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
       } catch (err) {
         /* 何が悪かったのかを、選んだファイルの中身から見て伝える。
            「.json を選んで」とは書かない。末尾が .txt のものも正しいため */
-        const head = String(reader.result || "").trim().slice(0, 40);
+        const head = String(text || "").trim().slice(0, 40);
         const looksReadable = /^書き出し日時/.test(head);
         setMsg({ kind: "err", text: looksReadable
           ? "このファイルには復元用のデータが入っていません。古い形のファイルのようです。新しく書き出したファイル（Footprints-backup-…）を選んでください。"
           : "このファイルからは記録が見つかりませんでした。Footprints で書き出したファイルを選んでください。" });
       }
-    };
+  };
+
+  const handleFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { readBackupText(reader.result); };
+    reader.onerror = () => setMsg({ kind: "err", text: "ファイルを読めませんでした。" });
     reader.readAsText(file);
     e.target.value = "";
   };
-  const { stripRef, screenRef } = useEdgeSwipeBack(onClose);
 
   const msgStyle = msg
     ? msg.kind === "ok" ? "bg-th-50 border-th-200 text-th-900"
@@ -5918,6 +6023,17 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
             </button>
             {/* 種類で絞り込まない（Androidで選べなくなるため） */}
             <input ref={fileInputRef} type="file" onChange={handleFile} className="hidden" />
+
+            {/* ファイルの行方が分かりにくい端末のために、文字でのやりとりも用意する。
+                メモ帳やチャットに貼っておけば、そこから戻せる */}
+            <div className="flex gap-2.5">
+              <button onClick={copyWholeBackup} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
+                <Copy size={16} /> 文字でコピー
+              </button>
+              <button onClick={() => setPasteOpen(true)} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
+                <ClipboardPaste size={16} /> 文字から復元
+              </button>
+            </div>
           </div>
 
           {msg && (
@@ -5973,6 +6089,12 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
 
       {fallbackOpen && (
         <SaveFallbackDialog onCopy={copyFromFallback} onCancel={() => setFallbackOpen(false)} />
+      )}
+      {pasteOpen && (
+        <PasteDialog title="文字から復元する"
+          hint="コピーしておいたバックアップの文字を貼りつけてください。記録・設定・タグがまとめて戻ります。"
+          actionLabel="復元する"
+          onCancel={() => setPasteOpen(false)} onSubmit={restoreFromText} />
       )}
     </OverlayScreen>
   );
@@ -6280,6 +6402,7 @@ function AppMain() {
     setEditing(emptyRecord(t));
   };
   const closeForm = () => { setEditing(null); setIsNew(false); setTypeLocked(false); clearDraft(); setDraftSaved(null); };
+  const [pasteRecord, setPasteRecord] = useState(false);
   const [importMsg, setImportMsg] = useState(null);
   /* 知らせを出すときは、前の消しタイマーを必ず止めること。
      止めないと、続けて操作したときに前のタイマーが新しい知らせを消してしまう */
@@ -6863,7 +6986,17 @@ function AppMain() {
 
         {draftSaved && <DraftDialog draft={draftSaved} onResume={resumeDraft} onDiscard={discardDraft} names={typeDesc.name} />}
 
-        {typePick && <TypePickSheet onPick={startNewOfType} onCancel={() => setTypePick(false)} descs={typeDesc.desc} names={typeDesc.name} onImportFile={importOneFile} />}
+        {typePick && <TypePickSheet onPick={startNewOfType} onCancel={() => setTypePick(false)} descs={typeDesc.desc} names={typeDesc.name}
+          onImportFile={importOneFile} onPasteImport={() => { setTypePick(false); setPasteRecord(true); }} />}
+
+        {/* 文字から記録を取り込む */}
+        {pasteRecord && (
+          <PasteDialog title="文字から取り込む"
+            hint="受け取った記録の文字を貼りつけてください。いまある記録は消えず、新しい記録として足されます。"
+            actionLabel="取り込む"
+            onCancel={() => setPasteRecord(false)}
+            onSubmit={async (t) => { setPasteRecord(false); await importOneFile(t); }} />
+        )}
 
         {editing && (
           <RecordForm key={editing.id} initial={isNew ? null : editing} draft={isNew ? editing : null}
