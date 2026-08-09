@@ -3980,7 +3980,11 @@ function TypePickSheet({ onPick, onCancel, descs, names, onImportFile }) {
           {onImportFile && (
             <>
               <div className="border-t border-neutral-200 mx-2 my-1.5" />
-              <input ref={fileRef} type="file" accept="application/json,.json" className="hidden"
+              {/* **種類で絞り込まないこと。**
+                  Androidの選択画面は、種類の分からないファイルを選べなくする。
+                  .json は種類が付かないことが多く、灰色のまま選べなくなる（実際そうなった）。
+                  何でも選べるようにして、中身が違えば読み込むときに知らせる */}
+              <input ref={fileRef} type="file" className="hidden"
                 onChange={(e) => {
                   const f = e.target.files && e.target.files[0];
                   e.target.value = "";
@@ -4632,7 +4636,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
     const name = `Footprints-record-${todayStr()}.json`;
     const text = oneRecordJson(record);
     try {
-      const file = new File([text], name, { type: "application/json" });
+      const file = new File([text], name, { type: "text/plain" });
       if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
         /* title は渡さない（余分なテキストが作られるため） */
         await navigator.share({ files: [file] });
@@ -4643,7 +4647,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
       if (e && e.name === "AbortError") return;
     }
     try {
-      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
       const a = document.createElement("a");
       a.href = url; a.download = name;
       document.body.appendChild(a); a.click(); a.remove();
@@ -5720,7 +5724,10 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
     // 1) 共有シート（iPhoneはここから「ファイルに保存」で任意の場所に保存できる）
     //    ※ await を挟むと iOS が「ユーザー操作による呼び出し」と認識しなくなるため、最初に試す
     try {
-      const file = new File([jsonText], filename, { type: "application/json" });
+      /* **種類は text/plain にすること。**
+         application/json は、Androidの共有先の多くが受け取ってくれない。
+         名前の末尾（.json）はそのままなので、戻すときは今までどおり読める */
+      const file = new File([jsonText], filename, { type: "text/plain" });
       const txtFile = new File([readableText], txtName, { type: "text/plain" });
       if (navigator.canShare && navigator.canShare({ files: [file, txtFile] })) {
         /* **title を渡さないこと。**
@@ -5740,7 +5747,8 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
       try {
         const handle = await window.showSaveFilePicker({
           suggestedName: filename,
-          types: [{ description: "Footprints のバックアップ", accept: { "application/json": [".json"] } }],
+          /* パソコンで保存先を選ぶとき。.txt でも保存できるようにしておく */
+          types: [{ description: "Footprints のバックアップ", accept: { "text/plain": [".json", ".txt"] } }],
         });
         const writable = await handle.createWritable();
         await writable.write(jsonText);
@@ -5760,7 +5768,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
     //      戻れなくなってしまうため、埋め込みのときは行わない
     if (!embedded) {
       try {
-        const blob = new Blob([jsonText], { type: "application/json" });
+        const blob = new Blob([jsonText], { type: "text/plain;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -5885,7 +5893,8 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
             <button onClick={() => fileInputRef.current && fileInputRef.current.click()} className={BTN_SECONDARY + " w-full " + BTN_H + " text-[15.5px]"}>
               <Upload size={18} /> データ復元
             </button>
-            <input ref={fileInputRef} type="file" accept="application/json,.json" onChange={handleFile} className="hidden" />
+            {/* 種類で絞り込まない（Androidで選べなくなるため） */}
+            <input ref={fileInputRef} type="file" onChange={handleFile} className="hidden" />
           </div>
 
           {msg && (
