@@ -4633,7 +4633,11 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
   /* この記録だけをファイルにして送る。
      共有シートが使える端末ではそこから、使えない端末では書き出しで受け取れるようにする */
   const shareOne = async () => {
-    const name = `Footprints-record-${todayStr()}.json`;
+    /* **末尾は .txt にすること。**
+       Androidは、中身の種類（text/plain）と名前の末尾（.json）が
+       食い違うファイルを受け取ってくれないことがある。
+       中身はこれまでどおりなので、取り込むときは今までどおり読める */
+    const name = `Footprints-record-${todayStr()}.txt`;
     const text = oneRecordJson(record);
     try {
       const file = new File([text], name, { type: "text/plain" });
