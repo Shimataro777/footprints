@@ -276,22 +276,27 @@ function recordRefs(r) {
   if (r.type === "memo" && r.book) refs.push({ book: r.book, chapter: null });
   return refs;
 }
+/* 並べるときに使う「代表の箇所」。
+   **どの種類でも、決まった欄が空なら本文から拾い直すこと。**
+   拾い直しを忘れると、その記録だけ目次順のいちばん後ろへ回される */
 function primarySortRef(r) {
-  if (r.type === "reading") return { book: r.book || null, chapter: r.chapters && r.chapters.length ? Math.min(...r.chapters) : null, verse: null };
-  /* 「その他」は「書」の欄を廃止したので、書いた文から拾う。
-     ここで拾わないと書が無いものとして扱われ、目次順で最後尾に落ちる */
-  if (r.type === "memo") return primaryRef(recordAllText(r)) || (r.book ? { book: r.book, chapter: null, verse: null } : {});
+  if (r.type === "reading") {
+    if (r.book) return { book: r.book, chapter: r.chapters && r.chapters.length ? Math.min(...r.chapters) : null, verse: null };
+    /* 書を選ばずにメモだけ書いた通読は、本文から拾う */
+    return primaryRef(recordAllText(r)) || {};
+  }
+  /* 「その他」も、本文に書いた聖書箇所で並べる。
+     以前は r.book という欄を見ていたが、その欄は廃止済みで
+     いつも空になり、目次順のいちばん後ろへ回されていた（実際そうなっていた） */
+  if (r.type === "memo") return primaryRef(recordAllText(r)) || {};
   if (r.type === "message") return primaryRef(r.mainVerseText) || primaryRef(recordAllText(r)) || {};
-  /* 聖句も、ことばの欄に箇所が無ければメモ欄などから拾う（学びと同じ扱い） */
-  if (r.type === "memorization") return primaryRef(r.text) || primaryRef(recordAllText(r)) || {};
+  if (r.type === "memorization") return primaryRef(r.text) || {};
   return {};
 }
 function compareForSearch(a, b) {
   const ra = primarySortRef(a), rb = primarySortRef(b);
   const ba = bookIndexOf(ra.book), bb = bookIndexOf(rb.book);
   if (ba !== bb) return ba - bb;
-  /* 以前は同じ書のなかで「その他」を先頭に寄せていた（書だけを持ち、章が無かったため）。
-     いまは章まで拾えるので、種類ではなく章・節の順に並べる */
   const ca = ra.chapter ?? 9999, cb = rb.chapter ?? 9999;
   if (ca !== cb) return ca - cb;
   const va = ra.verse ?? 9999, vb = rb.verse ?? 9999;
@@ -1023,10 +1028,6 @@ const inputCls = "w-full rounded-xl bg-white border-2 border-neutral-300 px-3.5 
 /* iPhoneの切り欠き（ノッチ・ダイナミックアイランド）に隠れないための上余白。
    index.html で viewport-fit=cover にしているため、自分で余白を取る必要がある */
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
-/* 画面の下端も同じ理由で自分で余白を取る。
-   ホームバー（下端の横線）のぶんに、さらに余白を足して読みやすくする。
-   重なる画面の一覧は、いちばん下の記録がホームバーに寄りすぎないよう SAFE_BOTTOM(28) */
-const SAFE_BOTTOM = (extra) => ({ paddingBottom: `calc(env(safe-area-inset-bottom) + ${extra}px)` });
 
 const BTN_H = "btn-h"; // 全ボタン共通の高さ（実際の値はグローバルCSSの .btn-h で定義）
 /* 押したときの手ごたえ。少し沈み、色がわずかに暗くなる。
@@ -1786,10 +1787,14 @@ function InlineLink({ url, children }) {
   );
 }
 
-function renderInline(text, withRefColor) {
+/* 文の中のURLだけをリンクにして描く。
+   **聖書箇所に色や太字を付けないこと。**
+   引用は左の縦線で示しているので、そのうえ字まで飾ると
+   本文が読みにくくなる（依頼により取りやめ） */
+function renderInline(text) {
   return splitByUrl(text).map((sg, i) => sg.url
     ? <InlineLink key={i} url={sg.url}>{sg.text}</InlineLink>
-    : <React.Fragment key={i}>{withRefColor ? highlightRefs(sg.text) : sg.text}</React.Fragment>);
+    : <React.Fragment key={i}>{sg.text}</React.Fragment>);
 }
 
 function HighlightedText({ text, className }) {
@@ -1811,48 +1816,18 @@ function HighlightedText({ text, className }) {
            右端は入れ物の右端のままなので、ふつうの文とぴったり揃う */
         <div key={i} className="ft-quote rounded-r-sm" style={gapStyle(b, i)}>
           {/* 斜体にはしない。日本語だと読みづらくなるため（依頼により解除） */}
-          <p className={quoteClass}>{renderInline(b.text, false)}</p>
+          <p className={quoteClass}>{renderInline(b.text)}</p>
         </div>
       ) : (
-        <p key={i} className={className} style={gapStyle(b, i)}>{renderInline(b.text, true)}</p>
+        <p key={i} className={className} style={gapStyle(b, i)}>{renderInline(b.text)}</p>
       ))}
     </div>
   );
 }
 
 /* 本文の中の聖書箇所に色を付ける。返すのは文字と<span>の並び */
-function highlightRefs(text) {
-  if (!text) return null;
-  const marks = [];
-  /* 「聖句に追加」の対象になる範囲（本文＋聖書箇所）を、そのまま色付けの範囲に使う。
-     判定は splitByCitations に任せること。ここに同じ判定を書き直すと、
-     色が付く範囲と聖句に追加される範囲が食い違う */
-  splitByCitations(text).forEach((seg) => marks.push([seg.start, seg.end]));
-  /* 引用になっていない、ただの聖書箇所も色を付ける（本文のない箇所など） */
-  let m;
-  REF_REGEX.lastIndex = 0;
-  while ((m = REF_REGEX.exec(text)) !== null) {
-    const a = m.index, b = m.index + m[0].length;
-    if (!marks.some(([s2, e2]) => a >= s2 && b <= e2)) marks.push([a, b]);
-  }
-  if (!marks.length) return text;
-  marks.sort((x, y) => x[0] - y[0]);
-  const merged = [];
-  marks.forEach((r) => {
-    const last = merged[merged.length - 1];
-    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
-    else merged.push([...r]);
-  });
-  const parts = [];
-  let pos = 0;
-  merged.forEach(([a, b], i) => {
-    if (a > pos) parts.push(text.slice(pos, a));
-    parts.push(<span key={i} className="text-th-800 font-bold">{text.slice(a, b)}</span>);
-    pos = b;
-  });
-  if (pos < text.length) parts.push(text.slice(pos));
-  return parts;
-}
+/* highlightRefs（聖書箇所に色を付ける処理）は取りやめた。
+   引用は左の縦線で示している */
 
 function RecognizedRefs({ text }) {
   const refs = parseBibleRefs(text);
@@ -4343,10 +4318,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
 
         {searching && <LoadingOverlay label="探しています" />}
         {searching || !searched ? null : (
-        /* pb-8 は、いちばん下の記録が下の帯（タブ）に潜らないための逃げ場。
-           外側は pb-20 のまま（探す前の画面がスクロールなしで収まる高さを保つため）で、
-           結果の一覧にだけ足している。合わせて 112px＝ほかの画面の pb-28 と同じになる */
-        <div key={resultKey} className="ft-seq pb-8 space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5 lg:items-start">
+        <div key={resultKey} className="ft-seq space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5 lg:items-start">
           {sortedRecords.length === 0 && (
             <div className="flex flex-col items-center py-6 lg:col-span-2 ft-noresult">
               <Mascot seed="search-empty" size={118} />
@@ -5269,8 +5241,7 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ブックマーク</h2>
         <MenuButton />
       </div>
-      {/* いちばん下の記録が画面の下端やホームバーに寄りついてしまうため、下だけ余白を足す */}
-      <div className="flex-1 overflow-y-auto px-5 pt-5 max-w-2xl mx-auto w-full" style={SAFE_BOTTOM(28)}>
+      <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         <div className="flex items-center gap-2 mb-3">
           <p className="text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase">{list.length}件</p>
           <div className="ml-auto w-[150px]">
