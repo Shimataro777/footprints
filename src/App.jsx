@@ -5678,7 +5678,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
 /* ============================================================
    バックアップ画面
    ============================================================ */
-function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, typeDesc, onClose, onRestore, onBackedUp }) {
+function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, typeDesc, onClose, onRestore, onBackedUp, onImportOne }) {
   const [closing, close] = useClosing(onClose);
   const readableText = useMemo(() => buildBackupText(records), [records]);
   const jsonText = useMemo(() => JSON.stringify({
@@ -5836,6 +5836,14 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
             captions: data.captions && typeof data.captions === "object" ? data.captions : null,
             typeDesc: data.typeDesc && typeof data.typeDesc === "object" ? data.typeDesc : null,
           };
+        } else if (data && data.record && typeof data.record === "object") {
+          /* 1件だけの受け渡しファイル。
+             ここで受け取らないと「正しいファイルを選んでください」と突き返してしまう。
+             送られた側は違いを知らないので、どちらの形でも受け取れるようにしておく。
+             **いまの記録は消さず、足すだけにすること** */
+          onImportOne && onImportOne(reader.result);
+          setMsg(null);
+          return;
         } else throw new Error("invalid");
         await onRestore(recs, arts, gard, tgs, setting);
         setMsg({
@@ -5843,7 +5851,13 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
           text: `${recs.length}件の記録` + (arts && arts.length ? `と${arts.length}枚のイラスト` : "") + "を読み込みました。",
         });
       } catch (err) {
-        setMsg({ kind: "err", text: "読み込みに失敗しました。正しいバックアップファイル（.json）を選んでください。" });
+        /* 何が悪かったのかを、選んだファイルの中身から見て伝える。
+           「.json を選んで」とは書かない。末尾が .txt のものも正しいため */
+        const head = String(reader.result || "").trim().slice(0, 40);
+        const looksReadable = /^書き出し日時/.test(head);
+        setMsg({ kind: "err", text: looksReadable
+          ? "これは読むためのファイルです。復元にはもう一方のファイル（Footprints-backup-…）を選んでください。"
+          : "このファイルからは記録が見つかりませんでした。Footprints で書き出したファイルを選んでください。" });
       }
     };
     reader.readAsText(file);
@@ -6275,10 +6289,13 @@ function AppMain() {
      **いまある記録は消さないこと。** 受け取った分を新しい記録として足すだけにする。
      idは必ず振り直す。送り手のidをそのまま使うと、
      たまたま同じidの記録を持っていた場合に上書きしてしまう */
-  const importOneFile = async (file) => {
+  /* 人から受け取ったファイルを取り込む。
+     ファイルそのものでも、読み終えた文字列でも受け取れるようにしてある。
+     バックアップ画面からも同じ処理を使うため */
+  const importOneFile = async (fileOrText) => {
     setTypePick(false);
     try {
-      const text = await file.text();
+      const text = typeof fileOrText === "string" ? fileOrText : await fileOrText.text();
       const incoming = recordsFromFile(text);
       /* **数え上げを setRecords の中でやらないこと。**
          あの中の処理は2回呼ばれることがあり、数がずれる（実際ずれた）。
@@ -6859,7 +6876,8 @@ function AppMain() {
         )}
 
         {backupOpen && <BackupScreen records={records} artworks={artworks} garden={garden} tagMaster={tagMaster}
-          prefs={prefs} captions={captions} typeDesc={typeDesc} onClose={() => setBackupOpen(false)} onRestore={handleRestore} onBackedUp={markBackedUp} />}
+          prefs={prefs} captions={captions} typeDesc={typeDesc} onClose={() => setBackupOpen(false)} onRestore={handleRestore} onBackedUp={markBackedUp}
+          onImportOne={importOneFile} />}
 
         {artOpen && <ArtworkScreen artworks={artworks} onChange={saveArtworks} captions={captions} onSaveCaptions={saveCaptions} prefs={prefs} onSavePrefs={savePrefs} onClose={() => setArtOpen(false)} typeDesc={typeDesc} onSaveTypeDesc={saveTypeDesc} />}
 
