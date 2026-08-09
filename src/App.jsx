@@ -4832,6 +4832,24 @@ function SaveFallbackDialog({ onCopy, onCancel }) {
   );
 }
 
+/* 書き出すファイルの中身。
+   **読める文と復元用データを、1つのファイルにまとめること。**
+   2つに分けると、どちらを選べばよいか分からなくなり、
+   Androidでは片方しか手元に残らないこともある（実際そうなった）。
+   下の目印から後ろが復元用。取り込むときはここを探して読む */
+const BACKUP_MARK = "===== ここから下は復元用のデータです。消さないでください =====";
+function buildBackupFile(readableText, jsonText) {
+  return `${readableText}\n\n${BACKUP_MARK}\n${jsonText}\n`;
+}
+/* 受け取ったファイルから、復元用データを取り出す。
+   目印つきのファイルでも、復元用データだけのファイル（昔の形）でも読めるようにする */
+function extractBackupJson(text) {
+  const s = String(text == null ? "" : text);
+  const i = s.indexOf(BACKUP_MARK);
+  if (i !== -1) return s.slice(i + BACKUP_MARK.length).trim();
+  return s.trim();
+}
+
 function buildBackupText(records) {
   const lines = [];
   /* アプリ名の見出しは入れない。ファイル名で分かるようにしてあるので、
@@ -5710,34 +5728,22 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
        日付を後ろに置くと、並べたときに古い順に揃う。
        記号は半角のハイフンだけにすること。空白や日本語を混ぜると、
        共有や送信の途中で文字が化けることがある */
-    const filename = `Footprints-backup-${todayStr()}.json`;
-    /* 読むためのテキストも一緒に出す。
-       **中身は「内容を確認する → 読みやすい形式」と同じものにすること。**
-       別に組み立て直すと、画面で見えているものと食い違う */
-    const txtName = `Footprints-backup-${todayStr()}.txt`;
-    const saveTxt = () => {
-      try {
-        const url = URL.createObjectURL(new Blob([readableText], { type: "text/plain;charset=utf-8" }));
-        const a = document.createElement("a");
-        a.href = url; a.download = txtName;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 20000);
-      } catch (e) { /* 読む用は無くても復元はできるので、失敗しても進める */ }
-    };
-
+    /* 書き出すのは1つだけ。読める文と復元用データを1つにまとめてある。
+       末尾は .txt。どの端末でも受け取れて、そのまま読める */
+    const filename = `Footprints-backup-${todayStr()}.txt`;
+    const fileText = buildBackupFile(readableText, jsonText);
     // 1) 共有シート（iPhoneはここから「ファイルに保存」で任意の場所に保存できる）
     //    ※ await を挟むと iOS が「ユーザー操作による呼び出し」と認識しなくなるため、最初に試す
     try {
       /* **種類は text/plain にすること。**
          application/json は、Androidの共有先の多くが受け取ってくれない。
          名前の末尾（.json）はそのままなので、戻すときは今までどおり読める */
-      const file = new File([jsonText], filename, { type: "text/plain" });
-      const txtFile = new File([readableText], txtName, { type: "text/plain" });
-      if (navigator.canShare && navigator.canShare({ files: [file, txtFile] })) {
+      const file = new File([fileText], filename, { type: "text/plain" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
         /* **title を渡さないこと。**
            iPhoneはこれを「共有する文章」と見なし、
            その文字だけを書いた余分なテキストまで作ってしまう */
-        await navigator.share({ files: [file, txtFile] });
+        await navigator.share({ files: [file] });
         onBackedUp && onBackedUp();
         setMsg(null);
         return;
@@ -5755,12 +5761,10 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
           types: [{ description: "Footprints のバックアップ", accept: { "text/plain": [".json", ".txt"] } }],
         });
         const writable = await handle.createWritable();
-        await writable.write(jsonText);
+        await writable.write(fileText);
         await writable.close();
-        /* 読む用のテキストは、場所を二度も尋ねないよう、そのまま書き出す */
-        saveTxt();
         onBackedUp && onBackedUp();
-        setMsg({ kind: "ok", text: "指定した場所に保存しました。読む用のテキストも書き出しました。" });
+        setMsg({ kind: "ok", text: "指定した場所に保存しました。" });
         return;
       } catch (e) {
         if (e && e.name === "AbortError") return;
@@ -5772,16 +5776,15 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
     //      戻れなくなってしまうため、埋め込みのときは行わない
     if (!embedded) {
       try {
-        const blob = new Blob([jsonText], { type: "text/plain;charset=utf-8" });
+        const blob = new Blob([fileText], { type: "text/plain;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
         a.download = filename;
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 20000);
-        saveTxt();
         onBackedUp && onBackedUp();
-        setMsg({ kind: "ok", text: `「${filename}」と「${txtName}」を保存しました。` });
+        setMsg({ kind: "ok", text: `「${filename}」を保存しました。` });
         return;
       } catch (e) { /* 次の方法へ */ }
     }
@@ -5821,7 +5824,8 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        const data = JSON.parse(reader.result);
+        /* 読める文が前に付いていても、そこは飛ばして復元用データだけを読む */
+        const data = JSON.parse(extractBackupJson(reader.result));
         let recs, arts = null, gard = null, tgs = null, setting = null;
         if (Array.isArray(data)) recs = data;                       // 旧形式（記録のみ）
         else if (data && Array.isArray(data.records)) {             // 新形式
@@ -5856,7 +5860,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
         const head = String(reader.result || "").trim().slice(0, 40);
         const looksReadable = /^書き出し日時/.test(head);
         setMsg({ kind: "err", text: looksReadable
-          ? "これは読むためのファイルです。復元にはもう一方のファイル（Footprints-backup-…）を選んでください。"
+          ? "このファイルには復元用のデータが入っていません。古い形のファイルのようです。新しく書き出したファイル（Footprints-backup-…）を選んでください。"
           : "このファイルからは記録が見つかりませんでした。Footprints で書き出したファイルを選んでください。" });
       }
     };
@@ -5897,6 +5901,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
               <p className="text-[12.5px] text-neutral-500 leading-relaxed">
                 記録・イラスト・果樹・タグの一覧に加えて、テーマ色や文字の大きさ、
                 記録の種類の名前、ひとことなどの設定も一緒に保存されます。
+                ファイルは1つだけです。そのまま読める形で、復元にも使えます。
               </p>
 </div>
           </div>
