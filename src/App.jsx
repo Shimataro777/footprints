@@ -1981,7 +1981,14 @@ function useClosing(onClose, ms = 230) {
   const startClose = useCallback((...args) => {
     setClosing((c) => {
       if (c) return c;
-      timer.current = setTimeout(() => onClose && onClose(...args), ms);
+      timer.current = setTimeout(() => {
+        onClose && onClose(...args);
+        /* **閉じ終わったら「閉じ中」を必ず解くこと。**
+           解かないと、次に開いたときも閉じる動きのまま描かれ、
+           見えないのに覆いだけが残って、画面のどこを押しても効かなくなる
+           （日付を選ぶ窓でキャンセルしたあと、実際にそうなっていた） */
+        setClosing(false);
+      }, ms);
       return true;
     });
   }, [onClose, ms]);
@@ -2609,7 +2616,7 @@ function Mascot({ seed = "a", size = 132, withNotes = false, className = "" }) {
 /* ============================================================
    果樹を育てる（ホーム画面）
    通読した日数と記録の件数の**両方**が条件に届くと、次の段階へ進む。
-   最後の段階は「50日かつ67件」なので、日数だけ経っても実らない。
+   最後の段階は「35日かつ42件」なので、日数だけ経っても実らない。
    **画面に出す文には日数を書かないこと。**
    日数だけで実るかのように読めてしまい、実際と食い違う
    ============================================================ */
@@ -2847,21 +2854,21 @@ const STAGES = [
     verse: "良い地に蒔かれたものとは、みことばを聞いて悟る人のことです。本当に実を結び、あるものは百倍、あるものは六十倍、あるものは三十倍の実を結びます。", ref: "マタイの福音書 13:23" },
   { n: 2,  name: "ちいさな芽",           days: 1,   count: 1,
     verse: "見よ、わたしは新しいことを行う。\n今、それが芽生えている。\nあなたがたは、それを知らないのか。\n必ず、わたしは荒野に道を、\n荒れ地に川を設ける。", ref: "イザヤ書 43:19" },
-  { n: 3,  name: "かわいい双葉",         days: 3,   count: 4,
+  { n: 3,  name: "かわいい双葉",         days: 3,   count: 3,
     verse: "私が植えて、アポロが水を注ぎました。しかし、成長させたのは神です。", ref: "コリント人への手紙 第一 3:6" },
-  { n: 4,  name: "本葉と小枝",           days: 6,   count: 8,
+  { n: 4,  name: "本葉と小枝",           days: 5,   count: 6,
     verse: "主のおしえを喜びとし\n昼も夜も　そのおしえを口ずさむ人。\nその人は\n流れのほとりに植えられた木。\n時が来ると実を結び\nその葉は枯れず\nそのなすことはすべて栄える。", ref: "詩篇 1:2-3" },
-  { n: 5,  name: "青々とした若木",       days: 10,  count: 14,
+  { n: 5,  name: "青々とした若木",       days: 7,  count: 10,
     verse: "しかし、主を待ち望む者は新しく力を得、\n鷲のように、翼を広げて上ることができる。\n走っても力衰えず、歩いても疲れない。", ref: "イザヤ書 40:31" },
-  { n: 6,  name: "小さなつぼみ",         days: 15,  count: 21,
+  { n: 6,  name: "小さなつぼみ",         days: 14,  count: 17,
     verse: "神のなさることは、すべて時にかなって美しい。", ref: "伝道者の書 3:11" },
-  { n: 7,  name: "可憐な花（満開）",     days: 21,  count: 29,
+  { n: 7,  name: "可憐な花（満開）",     days: 21,  count: 25,
     verse: "しかし、わたしが与える水を飲む人は、いつまでも決して渇くことがありません。わたしが与える水は、その人の内で泉となり、永遠のいのちへの水が湧き出ます。", ref: "ヨハネの福音書 4:14" },
-  { n: 8,  name: "青くて小さな実",       days: 29,  count: 39,
+  { n: 8,  name: "青くて小さな実",       days: 27,  count: 32,
     verse: "しかし、御霊の実は、愛、喜び、平安、寛容、親切、善意、誠実、柔和、自制です。このようなものに反対する律法はありません。", ref: "ガラテヤ人への手紙 5:22-23" },
-  { n: 9,  name: "大きく膨らんだ実",     days: 39,  count: 52,
+  { n: 9,  name: "大きく膨らんだ実",     days: 32,  count: 38,
     verse: "私を強くしてくださる方によって、私はどんなことでもできるのです。", ref: "ピリピ人への手紙 4:13" },
-  { n: 10, name: "熟した美味しそうな実", days: 50, count: 67,
+  { n: 10, name: "熟した美味しそうな実", days: 35, count: 42,
     verse: "ですから、私の愛する兄弟たち。堅く立って、動かされることなく、いつも主のわざに励みなさい。あなたがたは、自分たちの労苦が主にあって無駄でないことを知っているのですから。", ref: "コリント人への手紙 第一 15:58" },
 ];
 
@@ -3625,16 +3632,23 @@ function CalendarView({ records, onOpenDay }) {
     return (
       /* 選んだ瞬間だけ弾ませたいので、選択の有無を key に混ぜて描き直させている */
       <button key={key + (isSelected ? "-s" : "")} onClick={() => { setSelectedDate(ds); onOpenDay(ds); }}
-        className={"aspect-square min-h-[40px] rounded-lg text-[14.5px] font-bold flex items-center justify-center relative border-2 ft-tap " +
-          (isSelected ? "bg-th-800 border-th-800 text-white ft-daypop"
-            : has ? "bg-th-50 border-th-300 text-th-900"
-              : `border-transparent ${plainColor} ${hoverBg}`)}>
+        /* **記録のある日を枠で囲まないこと。**
+           日が続くと枠が連なって、ひとかたまりの塊のように見える（実際そう見えていた）。
+           日付の下に短い線を1本だけ引いて、控えめに示す */
+        className={"aspect-square min-h-[40px] rounded-lg text-[14.5px] flex items-center justify-center relative border-2 ft-tap " +
+          (isSelected ? "bg-th-800 border-th-800 text-white font-bold ft-daypop"
+            : has ? `border-transparent font-bold ${plainColor} ${hoverBg}`
+              : `border-transparent font-normal ${plainColor} ${hoverBg}`)}>
         {d}
         {has && !isSelected && (
-          <span className="absolute bottom-1 flex gap-0.5">
-            {types.has("reading") && <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />}
-            {types.has("message") && <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />}
-          </span>
+          /* **大きさも色も style で直に書くこと。**
+             クラス任せにすると、その指定が用意されていない場では
+             線が描かれないまま消える（実際そうなっていた）。
+             ここは細い線1本なので、書き出しても短くて済む */
+          <span aria-hidden="true"
+            style={{ position: "absolute", bottom: 6, left: "50%", transform: "translateX(-50%)",
+                     width: 16, height: 3, borderRadius: 999,
+                     backgroundColor: "var(--th-700)", opacity: 0.55 }} />
         )}
       </button>
     );
@@ -6082,33 +6096,31 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
           </div>
 
           <div className="rounded-2xl border-2 border-amber-200 bg-amber-50/60 p-4 mt-6">
+            {/* **文字の色をそろえること。**
+                以前は濃い茶・薄い茶・灰色が混ざっていて、まだらに見えた。
+                見出しだけ濃く、本文はすべて同じ色にする */}
             <p className="text-[13.5px] font-bold text-amber-900 mb-2">控えのとり方は2とおり</p>
-            <p className="text-[13.5px] text-amber-900/90 leading-relaxed mb-2">
-              <b>ファイルで残す</b>…「データを保存」で1つのファイルが出ます。
-              そのまま読めて、「データ復元」で戻せます。
-            </p>
-            <p className="text-[13.5px] text-amber-900/90 leading-relaxed mb-3">
-              <b>文字で残す</b>…「文字でコピー」を押して、メモ帳やチャットなど
-              あとで開ける場所に貼っておきます。戻すときは「文字から復元」に貼りつけます。
-              ファイルの行方が分かりにくい端末では、こちらが確かです。
-            </p>
-            <p className="text-[13.5px] font-bold text-amber-900 mb-2">記録が消えてしまうとき</p>
-            <p className="text-[13.5px] text-neutral-700 leading-relaxed mb-2">
-              記録は、この端末のブラウザの中に保存されています。書いた時点で自動的に残るので、
-              アプリを閉じても消えることはありません。
-            </p>
-            <p className="text-[13.5px] text-neutral-700 leading-relaxed mb-2">
-              ただし、次のようなときは記録ごと失われてしまいます。
-            </p>
-            <ul className="text-[13.5px] text-neutral-700 leading-relaxed space-y-1 mb-2">
-              <li>・ Safariの「履歴とWebサイトデータを消去」をしたとき</li>
-              <li>・ ホーム画面に追加したアプリを削除したとき</li>
-              <li>・ 機種変更で、新しい端末に持ち替えたとき</li>
-              <li>・ 別の端末や、別のブラウザで開いたとき（記録は端末ごとに分かれています）</li>
+            <ul className="text-[13.5px] text-amber-900/85 leading-relaxed space-y-1.5 mb-4">
+              <li>・ <b>ファイルで残す</b>…「データを保存」。1つのファイルが出ます</li>
+              <li>・ <b>文字で残す</b>…「文字でコピー」→ メモ帳などに貼っておく</li>
             </ul>
-            <p className="text-[13.5px] text-neutral-700 leading-relaxed">
-              どれも前ぶれなく起こることがあります。時々このページで控えておけば、
-              そのときも元どおりに戻せます。
+            <p className="text-[13.5px] text-amber-900/85 leading-relaxed mb-4">
+              戻すときは「データ復元」か「文字から復元」。
+              ファイルの行方が分かりにくい端末では、文字で残すほうが確かです。
+            </p>
+
+            <p className="text-[13.5px] font-bold text-amber-900 mb-2">記録が消えてしまうとき</p>
+            <p className="text-[13.5px] text-amber-900/85 leading-relaxed mb-2">
+              記録はこの端末の中だけにあります。次のときは、記録ごと失われます。
+            </p>
+            <ul className="text-[13.5px] text-amber-900/85 leading-relaxed space-y-1 mb-2">
+              <li>・ ブラウザの履歴やサイトデータを消したとき</li>
+              <li>・ ホーム画面のアプリを削除したとき</li>
+              <li>・ 機種を変えたとき</li>
+              <li>・ 別の端末やブラウザで開いたとき</li>
+            </ul>
+            <p className="text-[13.5px] text-amber-900/85 leading-relaxed">
+              どれも前ぶれなく起こります。時々控えておけば、そのときも元どおりに戻せます。
             </p>
           </div>
           {/* いちばん下の逃げ場。無いと注意書きが画面の端すれすれになる */}
@@ -6951,6 +6963,12 @@ function AppMain() {
         .hover\\:bg-th-800:hover{background-color:var(--th-800)} .hover\\:bg-th-900:hover{background-color:var(--th-900)}
         .text-th-700{color:var(--th-700)} .text-th-800{color:var(--th-800)} .text-th-900{color:var(--th-900)}
         .text-th-800\\/70{color:color-mix(in srgb, var(--th-800) 70%, transparent)}
+        /* **薄さ付きの色は、使う前にここへ足すこと。**
+           足し忘れると色が付かず、線や字が見えないまま消える（実際そうなった） */
+        .text-th-800\\/80{color:color-mix(in srgb, var(--th-800) 80%, transparent)}
+        .text-th-800\\/60{color:color-mix(in srgb, var(--th-800) 60%, transparent)}
+        .bg-th-700\\/60{background-color:color-mix(in srgb, var(--th-700) 60%, transparent)}
+        .focus\\:ring-th-800\\/20:focus{--tw-ring-color:color-mix(in srgb, var(--th-800) 20%, transparent)}
         .hover\\:text-th-900:hover{color:var(--th-900)}
         .border-th-200{border-color:var(--th-200)} .border-th-300{border-color:var(--th-300)}
         .border-th-700{border-color:var(--th-700)} .border-th-800{border-color:var(--th-800)} .border-th-900{border-color:var(--th-900)}
