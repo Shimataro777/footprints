@@ -4727,7 +4727,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
   const copyOne = async () => {
     const ok = await copyToClipboard(oneRecordJson(record));
     tellShare(ok
-      ? "コピーしました。メモやチャットに貼りつけて渡せます。"
+      ? "コピーしました。メモやチャットに貼りつけて共有できます。"
       : "コピーできませんでした。長押しして選び、手でコピーしてください。");
   };
 
@@ -4789,9 +4789,19 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
           下に出しても目に入らず、押せたのか分からない（実際そうなっていた）。
           画面の下から浮かせて、確かに見えるようにする */}
       {shareMsg && (
-        <div className="fixed left-0 right-0 flex justify-center px-5 anim-fade pointer-events-none"
-          style={{ bottom: "calc(env(safe-area-inset-bottom) + 104px)", zIndex: 2147483300 }}>
-          <p className="max-w-md w-full text-center text-[13.5px] font-bold text-white bg-neutral-900/90 rounded-xl px-4 py-3 shadow-xl">{shareMsg}</p>
+        /* **画面の中ほどに出すこと。**
+           下のほうに置くと、長い記録では画面の外に回って見えないことがある。
+           記録に重なってでも、必ず目に入る場所に出す。
+           位置と重なり順は style で直に書く。指定が届かない場では、
+           下に流れて隠れてしまうため */
+        <div className="anim-fade"
+          style={{ position: "fixed", top: "45%", left: 0, right: 0, zIndex: 2147483300,
+                   display: "flex", justifyContent: "center", padding: "0 20px",
+                   pointerEvents: "none", transform: "translateY(-50%)" }}>
+          <p style={{ maxWidth: 448, width: "100%", textAlign: "center", fontWeight: 700,
+                      color: "#fff", background: "rgba(23,23,23,0.92)", borderRadius: 14,
+                      padding: "14px 16px", boxShadow: "0 10px 30px rgba(0,0,0,.28)", lineHeight: 1.6 }}
+            className="text-[13.5px]">{shareMsg}</p>
         </div>
       )}
 
@@ -7037,9 +7047,15 @@ function AppMain() {
         )}
 
         {importMsg && (
-          <div className="fixed left-0 right-0 flex justify-center px-5 anim-fade"
-            style={{ bottom: "calc(env(safe-area-inset-bottom) + 96px)", zIndex: 2147483300 }}>
-            <p className="max-w-md w-full text-center text-[13.5px] font-bold text-white bg-neutral-900/90 rounded-xl px-4 py-3 shadow-xl">{importMsg}</p>
+          /* 知らせの出し方は、記録のコピーと同じにそろえる（画面の中ほど） */
+          <div className="anim-fade"
+            style={{ position: "fixed", top: "45%", left: 0, right: 0, zIndex: 2147483300,
+                     display: "flex", justifyContent: "center", padding: "0 20px",
+                     pointerEvents: "none", transform: "translateY(-50%)" }}>
+            <p style={{ maxWidth: 448, width: "100%", textAlign: "center", fontWeight: 700,
+                        color: "#fff", background: "rgba(23,23,23,0.92)", borderRadius: 14,
+                        padding: "14px 16px", boxShadow: "0 10px 30px rgba(0,0,0,.28)", lineHeight: 1.6 }}
+              className="text-[13.5px]">{importMsg}</p>
           </div>
         )}
 
