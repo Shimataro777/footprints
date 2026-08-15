@@ -4721,11 +4721,14 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
 
   /* この記録を文字でコピーする。
      ファイルの行方が分かりにくい端末では、こちらのほうが確かに残せる */
+  /* コピーしたことは、知らせの文だけで伝える。
+     **ボタンの絵は変えないこと。** 変えると、押したあとに何のボタンだったか
+     分かりにくくなる（依頼により取りやめ） */
   const copyOne = async () => {
     const ok = await copyToClipboard(oneRecordJson(record));
     tellShare(ok
       ? "コピーしました。メモやチャットに貼りつけて渡せます。"
-      : "コピーできませんでした。");
+      : "コピーできませんでした。長押しして選び、手でコピーしてください。");
   };
 
   /* この記録だけをファイルにして送る。
@@ -4780,6 +4783,17 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
         <h2 className="font-display text-[17px] text-neutral-900 flex-1 min-w-0 truncate">{recordTitle(record)}</h2>
         <MenuButton />
       </div>
+
+      {/* コピーや書き出しの知らせ。
+          **本文の下に置かないこと。** 押すボタンは画面の上にあるので、
+          下に出しても目に入らず、押せたのか分からない（実際そうなっていた）。
+          画面の下から浮かせて、確かに見えるようにする */}
+      {shareMsg && (
+        <div className="fixed left-0 right-0 flex justify-center px-5 anim-fade pointer-events-none"
+          style={{ bottom: "calc(env(safe-area-inset-bottom) + 104px)", zIndex: 2147483300 }}>
+          <p className="max-w-md w-full text-center text-[13.5px] font-bold text-white bg-neutral-900/90 rounded-xl px-4 py-3 shadow-xl">{shareMsg}</p>
+        </div>
+      )}
 
       <button onClick={onEdit} aria-label="この記録を編集"
         className="absolute bottom-8 right-5 z-20 w-16 h-16 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab">
@@ -4867,9 +4881,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
           </div>
         </div>)}
 
-        {shareMsg && (
-          <p className="mt-4 text-[13.5px] font-bold text-th-900 bg-th-50 border-2 border-th-200 rounded-xl px-3.5 py-2.5">{shareMsg}</p>
-        )}
+
 
         {peek && (
           <RecordPeekDialog record={peek}
