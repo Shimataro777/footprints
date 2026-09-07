@@ -127,6 +127,26 @@ const REF_REGEX = new RegExp(
   "g"
 );
 
+/* 短い略称（「創」「出」「民」「申」「詩」「レビ」「使徒」など）は、
+   ふつうの日本語の中にたまたま現れることがある。
+   そのまま拾うと「国民 3割」が『民数記 3章』に、「出3人」が『出エジプト記 3章』になり、
+   聖書箇所をひとつも含まない記録まで「同じ箇所」と見なされてしまう（実際そうなっていた）。
+   **2文字までの略称のときだけ**、次の2つを確かめる。
+   ・直前が漢字・英数字でないこと（「国民」「提出」のような語の一部を弾く）
+   ・1文字の略称は「章」か「:」「：」が付いていること（「出3人」を弾く）
+   正式名（「創世記」など）は、これまでどおりどこに置かれても拾う。
+   **この判定は parseBibleRefs と splitByCitations の両方で必ず通すこと。**
+   片方だけにすると、拾う範囲と色を付ける範囲が食い違う */
+const SHORT_NAME_MAX = 2;
+const WORDY_CHAR = /[\u4E00-\u9FFF\u3005A-Za-z0-9\uFF10-\uFF19]/;
+function bookNameOkAt(text, index, matched, name) {
+  if (!name || name.length > SHORT_NAME_MAX) return true;
+  const before = index > 0 ? text[index - 1] : "";
+  if (before && WORDY_CHAR.test(before)) return false;
+  if (name.length === 1 && !/[章:：]/.test(matched)) return false;
+  return true;
+}
+
 function parseBibleRefs(text) {
   if (!text) return [];
   const refs = []; const seen = new Set(); let match;
@@ -134,6 +154,7 @@ function parseBibleRefs(text) {
   while ((match = REF_REGEX.exec(text)) !== null) {
     const found = BOOK_NAME_TABLE.find((b) => b.n === match[1]);
     if (!found) continue;
+    if (!bookNameOkAt(text, match.index, match[0], match[1])) continue;
     const chapter = parseInt(match[2], 10);
     /* ①と②のどちらで拾えても、終わりの章は同じ意味 */
     const endRaw = match[3] || match[4];
@@ -164,6 +185,26 @@ function formatRef(ref) {
   return s;
 }
 function sameRef(a, b) { if (!a || !b) return false; return a.book === b.book && a.chapter === b.chapter && (a.verse || null) === (b.verse || null); }
+/* 2つの聖書箇所が「同じところ」を指しているか。
+   ・書が違えば重ならない
+   ・章（範囲を含む）が離れていれば重ならない
+   ・**どちらにも節が書かれているときは、節まで見る。**
+     「ヨハネの福音書 3:16」を書いているときに「ヨハネの福音書 3:5」のメモを
+     出さないため。章が同じというだけで拾うと、関係のないメモが並ぶ（実際そうなっていた）
+   ・片方に節が無いときは、その章ぜんたいを指しているものとして重なりと見なす
+     （3章の通読は 3:16 を含んでいる） */
+function refsOverlap(a, b) {
+  if (!a || !b || !a.book || !b.book || a.book !== b.book) return false;
+  if (a.chapter == null || b.chapter == null) return false;
+  const aTo = a.chapterEnd && a.chapterEnd > a.chapter ? a.chapterEnd : a.chapter;
+  const bTo = b.chapterEnd && b.chapterEnd > b.chapter ? b.chapterEnd : b.chapter;
+  if (aTo < b.chapter || bTo < a.chapter) return false;
+  /* 節を見るのは、どちらも1つの章だけを指していて、両方に節があるときだけ */
+  if (a.chapter !== aTo || b.chapter !== bTo || !a.verse || !b.verse) return true;
+  const aVe = a.verseEnd && a.verseEnd > a.verse ? a.verseEnd : a.verse;
+  const bVe = b.verseEnd && b.verseEnd > b.verse ? b.verseEnd : b.verse;
+  return !(aVe < b.verse || bVe < a.verse);
+}
 function primaryRef(text) { const refs = parseBibleRefs(text); return refs[0] || null; }
 function truncateAtCitation(text) {
   if (!text) return text;
@@ -383,6 +424,30 @@ async function persistArtworks(list) {
     return { ok: false, message: "イラストの合計サイズが大きすぎます。枚数を減らしてください。" };
   }
   return await storageSet(ART_KEY, payload);
+}
+
+/* ヘッダの背景に敷く絵。
+   イラスト（最大5枚）とは別枠にする。役目が違ううえ、
+   横長で1枚だけなので、枚数の数え上げに混ぜると分かりにくい */
+const HEADER_KEY = "bible-tracker-headerbg";
+const HEADER_LIMIT = 1_200_000; // 保存する文字数の上限（安全側）
+async function loadHeaderBg() {
+  try {
+    const raw = await storageGet(HEADER_KEY);
+    if (!raw) return null;
+    /* 中身が壊れていても起動できるようにする。文字列でなければ無いものとして扱う */
+    const d = JSON.parse(raw);
+    if (typeof d === "string") return d || null;
+    if (d && typeof d === "object" && typeof d.src === "string") return d.src || null;
+    return null;
+  } catch (e) { return null; }
+}
+async function persistHeaderBg(src) {
+  const payload = JSON.stringify(src ? { src } : null);
+  if (payload.length > HEADER_LIMIT) {
+    return { ok: false, message: "画像が大きすぎます。もう少し小さいものをお選びください。" };
+  }
+  return await storageSet(HEADER_KEY, payload);
 }
 
 /* ============================================================
@@ -1922,9 +1987,12 @@ function splitByCitations(text) {
   const hits = [];
   REF_REGEX.lastIndex = 0;
   let r;
-  while ((r = REF_REGEX.exec(text)) !== null) hits.push({ index: r.index, str: r[0] });
+  while ((r = REF_REGEX.exec(text)) !== null) hits.push({ index: r.index, str: r[0], name: r[1] });
   for (const h of hits) {
     if (inParen(h.index)) continue;
+    /* 短い略称のふりをした、ただの日本語を弾く（「国民 3割」など）。
+       parseBibleRefs と同じ判定を必ず通すこと */
+    if (!bookNameOkAt(text, h.index, h.str, h.name)) continue;
     const refs = parseBibleRefs(h.str);
     if (!refs.length || !refs[0].verse) continue;
     /* その行の終わりに置かれているか。うしろは空白か、訳名のような短い添え書きだけ */
@@ -2005,9 +2073,13 @@ function useLockBackground() {
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
     const body = document.body;
+    /* body を止めるだけでは足りない。中身（.ft-scroll）を動かす作りにしたので、
+       うしろの画面を止めるには、そちらにも印（ft-locked）を付けること */
+    const root = document.documentElement;
     if (overlayCount === 0) {
       body.dataset.ftPrevOverflow = body.style.overflow || "";
       body.style.overflow = "hidden";
+      root.classList.add("ft-locked");
     }
     overlayCount += 1;
     return () => {
@@ -2016,6 +2088,7 @@ function useLockBackground() {
         overlayCount = 0;
         body.style.overflow = body.dataset.ftPrevOverflow || "";
         delete body.dataset.ftPrevOverflow;
+        root.classList.remove("ft-locked");
       }
     };
   }, []);
@@ -2939,7 +3012,7 @@ function ScreenHeader({ title, right }) {
   const openMenu = React.useContext(MenuContext);
   const unsaved = React.useContext(UnsavedContext);
   return (
-    <div className="px-5 pb-2.5 sticky top-0 bg-neutral-50 z-10 border-b border-neutral-200" style={SAFE_TOP(18)}>
+    <div className="ft-hdr px-5 pb-2.5 sticky top-0 bg-neutral-50 z-10 border-b border-neutral-200" style={SAFE_TOP(18)}>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0"><h1 className="font-display text-[27px] text-neutral-900 tracking-wide truncate">{title}</h1></div>
         <div className="flex items-center gap-1 shrink-0">
@@ -2962,7 +3035,7 @@ function MenuRow({ it }) {
   const [pressed, go] = useTapThen(it.onClick);
   return (
     <button onClick={go}
-      className={"w-full flex items-center gap-3 px-5 py-4 text-left min-h-[60px] ft-tap ft-tap-card "
+      className={"w-full flex items-center gap-3 px-5 py-3.5 text-left min-h-[56px] ft-tap ft-tap-card "
         + (pressed ? "bg-neutral-200 ft-tap-pressed" : "hover:bg-neutral-50")}>
       <span className="w-10 h-10 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center shrink-0 text-th-800">{it.icon}</span>
       <span className="flex-1 min-w-0">
@@ -3022,7 +3095,7 @@ function SideMenu({ open, onClose, items, footer, instant }) {
         className="absolute top-0 right-0 h-full w-[84%] max-w-[340px] bg-white shadow-xl flex flex-col"
         style={{ transform: shown ? "translateX(0)" : "translateX(100%)", transition: "transform 260ms cubic-bezier(0.16,1,0.3,1)" }}
       >
-        <div className="flex items-center justify-between px-5 pb-4 border-b border-neutral-200 shrink-0" style={SAFE_TOP(16)}>
+        <div className="ft-hdr flex items-center justify-between px-5 pb-4 border-b border-neutral-200 shrink-0" style={SAFE_TOP(16)}>
           <span className="font-display text-[18px] text-neutral-900">メニュー</span>
           <button onClick={onClose} aria-label="閉じる"
             className="min-w-[52px] min-h-[52px] flex items-center justify-center rounded-xl text-neutral-600 hover:bg-neutral-100"><X size={28} /></button>
@@ -3033,7 +3106,11 @@ function SideMenu({ open, onClose, items, footer, instant }) {
           ))}
         </div>
         {footer && (
-          <div className="border-t border-neutral-200 px-5 py-4 shrink-0" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 16px)" }}>
+          /* **高さは下の帯（タブ）とそろえること。**
+             以前は中身なりの高さ（約88px）で、通常の画面の帯（約62px）と
+             食い違って見えていた。--ft-navh は実際の帯を測った値 */
+          <div className="border-t border-neutral-200 px-5 shrink-0 flex items-center"
+            style={{ minHeight: "var(--ft-navh, 96px)", paddingBottom: "env(safe-area-inset-bottom)" }}>
             {footer}
           </div>
         )}
@@ -3241,7 +3318,10 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
     if (!refs.length) return [];
     return (allRecords || [])
       .filter((r) => r.id !== record.id && recordFullDisplay(r).trim())
-      .filter((r) => recordRefs(r).some((x) => refs.some((t) => x.book === t.book && x.chapter === t.chapter)))
+      /* **章だけでなく節まで見ること。** 章が同じというだけで拾っていたため、
+         「ヨハネの福音書 3:16」を書いているときに「ヨハネの福音書 3:5」の
+         メモまで並んでいた。判定は refsOverlap にまかせる */
+      .filter((r) => recordRefs(r).some((x) => refs.some((t) => refsOverlap(x, t))))
       .sort((a, b) => (b.date || b.createdAt || "").localeCompare(a.date || a.createdAt || ""))
       .slice(0, 6);
   }, [type, record.book, record.chapters, record.passageText, record.id, allRecords]);
@@ -3280,7 +3360,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
     <OverlayScreen from="bottom" closing={closing || savingClose} zIndex={70}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
-      <div className="flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
+      <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
         <h2 className="font-display text-[20px] text-neutral-900 flex-1 min-w-0 truncate pl-1 tracking-wide">{formTitle}</h2>
         {savedAt && (
           <span className={"text-[11.5px] font-bold shrink-0 tabular-nums " + (isDirty() ? "text-neutral-400" : "text-th-800/80")}>最終保存 {savedAt}</span>
@@ -4511,7 +4591,7 @@ function ProgressScreen({ records, onOpenDetail, onOpenBook, onOpenDay }) {
     <div className="pb-32">
       <ScreenHeader title="実績" />
       <div className="px-5 pt-4 ft-rise">
-        <div className="rounded-2xl bg-gradient-to-br from-th-700 to-th-900 text-white p-5 mb-3 flex items-center gap-4">
+        <div className="rounded-2xl bg-gradient-to-br from-th-700 to-th-900 text-white p-4 mb-3 flex items-center gap-4">
           <Award size={30} className="shrink-0 opacity-90" />
           <div className="flex-1">
             <div className="text-[12.5px] font-bold opacity-80 tracking-wide">通読の達成度（初回既読）</div>
@@ -4520,10 +4600,10 @@ function ProgressScreen({ records, onOpenDetail, onOpenBook, onOpenDay }) {
           <div className="text-[28px] font-display">{pct}%</div>
         </div>
 
-        <h3 className="text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-3 mt-6">日ごとの記録</h3>
+        <h3 className="text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-3 mt-5">日ごとの記録</h3>
         <CalendarView records={records} onOpenDay={onOpenDay} />
 
-        <h3 className="text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-3 mt-8">書ごとの記録</h3>
+        <h3 className="text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-3 mt-6">書ごとの記録</h3>
         <div className="space-y-2.5">
           {BOOK_GROUPS.map((g) => {
             const books = BOOKS.slice(g.from, g.to + 1);
@@ -4607,7 +4687,7 @@ function DayRecordsScreen({ date, records, onClose, onOpenDetail }) {
     <OverlayScreen from="right" closing={closing}>
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
+      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">{date}</h2>
         <MenuButton />
@@ -4655,7 +4735,7 @@ function BookRecordsScreen({ book, records, onClose, onOpenDetail, defaultSort }
     <OverlayScreen from="right" closing={closing}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
-      <div className="flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
+      <div className="ft-hdr flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 flex-1 min-w-0 truncate tracking-wide">{book}</h2>
         <MenuButton />
@@ -4778,7 +4858,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
     <OverlayScreen from={from} closing={closing || swapping} zIndex={60}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
-      <div className="flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
+      <div className="ft-hdr flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[17px] text-neutral-900 flex-1 min-w-0 truncate">{recordTitle(record)}</h2>
         <MenuButton />
@@ -4806,8 +4886,11 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
       )}
 
       <button onClick={onEdit} aria-label="この記録を編集"
-        className="absolute bottom-8 right-5 z-20 w-16 h-16 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab">
-        <Pencil size={26} />
+        /* 大きさは記録画面の＋ボタンとそろえること（w-14 h-14）。
+           別々にしていると、画面を移るたびに大きさが変わって見える */
+        className="absolute right-5 z-20 w-14 h-14 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab"
+        style={{ bottom: "calc(env(safe-area-inset-bottom) + 20px)" }}>
+        <Pencil size={24} />
       </button>
 
       {/* pb-28 は鉛筆ボタンのぶんの逃げ場。
@@ -4993,11 +5076,14 @@ function buildBackupText(records) {
 /* ============================================================
    イラスト管理画面
    ============================================================ */
-function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, onSavePrefs, onClose, typeDesc, onSaveTypeDesc }) {
+function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, onSavePrefs, onClose, typeDesc, onSaveTypeDesc, headerBg, onSaveHeaderBg }) {
   const [closing, close] = useClosing(onClose);
-  const [descDraft, setDescDraft] = useState((typeDesc && typeDesc.desc) || DEFAULT_TYPE_DESC);
-  const [nameDraft, setNameDraft] = useState((typeDesc && typeDesc.name) || DEFAULT_TYPE_NAME);
-  const [openType, setOpenType] = useState(null);
+  /* 記録の種類の名前・説明は、この画面では変えられなくした（依頼による）。
+     ただし保存されている値はそのまま持ち回り、保存のときも書き戻す。
+     捨ててしまうと、以前に名前を変えていた人の設定が消えてしまうため。
+     イラストの見出し（mascotGroupLabel）も、この名前から組み立てている */
+  const descDraft = (typeDesc && typeDesc.desc) || DEFAULT_TYPE_DESC;
+  const nameDraft = (typeDesc && typeDesc.name) || DEFAULT_TYPE_NAME;
   const [draft, setDraft] = useState(artworks);
   const [capDraft, setCapDraft] = useState(captions);
   const [prefDraft, setPrefDraft] = useState(prefs);
@@ -5011,11 +5097,15 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
   /* いま選ぼうとしているまとまりに、あと何枚入るか */
   const [pickRoom, setPickRoom] = useState(1);
   const inputRef = useRef(null);
+  /* ヘッダの背景に敷く絵。イラストとは別枠なので、入れ物も別にしてある */
+  const [hdrDraft, setHdrDraft] = useState(headerBg || null);
+  const hdrInputRef = useRef(null);
 
   const dirty =
     JSON.stringify(draft.map((a) => [a.id, a.group])) !== JSON.stringify(artworks.map((a) => [a.id, a.group])) ||
     JSON.stringify(capDraft) !== JSON.stringify(captions) ||
-    JSON.stringify(prefDraft) !== JSON.stringify(prefs);
+    JSON.stringify(prefDraft) !== JSON.stringify(prefs) ||
+    (hdrDraft || "") !== (headerBg || "");
   const guardCloseRef = useRef(() => true);
   const { stripRef, screenRef } = useEdgeSwipeBack(onClose, () => guardCloseRef.current());
 
@@ -5057,11 +5147,28 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     const a = await onChange(draft);
     const c = await onSaveCaptions(capDraft);
     if (onSaveTypeDesc) await onSaveTypeDesc({ desc: descDraft, name: nameDraft });
+    const h = onSaveHeaderBg ? await onSaveHeaderBg(hdrDraft) : null;
     const pr = await onSavePrefs(prefDraft);
     setSaving(false);
-    const ok = (!a || a.ok) && (!c || c.ok) && (!pr || pr.ok);
+    const ok = (!a || a.ok) && (!c || c.ok) && (!pr || pr.ok) && (!h || h.ok);
     if (ok) { onClose(); return; }
-    setMsg({ kind: "err", text: "保存できませんでした：" + (((a && a.message) || (c && c.message) || (pr && pr.message)) || "原因不明") });
+    setMsg({ kind: "err", text: "保存できませんでした：" + (((a && a.message) || (c && c.message) || (h && h.message) || (pr && pr.message)) || "原因不明") });
+  };
+
+  /* ヘッダの背景を選ぶ。横長に使うので、イラストより大きめに縮めて取り込む */
+  const pickHeader = async (e) => {
+    const f = (e.target.files || [])[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    try {
+      const src = await shrinkImage(f, 720);
+      setHdrDraft(src);
+      setMsg({ kind: "warn", text: "ヘッダーの背景を選びました。下の「保存」を押すと反映されます。" });
+    } catch (err) {
+      setMsg({ kind: "err", text: "画像を読み込めませんでした。" });
+    }
+    setBusy(false);
   };
 
   /* 未保存のまま閉じようとしたら確認する（記録画面と同じ動き） */
@@ -5083,7 +5190,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     <OverlayScreen from="right" closing={closing}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
-        <div className="flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
+        <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
           <button onClick={handleCloseAttempt} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</button>
           <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">画面のカスタマイズ</h2>
           <MenuButton />
@@ -5106,6 +5213,40 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
                 </button>
               );
             })}
+          </div>
+
+          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
+            ヘッダーの背景
+            <HelpTip label="ヘッダーの背景" text="画面のいちばん上の帯に、好きな写真を敷けます。文字が読めるよう、絵の上には自動でうすい白がかかります。" />
+          </h3>
+          <div className="rounded-2xl border border-neutral-200 bg-white p-3 mb-6">
+            {/* 実際の見えかたに近づけて、白い膜をかけた状態で見せる */}
+            <div className="relative h-20 rounded-xl overflow-hidden border border-neutral-200 bg-neutral-100 flex items-center justify-center mb-2.5">
+              {hdrDraft ? (
+                <>
+                  <img src={hdrDraft} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                  <span className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(255,255,255,.66), rgba(255,255,255,.88))" }} />
+                  <span className="relative font-display text-[20px] text-neutral-900 tracking-wide"
+                    style={{ textShadow: "0 1px 3px rgba(255,255,255,.95), 0 0 10px rgba(255,255,255,.75)" }}>ホーム</span>
+                </>
+              ) : (
+                <span className="text-[12.5px] text-neutral-400">背景なし（無地）</span>
+              )}
+            </div>
+            <input ref={hdrInputRef} type="file" accept="image/*" onChange={pickHeader} className="hidden" />
+            <div className="flex gap-2">
+              <button type="button" disabled={busy}
+                onClick={() => hdrInputRef.current && hdrInputRef.current.click()}
+                className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
+                <ImagePlus size={16} /> {hdrDraft ? "画像を選び直す" : "画像を選ぶ"}
+              </button>
+              {hdrDraft && (
+                <button type="button" onClick={() => { setHdrDraft(null); setMsg({ kind: "warn", text: "下の「保存」を押すと反映されます。" }); }}
+                  className={BTN_DANGER_SOFT + " " + BTN_H + " px-3.5 text-[14.5px]"}>
+                  <X size={15} /> 外す
+                </button>
+              )}
+            </div>
           </div>
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
@@ -5157,52 +5298,10 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
           </label>
           <div className="mb-6" />
 
-          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
-            記録の種類
-            <HelpTip label="記録の種類" text="種類の名前と、＋を押したときに出る案内を、自分の言葉に変えられます。" />
-          </h3>
-          <div className="space-y-2.5 mb-6">
-            {Object.keys(TYPE_LABELS).map((k) => {
-              const open = openType === k;
-              return (
-                <div key={k} className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
-                  <button type="button" onClick={() => setOpenType(open ? null : k)}
-                    className="w-full flex items-center gap-3 px-3.5 py-3 min-h-[52px] text-left ft-tap ft-tap-card active:bg-neutral-50">
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-[14.5px] font-bold text-neutral-900">{(nameDraft && nameDraft[k]) || TYPE_LABELS[k]}</span>
-                      <span className="block text-[12.5px] text-neutral-500 truncate">{(descDraft && descDraft[k]) || ""}</span>
-                    </span>
-                    <ChevronDown size={18} className={"text-neutral-400 shrink-0 ft-chev " + (open ? "ft-chev-on" : "")} />
-                  </button>
-                  {open && (
-                    <div className="px-3.5 pb-3.5 border-t-2 border-neutral-100 pt-3 space-y-2.5 ft-open-y">
-                      {/* ラベルは入力欄の左に置いて、縦に使う場所を減らしている。
-                          **入力欄そのものは小さくしないこと。**
-                          16pxより小さくすると、iPhoneが触れたときに画面を勝手に拡大する。
-                          ラベルの幅（w-12）だけを削り、入力欄の高さと文字は元のまま */}
-                      <div className="flex items-center gap-2.5">
-                        <p className="w-12 shrink-0 text-[11.5px] font-bold text-neutral-500">名前</p>
-                        <div className="flex-1 min-w-0">
-                          <TextInput value={(nameDraft && nameDraft[k]) || ""} onChange={(e) => setNameDraft({ ...nameDraft, [k]: e.target.value })} />
-                        </div>
-                      </div>
-                      <div className="flex items-start gap-2.5">
-                        {/* 説明は書き足すと伸びるので、ラベルは1行目の高さに合わせて少し下げる */}
-                        <p className="w-12 shrink-0 text-[11.5px] font-bold text-neutral-500 pt-3.5">説明</p>
-                        <div className="flex-1 min-w-0">
-                          {/* 高さは「名前」の入力欄とそろえる。書き足すと自然に伸びる */}
-                          <TextArea value={(descDraft && descDraft[k]) || ""} onChange={(e) => setDescDraft({ ...descDraft, [k]: e.target.value })} className="ft-h-field" />
-                        </div>
-                      </div>
-                      <button type="button"
-                        onClick={() => { setNameDraft({ ...nameDraft, [k]: DEFAULT_TYPE_NAME[k] }); setDescDraft({ ...descDraft, [k]: DEFAULT_TYPE_DESC[k] }); }}
-                        className="text-[12.5px] font-bold text-th-800 underline min-h-[32px]">初期表示に戻す</button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          {/* 「記録の種類」の名前と説明を変える欄は、依頼により取り除いた。
+              いま保存されている名前（typeDesc）はそのまま持ち続け、
+              バックアップにも入れ続ける。消してしまうと、
+              以前に名前を変えていた人の設定が黙って初期値に戻るため */}
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
             イラスト
@@ -5383,7 +5482,7 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
     <OverlayScreen from="right" closing={closing}>
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
+      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ブックマーク</h2>
         <MenuButton />
@@ -5514,7 +5613,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
     <OverlayScreen from="right" closing={closing}>
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
+      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">タグの整理</h2>
         <MenuButton />
@@ -5678,7 +5777,8 @@ const HELP_SECTIONS = [
     title: "見た目を変える",
     items: [
       ["色と文字の大きさ", "メニューの「画面のカスタマイズ」から、テーマの色と文字の大きさ（小・中・大）を選べます。"],
-      ["名前とひとこと", "記録の種類の名前や説明、記録画面の下に出るひとことも、同じ画面で書き替えられます。"],
+      ["ヘッダーの背景", "画面のいちばん上の帯に、好きな写真を敷けます。文字が読めるよう、絵の上にはうすい白がかかります。"],
+      ["ひとこと", "記録画面の下に出るひとことも、同じ画面で書き替えられます。"],
       ["イラスト", "お好きな絵に差し替えられます。出てくる場所ごとに色で対になっているので、どの絵がどこに出るかが分かります。"],
       ["動きを止める", "押したときの動きが気になるときは、同じ画面で止められます。"],
     ],
@@ -5694,7 +5794,7 @@ function HelpScreen({ onClose }) {
     <OverlayScreen from="right" closing={closing}>
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
+      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ヘルプ</h2>
         <MenuButton />
@@ -5749,7 +5849,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
     <OverlayScreen from="right" closing={closing}>
     <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
+      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
         <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">収穫した実</h2>
         <MenuButton />
@@ -5828,24 +5928,27 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
 /* ============================================================
    バックアップ画面
    ============================================================ */
-function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, typeDesc, onClose, onRestore, onBackedUp, onImportOne }) {
+function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, onClose, onRestore, onBackedUp, onImportOne }) {
   const [closing, close] = useClosing(onClose);
   const readableText = useMemo(() => buildBackupText(records), [records]);
   const jsonText = useMemo(() => JSON.stringify({
-    app: "bible-tracker", version: 5, exportedAt: new Date().toISOString(),
+    app: "bible-tracker", version: 6, exportedAt: new Date().toISOString(),
     records, artworks: artworks || [], garden: garden || DEFAULT_GARDEN,
     /* タグの一覧も一緒に書き出す。これが無いと、機種を変えたときに
        まだ使っていないタグが消え、また作り直すことになる */
     tags: tagMaster || [],
     /* 画面の設定も一緒に書き出す（version 5 から）。
-       テーマ色・文字の大きさ・記録の種類の名前・ひとことなど、
+       テーマ色・文字の大きさ・ひとこと・ヘッダーの背景など、
        せっかく整えたものが機種を変えるたびに消えてしまわないように。
        最終バックアップ日（lastBackup）は入れない。
        それは「この端末でいつ書き出したか」であって、持ち運ぶものではないため */
     prefs: prefs ? { ...prefs, lastBackup: undefined } : undefined,
     captions: captions || undefined,
     typeDesc: typeDesc || undefined,
-  }, null, 2), [records, artworks, garden, tagMaster, prefs, captions, typeDesc]);
+    /* ヘッダの背景も一緒に書き出す（version 6 から）。
+       新しく設定を増やしたら、ここにも足すこと。足し忘れると機種変更で消える */
+    headerBg: headerBg || undefined,
+  }, null, 2), [records, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg]);
   const [previewMode, setPreviewMode] = useState("readable"); // readable | json
   const [previewOpen, setPreviewOpen] = useState(false);
   const [msg, setMsg] = useState(null); // {kind:'ok'|'warn'|'err', text}
@@ -5993,6 +6096,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
             prefs: data.prefs && typeof data.prefs === "object" ? data.prefs : null,
             captions: data.captions && typeof data.captions === "object" ? data.captions : null,
             typeDesc: data.typeDesc && typeof data.typeDesc === "object" ? data.typeDesc : null,
+            headerBg: typeof data.headerBg === "string" && data.headerBg ? data.headerBg : null,
           };
         } else if (data && data.record && typeof data.record === "object") {
           /* 1件だけの受け渡しファイル。
@@ -6039,7 +6143,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
     <OverlayScreen from="right" closing={closing}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-neutral-50 flex flex-col">
-        <div className="flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
+        <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
           <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
           <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">バックアップ</h2>
           <MenuButton />
@@ -6060,7 +6164,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
             <div className="mt-2">
               <p className="text-[12.5px] text-neutral-500 leading-relaxed">
                 記録・イラスト・果樹・タグの一覧に加えて、テーマ色や文字の大きさ、
-                記録の種類の名前、ひとことなどの設定も一緒に保存されます。
+                ひとこと、ヘッダーの背景などの設定も一緒に保存されます。
                 ファイルは1つだけです。そのまま読める形で、復元にも使えます。
               </p>
 </div>
@@ -6172,9 +6276,18 @@ const TABS = [
   { key: "search", label: "探す", icon: Search },
   { key: "progress", label: "実績", icon: TrendingUp },
 ];
-function BottomNav({ active, onChange }) {
+/* 下の帯（タブ）。
+   **position:fixed で浮かせないこと。**
+   浮かせると、iPhoneでは指を上下するたびにブラウザの帯が伸び縮みし、
+   それに合わせて下のタブが上へずれて見える（実際そうなっていた）。
+   外側（.ft-app）の高さを画面ちょうどに固定し、この帯はその一番下に
+   ふつうに置く。中身のスクロールとは切り離されるので、もう動かない。
+   高さは navRef で測って --ft-navh に控える（枠線と切り欠きのぶんも含めた
+   帯ぜんたいの高さ）。＋ボタンの浮かせる位置と、メニューの下の段の高さを、
+   この1つの数からそろえるため */
+function BottomNav({ active, onChange, navRef }) {
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-neutral-200" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+    <div ref={navRef} className="shrink-0 z-30 bg-white border-t border-neutral-200" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
       <div className="max-w-lg lg:max-w-5xl mx-auto flex">
         {TABS.map(({ key, label, icon: Icon }) => {
           const isActive = active === key;
@@ -6296,6 +6409,8 @@ function AppMain() {
     setMenuOpen(false);
   };
   const [artworks, setArtworks] = useState([]);
+  const [headerBg, setHeaderBg] = useState(null); // ヘッダの背景に敷く絵（1枚だけ）
+  const navRef = useRef(null);
   const [tagMaster, setTagMaster] = useState([]);
   const [captions, setCaptions] = useState({ ...DEFAULT_CAPTIONS });
   const [prefs, setPrefs] = useState({ ...DEFAULT_PREFS });
@@ -6307,6 +6422,7 @@ function AppMain() {
       .finally(() => { setLoaded(true); });
   }, []);
   useEffect(() => { loadArtworks().then(setArtworks); }, []);
+  useEffect(() => { loadHeaderBg().then(setHeaderBg); }, []);
   useEffect(() => { loadCaptions().then(setCaptions); }, []);
   useEffect(() => { loadTagMaster().then(setTagMaster); }, []);
   /* 読み込みが終わったら、起動中の覆いをふわっと外す。
@@ -6339,6 +6455,31 @@ function AppMain() {
     setDraftSaved(null);
   };
   const discardDraft = () => { clearDraft(); setDraftSaved(null); };
+
+  const saveHeaderBg = useCallback(async (src) => {
+    const res = await persistHeaderBg(src || null);
+    if (!res || res.ok) setHeaderBg(src || null);
+    return res;
+  }, []);
+
+  /* 下の帯（タブ）の高さを測って控えておく。
+     ＋ボタンの浮かせる位置と、メニューの下の段の高さを、この1つの数からそろえる。
+     **書き決めの数にしないこと。** 文字の大きさを変えると帯の高さも変わり、
+     96px と決め打ちしていたときは、＋ボタンが帯に重なっていた */
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const el = navRef.current;
+    if (!el) return undefined;
+    const apply = () => {
+      const h = el.getBoundingClientRect().height;
+      if (h > 0) document.documentElement.style.setProperty("--ft-navh", Math.round(h) + "px");
+    };
+    apply();
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") { ro = new ResizeObserver(apply); ro.observe(el); }
+    window.addEventListener("resize", apply);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener("resize", apply); };
+  }, [loaded, prefs.fontSize]);
 
   const saveGarden = useCallback((g) => { setGarden(g); persistGarden(g); }, []);
 
@@ -6607,6 +6748,7 @@ function AppMain() {
         await savePrefs({ ...prefs, lastBackup: restoredAt });
       }
       if (importedSetting.captions) await saveCaptions({ ...captions, ...importedSetting.captions });
+      if (importedSetting.headerBg) await saveHeaderBg(importedSetting.headerBg);
       if (importedSetting.typeDesc) {
         await saveTypeDesc({
           name: { ...typeDesc.name, ...(importedSetting.typeDesc.name || {}) },
@@ -6661,10 +6803,36 @@ function AppMain() {
     <TypeNameContext.Provider value={typeDesc.name}>
     <MenuContext.Provider value={() => setMenuOpen(true)}>
     {/* ft-root ＝ 動きの効き先。「動きの演出」を切ると ft-still が付いて、すべて止まる */}
-    <div className={"min-h-screen bg-neutral-50 font-sans text-neutral-900 ft-root "
+    <div className={"ft-app bg-neutral-50 font-sans text-neutral-900 ft-root "
+      + (headerBg ? "ft-hasbg " : "")
       + (prefs.motion === false ? "ft-still " : "")
-      + ("ft-font-" + (prefs.fontSize || "s"))}>
+      + ("ft-font-" + (prefs.fontSize || "s"))}
+      style={headerBg ? { "--ft-hdrbg": `url(${JSON.stringify(headerBg).slice(1, -1)})` } : undefined}>
       <style>{`
+        /* 画面ぜんたいの入れ物。高さを画面ちょうどに固定し、
+           中身（.ft-scroll）だけをスクロールさせる。
+           dvh は「いま見えている高さ」。対応していない端末のために vh も先に書く */
+        .ft-app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+        /* 重なる画面を開いているあいだは、うしろを動かさない。
+           body だけを止めても、中身をスクロールする作りでは効かない */
+        .ft-locked .ft-scroll { overflow: hidden; }
+
+        /* ヘッダの背景に置いた絵。
+           **文字が読めなくなるので、必ず白い膜をかけること。**
+           絵をそのまま敷くと、写真の濃いところで見出しや三本線が沈む。
+           膜は下へ行くほど濃くして、見出しの並ぶあたりを確実に明るく保つ */
+        .ft-hdr { position: relative; }
+        .ft-hdr > * { position: relative; z-index: 1; }
+        .ft-hasbg .ft-hdr::before {
+          content: ""; position: absolute; inset: 0; z-index: 0;
+          background-image: linear-gradient(180deg, rgba(255,255,255,.66), rgba(255,255,255,.88)), var(--ft-hdrbg);
+          background-size: cover, cover; background-position: center, center; background-repeat: no-repeat, no-repeat;
+        }
+        /* 念のため、見出しの文字のうしろにうっすら白をにじませる */
+        .ft-hasbg .ft-hdr h1, .ft-hasbg .ft-hdr h2, .ft-hasbg .ft-hdr .ft-hdr-title {
+          text-shadow: 0 1px 3px rgba(255,255,255,.95), 0 0 10px rgba(255,255,255,.75);
+        }
+
         @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@700;900&family=Noto+Sans+JP:wght@400;500;600;700;800&display=swap');
         .font-display { font-family: 'Zen Kaku Gothic New', 'Noto Sans JP', sans-serif; font-weight: 900; }
         .font-sans, body { font-family: 'Noto Sans JP', sans-serif; }
@@ -7008,7 +7176,14 @@ function AppMain() {
         .no-scrollbar::-webkit-scrollbar { display: none; }
       `}</style>
 
-      <div className="max-w-lg lg:max-w-5xl mx-auto min-h-screen relative bg-neutral-50">
+      {/* **中身だけをスクロールさせること。**
+          以前は画面ぜんたい（body）をスクロールしていたため、
+          iPhoneでは指を上下するたびにブラウザの帯が伸び縮みし、
+          下のタブが一緒に上へずれて見えていた。
+          外側の高さを画面ぴったり（100dvh）に固定し、
+          この入れ物の中だけを動かせば、下のタブは一切動かない */}
+      <div className="ft-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain">
+      <div className="max-w-lg lg:max-w-5xl mx-auto min-h-full relative bg-neutral-50">
         {/* 入れ物は透明度だけで切り替える。ここで位置を動かすと、中の sticky なヘッダがぶれる */}
         <div key={tab} className="ft-tabswap">
         {tab === "home" && <HomeScreen records={records} prefs={prefs} onOpenBackup={() => setBackupOpen(true)} garden={garden} onStartCycle={() => setPickFruit(true)} onHarvest={harvestFruit} />}
@@ -7016,18 +7191,24 @@ function AppMain() {
         {tab === "search" && <SearchScreen records={records} setRecords={setRecords} openDetail={openDetail} allKnownTags={knownTags} defaultSort={prefs.sortMode} />}
         {tab === "progress" && <ProgressScreen records={records} onOpenDetail={openDetail} onOpenBook={openBook} onOpenDay={setViewingDay} />}
         </div>
+      </div>
+      </div>
 
         {/* ＋は動く入れ物の外に置く。中に入れると、切り替えの動きの間だけ
-            位置の基準がその入れ物になり、上から落ちてくるように見えてしまう */}
+            位置の基準がその入れ物になり、上から落ちてくるように見えてしまう。
+            **下からの高さは、下の帯の実際の高さ（--ft-navh）から決めること。**
+            96px と書き決めにしていたため、文字の大きさを「大」にすると
+            帯のほうが高くなり、ボタンが帯に重なっていた */}
         {tab === "record" && (
           <button onClick={openNew} aria-label="新しい記録を追加"
             /* z-40 にすること。下の帯（z-30）より小さいと、帯の下に潜って欠けて見える */
-            className="fixed bottom-24 right-5 z-40 w-16 h-16 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab">
-            <Plus size={30} />
+            className="fixed right-5 z-40 w-14 h-14 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab"
+            style={{ bottom: "calc(var(--ft-navh, 96px) + 14px)" }}>
+            <Plus size={26} />
           </button>
         )}
 
-        <BottomNav active={tab} onChange={setTab} />
+        <BottomNav active={tab} onChange={setTab} navRef={navRef} />
 
         {viewingDay && (
           <DayRecordsScreen date={viewingDay} records={records} onClose={closeDay} onOpenDetail={openDetailFromBook} />
@@ -7089,10 +7270,10 @@ function AppMain() {
         )}
 
         {backupOpen && <BackupScreen records={records} artworks={artworks} garden={garden} tagMaster={tagMaster}
-          prefs={prefs} captions={captions} typeDesc={typeDesc} onClose={() => setBackupOpen(false)} onRestore={handleRestore} onBackedUp={markBackedUp}
+          prefs={prefs} captions={captions} typeDesc={typeDesc} headerBg={headerBg} onClose={() => setBackupOpen(false)} onRestore={handleRestore} onBackedUp={markBackedUp}
           onImportOne={importOneFile} />}
 
-        {artOpen && <ArtworkScreen artworks={artworks} onChange={saveArtworks} captions={captions} onSaveCaptions={saveCaptions} prefs={prefs} onSavePrefs={savePrefs} onClose={() => setArtOpen(false)} typeDesc={typeDesc} onSaveTypeDesc={saveTypeDesc} />}
+        {artOpen && <ArtworkScreen artworks={artworks} onChange={saveArtworks} captions={captions} onSaveCaptions={saveCaptions} prefs={prefs} onSavePrefs={savePrefs} onClose={() => setArtOpen(false)} typeDesc={typeDesc} onSaveTypeDesc={saveTypeDesc} headerBg={headerBg} onSaveHeaderBg={saveHeaderBg} />}
 
         {bookmarkOpen && <BookmarkScreen records={records} onClose={() => setBookmarkOpen(false)} onOpenDetail={openDetail} defaultSort={prefs.sortMode} />}
 
@@ -7171,7 +7352,6 @@ function AppMain() {
             </TapButton>
           }
         />
-      </div>
     </div>
     </MenuContext.Provider>
     </TypeNameContext.Provider>
