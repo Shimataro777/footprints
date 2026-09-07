@@ -15,38 +15,92 @@
     <link rel="icon" type="image/png" href="./icon-192-v4.png" />
     <title>Footprints</title>
     <style>
+      /* ============================================================
+         起動中の覆い（スプラッシュ）
+         読み込みが終わるまで真っ白な画面が続くと不安になるので、
+         アイコンとくるくるを出しておく。
+         **このCSSは index.html の中に直接書くこと。**
+         別のファイルにすると、そのファイルを読み込むまで白いままになり、
+         白い画面を隠すという目的を果たせない
+         ============================================================ */
+      html, body { margin: 0; background: #DCF0FA; }
+      #splash {
+        position: fixed; inset: 0; z-index: 2147483600;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 22px; background: linear-gradient(#DCF0FA, #F2FAFE);
+        font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
+        transition: opacity .38s ease-out;
+      }
+      /* 読み込みが終わったら、ふわっと消える */
+      #splash.gone { opacity: 0; pointer-events: none; }
+      #splash .mark {
+        width: 108px; height: 108px; border-radius: 26px; background: #fff;
+        box-shadow: 0 10px 30px rgba(15,118,110,.16);
+        animation: splash-in .5s cubic-bezier(.22,1,.36,1) backwards;
+      }
+      @keyframes splash-in { from { opacity: 0; transform: scale(.9) translateY(8px); } to { opacity: 1; transform: none; } }
+      #splash .name { font-size: 17px; font-weight: 700; color: #0C4A6E; letter-spacing: .06em; }
+      #splash .ring {
+        width: 26px; height: 26px; border-radius: 50%;
+        border: 3px solid rgba(12,74,110,.18); border-top-color: #0369A1;
+        animation: splash-spin .8s linear infinite;
+      }
+      @keyframes splash-spin { to { transform: rotate(360deg); } }
+
+      /* うまく読み込めなかったときの案内。ふつうに動けば目に触れない */
       .boot { font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
-              color: #404040; padding: 40px 24px; max-width: 480px; margin: 0 auto; line-height: 1.8; }
-      .boot-t { color: #a3a3a3; font-size: 14px; text-align: center; }
-      /* くわしい案内は少し待ってから出す。ふつうに読み込めたときは目に触れない */
-      .boot-late { opacity: 0; animation: bootlate 0s 2.5s forwards; }
+              color: #404040; padding: 0 24px; max-width: 480px; line-height: 1.8;
+              opacity: 0; animation: bootlate 0s 3.5s forwards; }
       @keyframes bootlate { to { opacity: 1; } }
-      .boot-h { font-size: 17px; font-weight: 700; color: #134E4A; margin-bottom: 4px; }
+      .boot-h { font-size: 17px; font-weight: 700; color: #0C4A6E; margin-bottom: 4px; }
       .boot ol { padding-left: 1.2em; }
       .boot li { margin-bottom: 10px; }
-      .boot code { background: #f5f5f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+      .boot code { background: rgba(255,255,255,.7); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+
+      /* 画面の動きを減らす設定のときは、回さない */
+      @media (prefers-reduced-motion: reduce) {
+        #splash .mark, #splash .ring { animation: none; }
+        #splash { transition: none; }
+      }
     </style>
   </head>
   <body>
-    <!-- プログラムが読み込めなかったときの案内。
-         正しく動いていれば、Reactがこの中身を丸ごと置き換えるので目に触れない。
-         真っ白な画面だと原因が分からないため、この保険を入れてある -->
-    <div id="root">
+    <div id="root"></div>
+
+    <!-- 起動中の覆い。読み込みが終わると、アプリ側から外される。
+         いつまでも外れないときは、うまく読み込めていないので案内を出す -->
+    <div id="splash">
+      <img class="mark" src="./icon-192-v4.png" alt="" width="108" height="108" />
+      <p class="name">Footprints</p>
+      <div class="ring"></div>
       <div class="boot">
-        <p class="boot-t">読み込んでいます…</p>
-        <div class="boot-late">
-          <p class="boot-h">プログラムを読み込めませんでした</p>
-          <p>GitHubで公開している場合は、次の2つをご確認ください。</p>
-          <ol>
-            <li>リポジトリに <code>.github/workflows/deploy.yml</code> があるか<br>
-              （隠しフォルダのため、アップロードの際に抜け落ちることがあります）</li>
-            <li>Settings → Pages の Source が <b>GitHub Actions</b> になっているか<br>
-              （Deploy from a branch だと、組み立て前のファイルがそのまま配られ、この画面になります）</li>
-          </ol>
-          <p>Actionsタブで最新の実行が緑色になっているかも合わせてご確認ください。</p>
-        </div>
+        <p class="boot-h">プログラムを読み込めませんでした</p>
+        <p>GitHubで公開している場合は、次の2つをご確認ください。</p>
+        <ol>
+          <li>リポジトリに <code>.github/workflows/deploy.yml</code> があるか<br>
+            （隠しフォルダのため、アップロードの際に抜け落ちることがあります）</li>
+          <li>Settings → Pages の Source が <b>GitHub Actions</b> になっているか<br>
+            （Deploy from a branch だと、組み立て前のファイルがそのまま配られ、この画面になります）</li>
+        </ol>
       </div>
     </div>
+
+    <script>
+      /* 覆いを外す手だて。アプリの読み込みが終わったときに呼ばれる。
+         **この処理は index.html の中に直接書くこと。**
+         組み立て後のファイルに置くと、それを読み込めなかったときに
+         覆いを外す手だてごと失われる */
+      window.__ftHideSplash = function () {
+        var el = document.getElementById("splash");
+        if (!el || el.dataset.going) return;
+        el.dataset.going = "1";
+        /* 一度描いてから消し始める。すぐ消すと、消える動きが出ないことがある */
+        requestAnimationFrame(function () {
+          el.classList.add("gone");
+          setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 500);
+        });
+      };
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
