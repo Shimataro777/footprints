@@ -2108,13 +2108,9 @@ function useLockBackground() {
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
     const body = document.body;
-    /* body を止めるだけでは足りない。中身（.ft-scroll）を動かす作りにしたので、
-       うしろの画面を止めるには、そちらにも印（ft-locked）を付けること */
-    const root = document.documentElement;
     if (overlayCount === 0) {
       body.dataset.ftPrevOverflow = body.style.overflow || "";
       body.style.overflow = "hidden";
-      root.classList.add("ft-locked");
     }
     overlayCount += 1;
     return () => {
@@ -2123,7 +2119,6 @@ function useLockBackground() {
         overlayCount = 0;
         body.style.overflow = body.dataset.ftPrevOverflow || "";
         delete body.dataset.ftPrevOverflow;
-        root.classList.remove("ft-locked");
       }
     };
   }, []);
@@ -3142,10 +3137,10 @@ function SideMenu({ open, onClose, items, footer, instant }) {
         </div>
         {footer && (
           /* **高さは下の帯（タブ）とそろえること。**
-             以前は中身なりの高さ（約88px）で、通常の画面の帯（約62px）と
-             食い違って見えていた。--ft-navh は実際の帯を測った値 */
+             以前は中身なりの高さで、通常の画面の帯と食い違って見えていた。
+             --ft-nav-h は帯の厚み（56px ＋ 切り欠き）。数字を書き写さないこと */
           <div className="border-t border-neutral-200 px-5 shrink-0 flex items-center"
-            style={{ minHeight: "var(--ft-navh, 96px)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+            style={{ minHeight: "var(--ft-nav-h, 56px)", paddingBottom: "env(safe-area-inset-bottom)" }}>
             {footer}
           </div>
         )}
@@ -4259,11 +4254,10 @@ function DraftDialog({ draft, onResume, onDiscard, names }) {
 
 function HomeScreen({ records, prefs, onOpenBackup, garden, onStartCycle, onHarvest }) {
   return (
-    /* 下の帯（タブ）は高さ84pxほどあり、この上に重なって出る。
-       余白がそれより狭いと、いちばん下の文が帯すれすれになって 読みづらい。
-       pb-28（112px）で28pxほどの逃げ場をとっている。
+    /* 下の帯（タブ）に隠れないための逃げ場。**数字を書かないこと。**
+       ft-pad-nav が「帯の厚み＋切り欠き＋少しの余裕」を1か所で決めている。
        ここを広げすぎると、木と段階の聖句がある画面が縦に収まらなくなる */
-    <div className="pb-28">
+    <div className="ft-pad-nav">
       <ScreenHeader title="ホーム" />
       {/* ヘッダは動かさず、中身だけがそっと立ち上がる（ヘッダは sticky なので動かすとぶれる） */}
       <div className="px-5 pt-4 ft-rise">
@@ -4286,7 +4280,7 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
     .sort((a, b) => ((b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "")))
     .slice(0, 10), [records]);
   return (
-    <div className="pb-32">
+    <div className="ft-pad-fab">
       <ScreenHeader title="記録" />
       <div className="px-5 pt-4 ft-rise">
         {/* 通読のつづきは、記録画面のいちばん上に置く */}
@@ -4418,8 +4412,8 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
   const knownTags = allKnownTags || [];
 
   return (
-    /* 下の帯（タブ）に隠れない分だけの余白。＋ボタンが無い画面なので pb-28 まで要らない */
-    <div className="pb-20">
+    /* 下の帯（タブ）に隠れない分だけの余白。＋ボタンが無い画面なので ft-pad-fab は要らない */
+    <div className="ft-pad-nav">
       <ScreenHeader title="探す" />
       <div className="px-5 pt-4 space-y-3 ft-rise">
         <div className="flex gap-2">
@@ -4636,7 +4630,7 @@ function ProgressScreen({ records, onOpenDetail, onOpenBook, onOpenDay }) {
     setOpenGroups((prev) => (prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]));
 
   return (
-    <div className="pb-32">
+    <div className="ft-pad-nav">
       <ScreenHeader title="実績" />
       <div className="px-5 pt-4 ft-rise">
         <div className="rounded-2xl bg-gradient-to-br from-th-700 to-th-900 text-white p-4 mb-3 flex items-center gap-4">
@@ -4941,9 +4935,10 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
         <Pencil size={24} />
       </button>
 
-      {/* pb-28 は鉛筆ボタンのぶんの逃げ場。
+      {/* 鉛筆ボタン（下から 切り欠き＋20px・高さ56px）のぶんの逃げ場。
           これが無いと、いちばん下に置いたものがボタンに隠れて押せなくなる */}
-      <div className="flex-1 overflow-y-auto px-5 pt-5 pb-28 max-w-2xl mx-auto w-full">
+      <div className="flex-1 overflow-y-auto px-5 pt-5 max-w-2xl mx-auto w-full"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 96px)" }}>
         {/* 上から「見出し」「本文」「関連」の3つのかたまり。
             かたまりの間だけを広くとり、中は詰める。
             余白を項目ごとにばらばらに付けると、詰まって見える所と空きすぎる所が混ざる */}
@@ -6325,22 +6320,18 @@ const TABS = [
   { key: "progress", label: "実績", icon: TrendingUp },
 ];
 /* 下の帯（タブ）。
-   **position:fixed で浮かせないこと。**
-   浮かせると、iPhoneでは指を上下するたびにブラウザの帯が伸び縮みし、
-   それに合わせて下のタブが上へずれて見える（実際そうなっていた）。
-   外側（.ft-app）の高さを画面ちょうどに固定し、この帯はその一番下に
-   ふつうに置く。中身のスクロールとは切り離されるので、もう動かない。
-   高さは navRef で測って --ft-navh に控える（枠線と切り欠きのぶんも含めた
-   帯ぜんたいの高さ）。＋ボタンの浮かせる位置と、メニューの下の段の高さを、
-   この1つの数からそろえるため */
-function BottomNav({ active, onChange, navRef }) {
+   **厚みは `--ft-nav-h`（56px ＋ 切り欠きのぶん）で決め打ちにすること。**
+   JSで測ったり、外側を dvh や fixed で留めたりする作りは、端末によって
+   下のはしが画面と食い違い、部品が上へ寄ったり帯が浮いたりする。
+   姉妹アプリ（My手帳）でも同じ道をたどって、この形に落ち着いている */
+function BottomNav({ active, onChange }) {
   return (
-    <div ref={navRef} className="shrink-0 z-30 bg-white border-t border-neutral-200" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+    <div className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-neutral-200 ft-tabbar-wrap">
       <div className="max-w-lg lg:max-w-5xl mx-auto flex">
         {TABS.map(({ key, label, icon: Icon }) => {
           const isActive = active === key;
           return (
-            <button key={key} onClick={() => onChange(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5 min-h-[56px] relative ft-tap">
+            <button key={key} onClick={() => onChange(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5 min-h-[56px] relative ft-tap ft-tabbtn">
               {isActive && <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[3px] bg-th-800 rounded-full ft-tabbar" />}
               {/* 選ばれた瞬間だけ弾ませたいので、key を変えて描き直させている */}
               <Icon key={isActive ? "on" : "off"} size={21}
@@ -6458,7 +6449,6 @@ function AppMain() {
   };
   const [artworks, setArtworks] = useState([]);
   const [headerBg, setHeaderBg] = useState(null); // ヘッダの背景に敷く絵（1枚だけ）
-  const navRef = useRef(null);
   const [tagMaster, setTagMaster] = useState([]);
   const [captions, setCaptions] = useState({ ...DEFAULT_CAPTIONS });
   const [prefs, setPrefs] = useState({ ...DEFAULT_PREFS });
@@ -6509,25 +6499,6 @@ function AppMain() {
     if (!res || res.ok) setHeaderBg(src || null);
     return res;
   }, []);
-
-  /* 下の帯（タブ）の高さを測って控えておく。
-     ＋ボタンの浮かせる位置と、メニューの下の段の高さを、この1つの数からそろえる。
-     **書き決めの数にしないこと。** 文字の大きさを変えると帯の高さも変わり、
-     96px と決め打ちしていたときは、＋ボタンが帯に重なっていた */
-  useEffect(() => {
-    if (typeof document === "undefined") return undefined;
-    const el = navRef.current;
-    if (!el) return undefined;
-    const apply = () => {
-      const h = el.getBoundingClientRect().height;
-      if (h > 0) document.documentElement.style.setProperty("--ft-navh", Math.round(h) + "px");
-    };
-    apply();
-    let ro = null;
-    if (typeof ResizeObserver !== "undefined") { ro = new ResizeObserver(apply); ro.observe(el); }
-    window.addEventListener("resize", apply);
-    return () => { if (ro) ro.disconnect(); window.removeEventListener("resize", apply); };
-  }, [loaded, prefs.fontSize]);
 
   const saveGarden = useCallback((g) => { setGarden(g); persistGarden(g); }, []);
 
@@ -6851,36 +6822,45 @@ function AppMain() {
     <TypeNameContext.Provider value={typeDesc.name}>
     <MenuContext.Provider value={() => setMenuOpen(true)}>
     {/* ft-root ＝ 動きの効き先。「動きの演出」を切ると ft-still が付いて、すべて止まる */}
-    <div className={"ft-app bg-neutral-50 font-sans text-neutral-900 ft-root "
+    <div className={"ft-shell bg-neutral-50 font-sans text-neutral-900 ft-root "
       + (headerBg ? "ft-hasbg " : "")
       + (prefs.motion === false ? "ft-still " : "")
       + ("ft-font-" + (prefs.fontSize || "s"))}
       style={headerBg ? { "--ft-hdrbg": `url(${JSON.stringify(headerBg).slice(1, -1)})` } : undefined}>
       <style>{`
-        /* 画面ぜんたいの入れ物。高さを画面ちょうどに固定し、
-           中身（.ft-scroll）だけをスクロールさせる。
-           dvh は「いま見えている高さ」。対応していない端末のために vh も先に書く */
-        /* **高さを 100vh / 100dvh で決めないこと。**
-           ホーム画面に追加したアプリ（切り欠きの下まで描く設定）では、
-           この数が画面の高さとぴったり合わないことがある。
-           合わないと、指を上下したときに画面ごと少し持ち上がり、
-           上は見出しが時計に重なり、下は画面の外の色（水色）がはみ出す
-           （実際そうなっていた）。
-           position:fixed の inset:0 なら、数を使わずに画面ちょうどを覆える。
-           流れの中に高さを持つものが無くなるので、画面ごと動くことも起きない */
-        .ft-app { position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
-        /* 画面ぜんたいも動かさない。**アーティファクト版にも要るので、ここに書くこと**
-           （zip 版は src/index.css にも同じ指定を置いてある） */
-        html, body { overflow: hidden; overscroll-behavior: none; }
+        /* **画面ぜんたいを「高さの決まった箱」にしないこと。**
+           dvh で高さを決める作りも、position:fixed の inset:0 で留める作りも、
+           JSで実測して当てる作りも試した。どれも端末によって下のはしが画面と
+           食い違い、見出しが時計に重なったり、下に別の色の帯が出たりした。
+           姉妹アプリ（My手帳）も同じ道をたどって、この形に戻している。
+           ふつうに縦へ伸びる箱にして、画面ごと送ること */
+        .ft-shell { min-height: 100vh; }
+
         /* **body の色は、下の帯と同じ白にすること。**
            ホーム画面に追加したアプリでは、いちばん下の細い帯（ホームバーのところ）を
            iPhone が body の色で塗る。起動中の覆いに合わせた水色のままだと、
            そこだけ水色の帯が出たままになる（実際そうなっていた）。
            ここは覆いが外れたあとに効くので、起動時に白く光ることはない */
         html, body { background: #FFFFFF; }
-        /* 重なる画面を開いているあいだは、うしろを動かさない。
-           body だけを止めても、中身をスクロールする作りでは効かない */
-        .ft-locked .ft-scroll { overflow: hidden; }
+
+        /* 下の帯の厚み。**右下のボタンや逃げ場は、必ずこれを見て決めること。**
+           数字を書き写すと、帯の厚みを変えたときに置いていかれて、
+           ボタンだけ高い場所に浮いたままになる */
+        :root { --ft-nav-h: calc(57px + env(safe-area-inset-bottom)); } /* 中身56 ＋ 上の線1 */
+        .ft-tabbar-wrap { padding-bottom: env(safe-area-inset-bottom); }
+        /* **タブの高さは min-height ではなく height で留めること。**
+           min-height だと中身しだいで数pxふくらみ、--ft-nav-h と食い違う。
+           食い違うと、メニューの下の段だけ高さがずれて見える */
+        .ft-tabbar-wrap .ft-tabbtn { height: 56px; min-height: 56px; padding-top: 6px; padding-bottom: 6px; }
+        /* **下の帯だけは、文字の大きさの設定でふくらませないこと。**
+           ここが厚くなると、記録を見せる場所がそのぶん減るうえ、
+           右下のボタンが帯に重なる（実際そうなっていた）。
+           字も行の高さも、いつも同じにしておく */
+        .ft-tabbar-wrap .ft-tabbtn span { font-size: 11.5px !important; line-height: 1.35; }
+        /* 下の帯に隠れないための逃げ場。**画面ごとに数字を書かないこと** */
+        .ft-pad-nav { padding-bottom: calc(env(safe-area-inset-bottom) + 76px); }
+        /* 下の帯と、その上に浮く丸ボタンのぶんまで空ける */
+        .ft-pad-fab { padding-bottom: calc(env(safe-area-inset-bottom) + 152px); }
 
         /* ヘッダの背景に置いた絵。
            **文字が読めなくなるので、必ず白い膜をかけること。**
@@ -7241,14 +7221,7 @@ function AppMain() {
         .no-scrollbar::-webkit-scrollbar { display: none; }
       `}</style>
 
-      {/* **中身だけをスクロールさせること。**
-          以前は画面ぜんたい（body）をスクロールしていたため、
-          iPhoneでは指を上下するたびにブラウザの帯が伸び縮みし、
-          下のタブが一緒に上へずれて見えていた。
-          外側の高さを画面ぴったり（100dvh）に固定し、
-          この入れ物の中だけを動かせば、下のタブは一切動かない */}
-      <div className="ft-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain">
-      <div className="max-w-lg lg:max-w-5xl mx-auto min-h-full relative bg-neutral-50">
+      <div className="max-w-lg lg:max-w-5xl mx-auto min-h-screen relative bg-neutral-50">
         {/* 入れ物は透明度だけで切り替える。ここで位置を動かすと、中の sticky なヘッダがぶれる */}
         <div key={tab} className="ft-tabswap">
         {tab === "home" && <HomeScreen records={records} prefs={prefs} onOpenBackup={() => setBackupOpen(true)} garden={garden} onStartCycle={() => setPickFruit(true)} onHarvest={harvestFruit} />}
@@ -7257,23 +7230,23 @@ function AppMain() {
         {tab === "progress" && <ProgressScreen records={records} onOpenDetail={openDetail} onOpenBook={openBook} onOpenDay={setViewingDay} />}
         </div>
       </div>
-      </div>
 
         {/* ＋は動く入れ物の外に置く。中に入れると、切り替えの動きの間だけ
             位置の基準がその入れ物になり、上から落ちてくるように見えてしまう。
-            **下からの高さは、下の帯の実際の高さ（--ft-navh）から決めること。**
-            96px と書き決めにしていたため、文字の大きさを「大」にすると
-            帯のほうが高くなり、ボタンが帯に重なっていた */}
+            **下からの高さは切り欠きのぶんを足して決めること。**
+            帯は 56px ＋ 切り欠き、ボタンは 56px 角なので、
+            96px 浮かせると帯との間が 40px あく。
+            帯の厚みは文字の大きさで変わらないので、重なることはない */}
         {tab === "record" && (
           <button onClick={openNew} aria-label="新しい記録を追加"
             /* z-40 にすること。下の帯（z-30）より小さいと、帯の下に潜って欠けて見える */
             className="fixed right-5 z-40 w-14 h-14 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab"
-            style={{ bottom: "calc(var(--ft-navh, 96px) + 14px)" }}>
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 96px)" }}>
             <Plus size={26} />
           </button>
         )}
 
-        <BottomNav active={tab} onChange={setTab} navRef={navRef} />
+        <BottomNav active={tab} onChange={setTab} />
 
         {viewingDay && (
           <DayRecordsScreen date={viewingDay} records={records} onClose={closeDay} onOpenDetail={openDetailFromBook} />
