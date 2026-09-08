@@ -6872,6 +6872,12 @@ function AppMain() {
         /* 画面ぜんたいも動かさない。**アーティファクト版にも要るので、ここに書くこと**
            （zip 版は src/index.css にも同じ指定を置いてある） */
         html, body { overflow: hidden; overscroll-behavior: none; }
+        /* **body の色は、下の帯と同じ白にすること。**
+           ホーム画面に追加したアプリでは、いちばん下の細い帯（ホームバーのところ）を
+           iPhone が body の色で塗る。起動中の覆いに合わせた水色のままだと、
+           そこだけ水色の帯が出たままになる（実際そうなっていた）。
+           ここは覆いが外れたあとに効くので、起動時に白く光ることはない */
+        html, body { background: #FFFFFF; }
         /* 重なる画面を開いているあいだは、うしろを動かさない。
            body だけを止めても、中身をスクロールする作りでは効かない */
         .ft-locked .ft-scroll { overflow: hidden; }
