@@ -551,7 +551,7 @@ const DEFAULT_TYPE_NAME = { ...{ reading: "通読", message: "学び", memorizat
 const TypeNameContext = React.createContext(DEFAULT_TYPE_NAME);
 const useTypeName = () => React.useContext(TypeNameContext) || DEFAULT_TYPE_NAME;
 const DEFAULT_TYPE_DESC = {
-  reading: "今日読んだ箇所と、感じたこと",
+  reading: "読んだ箇所と、感じたこと",
   message: "礼拝や集会で聞いた話",
   memorization: "心にとめておきたいことば",
   memo: "テーマごとの覚え書き",
@@ -4126,7 +4126,7 @@ function TreeArea({ records, garden, onStart, onHarvest }) {
 
 /* ＋を押したときに出る、記録の種類を選ぶシート */
 const TYPE_GUIDE = [
-  { key: "reading",      icon: <BookOpen size={22} />,     desc: "今日読んだ箇所と、感じたこと" },
+  { key: "reading",      icon: <BookOpen size={22} />,     desc: "読んだ箇所と、感じたこと" },
   { key: "message",      icon: <Play size={22} />,          desc: "礼拝や集会で聞いた話" },
   { key: "memorization", icon: <Star size={22} />,          desc: "心にとめておきたいことば" },
   { key: "memo",         icon: <BookMarked size={22} />,    desc: "テーマごとの覚え書き" },
@@ -6269,12 +6269,12 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
             </ul>
             <p className="text-[13.5px] text-amber-900/85 leading-relaxed mb-4">
               戻すときは「データ復元」か「文字から復元」。
-              ファイルの行方が分かりにくい端末では、文字で残すほうが確かです。
+              ファイルの行方が分かりにくい端末では、文字のほうが確かです。
             </p>
 
             <p className="text-[13.5px] font-bold text-amber-900 mb-2">記録が消えてしまうとき</p>
             <p className="text-[13.5px] text-amber-900/85 leading-relaxed mb-2">
-              記録はこの端末の中だけにあります。次のときは、記録ごと失われます。
+              記録はこの端末の中だけにあります。次のときは失われます。
             </p>
             <ul className="text-[13.5px] text-amber-900/85 leading-relaxed space-y-1 mb-2">
               <li>・ ブラウザの履歴やサイトデータを消したとき</li>
@@ -6283,7 +6283,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
               <li>・ 別の端末やブラウザで開いたとき</li>
             </ul>
             <p className="text-[13.5px] text-amber-900/85 leading-relaxed">
-              どれも前ぶれなく起こります。時々控えておけば、そのときも元どおりに戻せます。
+              どれも前ぶれなく起こります。時々控えておけば、元に戻せます。
             </p>
           </div>
           {/* いちばん下の逃げ場。無いと注意書きが画面の端すれすれになる */}
@@ -7349,7 +7349,7 @@ function AppMain() {
           items={[
             {
               label: "画面のカスタマイズ",
-              desc: "テーマカラー・イラスト・ひとこと",
+              desc: "カラー・イラスト・ひとこと",
               icon: <ImagePlus size={20} />,
               onClick: () => goFromMenu(() => setArtOpen(true)),
             },
@@ -7362,20 +7362,20 @@ function AppMain() {
             {
               label: "収穫した実",
               desc: garden.cycle
-                ? `${fruitByKey(garden.cycle.fruit).label}を育てています・収穫 ${(garden.harvests || []).length}個`
+                ? `${fruitByKey(garden.cycle.fruit).label}を育てています・収穫${(garden.harvests || []).length}個`
                 : "記録を重ねて実を育てる",
               icon: <Sparkles size={20} />,
               onClick: () => goFromMenu(() => setGardenOpen(true)),
             },
             {
               label: "タグの整理",
-              desc: (knownTags.length ? `${knownTags.length}個のタグ` : "タグの追加・名前の変更・削除"),
+              desc: (knownTags.length ? `${knownTags.length}個のタグ` : "追加・名前の変更・削除"),
               icon: <Tag size={20} />,
               onClick: () => goFromMenu(() => setTagsOpen(true)),
             },
             {
               label: "バックアップ",
-              desc: "記録とイラストの保存",
+              desc: "書き出しと復元",
               icon: <Download size={20} />,
               badge: unsavedNow,
               onClick: () => goFromMenu(() => setBackupOpen(true)),
