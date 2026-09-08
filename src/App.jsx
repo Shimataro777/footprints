@@ -317,6 +317,41 @@ function recordRefs(r) {
   if (r.type === "memo" && r.book) refs.push({ book: r.book, chapter: null });
   return refs;
 }
+/* 「この記録はどこを扱っているか」を決めるための箇所の一覧。
+   `recordRefs` とは役目が違うので、別に用意してある
+   （`recordRefs` は探すの絞り込みや実績の集計に使うもので、
+   そちらの結果を変えると別の画面に影響が出る）。
+
+   **章だけの言い及びは、同じ章に節つきの箇所があるときは数えないこと。**
+   学びの記録で、聖書箇所が「ヨハネの福音書 3:1-12」でも、
+   メモに「ヨハネ3章の前半について」と書いてあると、
+   章だけの箇所が拾われて章ぜんたいを扱ったことになり、
+   「3:13-24」を書いているときにこの記録が並んでいた（実際そうなっていた）。
+
+   ただし**通読で選んだ書・章は別**。あれは「その章を読んだ」という
+   はっきりした事実なので、本文に節つきの引用があっても章ぜんたいのまま残す。 */
+function narrowRefs(list) {
+  const hasVerse = new Set();
+  list.forEach((x) => { if (x && x.book && x.chapter != null && x.verse) hasVerse.add(x.book + "-" + x.chapter); });
+  return list.filter((x) => x && (x.verse || !hasVerse.has(x.book + "-" + x.chapter)));
+}
+function recordScopeRefs(r) {
+  /* 通読で選んだ章は、そのまま章ぜんたいとして数える */
+  const fixed = [];
+  if (r.type === "reading" && r.book && (r.chapters || []).length > 0) {
+    r.chapters.forEach((c) => fixed.push({ book: r.book, chapter: c }));
+  }
+  /* 本文から読み取った箇所。章をまたぐ書き方は、間の章も数え上げる */
+  const fromText = [];
+  parseBibleRefs(recordAllText(r)).forEach((x) => {
+    fromText.push(x);
+    if (x.chapterEnd && x.chapterEnd > x.chapter) {
+      for (let c = x.chapter + 1; c <= x.chapterEnd; c++) fromText.push({ book: x.book, chapter: c });
+    }
+  });
+  return [...fixed, ...narrowRefs(fromText)];
+}
+
 /* 並べるときに使う「代表の箇所」。
    **どの種類でも、決まった欄が空なら本文から拾い直すこと。**
    拾い直しを忘れると、その記録だけ目次順のいちばん後ろへ回される */
@@ -3311,17 +3346,30 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
   };
 
   /* いま扱っている聖書箇所に、過去の記録があれば拾い上げる */
+  /* いま扱っている箇所に、過去の記録があれば拾い上げる。
+     見るのは「箇所」の欄だけ。メモに書いたことは、いま書いている途中で
+     揺れ動くので、探す手がかりにはしない */
   const pastNotes = useMemo(() => {
     let refs = [];
-    if (type === "reading" && record.book) refs = (record.chapters || []).map((c) => ({ book: record.book, chapter: c }));
-    else if (type === "message") refs = parseBibleRefs(record.passageText || "");
+    if (type === "reading") {
+      /* 選んだ章があればそれ。無ければ、手で書いた「読んだ箇所」から読み取る
+         （書・章を選ばずに直接書く人もいるため） */
+      if (record.book && (record.chapters || []).length > 0) {
+        refs = record.chapters.map((c) => ({ book: record.book, chapter: c }));
+      } else {
+        refs = parseBibleRefs(record.passageText || "");
+      }
+    } else if (type === "message") {
+      refs = parseBibleRefs(record.passageText || "");
+    }
+    refs = narrowRefs(refs);
     if (!refs.length) return [];
     return (allRecords || [])
       .filter((r) => r.id !== record.id && recordFullDisplay(r).trim())
-      /* **章だけでなく節まで見ること。** 章が同じというだけで拾っていたため、
-         「ヨハネの福音書 3:16」を書いているときに「ヨハネの福音書 3:5」の
-         メモまで並んでいた。判定は refsOverlap にまかせる */
-      .filter((r) => recordRefs(r).some((x) => refs.some((t) => refsOverlap(x, t))))
+      /* **章だけでなく節まで見ること。** 判定は refsOverlap にまかせる。
+         相手の記録がどこを扱っているかは recordScopeRefs で決める
+         （章だけの言い及びに引きずられないようにするため） */
+      .filter((r) => recordScopeRefs(r).some((x) => refs.some((t) => refsOverlap(x, t))))
       .sort((a, b) => (b.date || b.createdAt || "").localeCompare(a.date || a.createdAt || ""))
       .slice(0, 6);
   }, [type, record.book, record.chapters, record.passageText, record.id, allRecords]);
