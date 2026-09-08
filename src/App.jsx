@@ -6860,7 +6860,18 @@ function AppMain() {
         /* 画面ぜんたいの入れ物。高さを画面ちょうどに固定し、
            中身（.ft-scroll）だけをスクロールさせる。
            dvh は「いま見えている高さ」。対応していない端末のために vh も先に書く */
-        .ft-app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+        /* **高さを 100vh / 100dvh で決めないこと。**
+           ホーム画面に追加したアプリ（切り欠きの下まで描く設定）では、
+           この数が画面の高さとぴったり合わないことがある。
+           合わないと、指を上下したときに画面ごと少し持ち上がり、
+           上は見出しが時計に重なり、下は画面の外の色（水色）がはみ出す
+           （実際そうなっていた）。
+           position:fixed の inset:0 なら、数を使わずに画面ちょうどを覆える。
+           流れの中に高さを持つものが無くなるので、画面ごと動くことも起きない */
+        .ft-app { position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
+        /* 画面ぜんたいも動かさない。**アーティファクト版にも要るので、ここに書くこと**
+           （zip 版は src/index.css にも同じ指定を置いてある） */
+        html, body { overflow: hidden; overscroll-behavior: none; }
         /* 重なる画面を開いているあいだは、うしろを動かさない。
            body だけを止めても、中身をスクロールする作りでは効かない */
         .ft-locked .ft-scroll { overflow: hidden; }
