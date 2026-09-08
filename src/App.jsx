@@ -3452,20 +3452,20 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
         {initial && (
           <Field label="日付"><DateInput value={record.date} onChange={(e) => set({ date: e.target.value })} /></Field>
         )}
-        <Field label="タグ" help="記録の種類とは別に、自由なラベルを何個でも付けられます。ここで付けたタグは「探す」でそのまま絞り込みに使えます。">
+        <Field label="タグ" help="自由なラベルを何個でも付けられます。「探す」で絞り込めます。">
           <TagField value={record.tags} onChange={(v) => set({ tags: v })} knownTags={knownTags} onCreateTag={onCreateTag} />
         </Field>
 
         {type === "reading" && (
           <>
-            <Field label="読んだ箇所" help="「書・章・節を選ぶ」から選ぶと、通読の実績にも自動で反映されます。">
+            <Field label="読んだ箇所" help="ここで選んだ箇所は、実績にも反映されます。">
               <TextInput value={record.passageText || ""} onChange={(e) => set({ passageText: e.target.value })} />
               <RecognizedRefs text={record.passageText} />
               <RefInserter label="書・章・節を選ぶ"
                 onPickRange={({ book, chapters, passageText }) => set({ book, chapters, passageText: appendRef(record.passageText, passageText) })} />
             </Field>
             <PastNotesPanel notes={pastNotes} />
-            <Field label="メモ" help="URLをそのまま貼れます。閲覧画面では押せるリンクになり、押すとブラウザで開きます。">
+            <Field label="メモ">
               <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={3} />
               <RecognizedRefs text={record.notes} />
               <RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />
@@ -3487,13 +3487,13 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
               <RefInserter onInsert={(ref) => set({ passageText: appendRef(record.passageText, ref) })} />
             </Field>
             <PastNotesPanel notes={pastNotes} />
-            <Field label="主題聖句" help="聖書のことばを書いておくと、下に出る「聖句に追加」から、そのまま聖句の記録として残せます。">
+            <Field label="主題聖句" help="「聖句に追加」から、聖句の記録としても残せます。">
               <TextArea value={record.mainVerseText} onChange={(e) => set({ mainVerseText: e.target.value })} minRows={2} />
               <RecognizedRefs text={record.mainVerseText} />
               <RefInserter onInsert={(ref) => set({ mainVerseText: appendRef(record.mainVerseText, ref) })} />
               <MemorizeLink text={record.mainVerseText} allRecords={allRecords} onQuickMemorize={onQuickMemorize} />
             </Field>
-            <Field label="メモ" help="URLをそのまま貼れます。閲覧画面では押せるリンクになり、押すとブラウザで開きます。">
+            <Field label="メモ">
               <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} />
               <RecognizedRefs text={record.notes} />
               <RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />
@@ -3504,7 +3504,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
 
         {type === "memorization" && (
           <>
-            <Field label="聖書のことば" help="末尾に（ヨハネの福音書 3:16）のように箇所を書いておくと、同じ箇所の記録どうしがつながります。">
+            <Field label="聖書のことば" help="末尾に箇所を書いておくと、同じ箇所の記録とつながります。">
               {/* 学びの「主題聖句」と同じ高さ（2行ぶん）にそろえている */}
               <TextArea value={record.text} onChange={(e) => set({ text: e.target.value })} minRows={2} />
               <RecognizedRefs text={record.text} />
@@ -3542,7 +3542,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
                     className="w-5 h-5 accent-th-700 shrink-0" />
                   <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><Star size={15} className="text-th-800 shrink-0" /> 今年の聖句にする</span>
                 </label>
-                <HelpTip label="今年の聖句" text="1年を通して、ホーム画面のいちばん上に表示されます。" />
+                <HelpTip label="今年の聖句" text="1年のあいだ、ホーム画面に表示されます。" />
               </div>
               {record.themeYear && (
                 <div className="mt-2">
@@ -3555,7 +3555,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
 
         {type === "memo" && (
           <>
-            <Field label="メモ" help="URLをそのまま貼れます。閲覧画面では押せるリンクになり、押すとブラウザで開きます。">
+            <Field label="メモ">
               <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} />
               <RecognizedRefs text={record.notes} />
               <RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />
@@ -4441,7 +4441,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
             <div>
               <span className="flex items-center gap-1 text-[12.5px] font-bold text-neutral-600 mb-1">
                 記録の種類
-                <HelpTip label="記録の種類" text="いくつでも選べます。ひとつも選ばないときは、すべての種類が対象になります。" />
+                <HelpTip label="記録の種類" text="選ばないときは、すべての種類が対象です。" />
               </span>
               <div className="flex flex-wrap gap-1.5">
                 {SEARCH_TYPES.map((t) => (
@@ -4456,7 +4456,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
             <div>
               <span className="flex items-center gap-1 text-[12.5px] font-bold text-neutral-600 mb-1">
                 タグ
-                <HelpTip label="タグ" text="記録に付けたタグで絞り込めます。複数選ぶと、そのすべてが付いた記録だけが残ります。" />
+                <HelpTip label="タグ" text="複数選ぶと、そのすべてが付いた記録だけが残ります。" />
               </span>
               {/* 一覧は出しっぱなしにしない。タグが増えるほど画面を圧迫するため。
                   形は記録画面の「タグを選ぶ・作る」とそろえている */}
@@ -5260,7 +5260,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
             ヘッダーの背景
-            <HelpTip label="ヘッダーの背景" text="画面のいちばん上の帯に、好きな写真を敷けます。文字が読めるよう、絵の上には自動でうすい白がかかります。" />
+            <HelpTip label="ヘッダーの背景" text="画面のいちばん上の帯に、好きな写真を敷けます。" />
           </h3>
           <div className="rounded-2xl border border-neutral-200 bg-white p-3 mb-6">
             {/* 実際の見えかたに近づけて、白い膜をかけた状態で見せる */}
@@ -5294,7 +5294,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
             並び順のはじめの選び方
-            <HelpTip label="並び順" text="「探す」やブックマークを開いたときに、はじめに選ばれている並び順です。あとから画面で切り替えることもできます。" />
+            <HelpTip label="並び順" text="「探す」やブックマークを開いたときの並び順です。" />
           </h3>
           <div className="flex gap-1.5 mb-6">
             {SORT_MODES.map((m) => {
@@ -5312,7 +5312,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
             文字の大きさ
-            <HelpTip label="文字の大きさ" text="画面の文字をまとめて大きくできます。入力欄の文字は、書きやすさのため大きさを変えていません。" />
+            <HelpTip label="文字の大きさ" text="画面の文字をまとめて大きくできます。" />
           </h3>
           <div className="flex gap-1.5 mb-6">
             {FONT_SIZES.map((f) => {
@@ -5331,7 +5331,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
             動きの演出
-            <HelpTip label="動きの演出" text="切ると、画面の切り替わりや、押したときに沈む動きが止まります。読み込み中の表示だけは残ります。" />
+            <HelpTip label="動きの演出" text="切ると、画面の切り替わりや押したときの動きが止まります。" />
           </h3>
           <label className="flex items-center gap-2.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 mb-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={prefDraft.motion !== false}
@@ -5348,7 +5348,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
             イラスト
-            <HelpTip label="イラスト" text={`画面ごとに、好きな絵と「ひとこと」を設定できます。まとまりを開いて絵を追加すると、その中の場所に順番に使われます。登録できるのは全部で${ART_MAX}枚までです。`} />
+            <HelpTip label="イラスト" text={`画面ごとに、好きな絵と「ひとこと」を設定できます。全部で${ART_MAX}枚までです。`} />
           </h3>
           <label className="flex items-center gap-2.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 mb-3 cursor-pointer select-none">
             <input type="checkbox" checked={prefDraft.showMascots !== false}
@@ -5788,12 +5788,6 @@ const HELP_SECTIONS = [
     ],
   },
   {
-    title: "メモ欄とリンク",
-    items: [
-      ["URLはそのまま貼る", "メモ欄にURLを貼っておくと、閲覧画面では押せるリンクになります。押すとブラウザで開きます。"],
-    ],
-  },
-  {
     title: "探す",
     items: [
       ["言葉で探す", "上の欄に言葉を入れて「検索」を押します。本文だけでなく、タグや聖書箇所も探しに含まれます。"],
@@ -5820,7 +5814,7 @@ const HELP_SECTIONS = [
     title: "見た目を変える",
     items: [
       ["色と文字の大きさ", "メニューの「画面のカスタマイズ」から、テーマの色と文字の大きさ（小・中・大）を選べます。"],
-      ["ヘッダーの背景", "画面のいちばん上の帯に、好きな写真を敷けます。文字が読めるよう、絵の上にはうすい白がかかります。"],
+      ["ヘッダーの背景", "画面のいちばん上の帯に、好きな写真を敷けます。"],
       ["ひとこと", "記録画面の下に出るひとことも、同じ画面で書き替えられます。"],
       ["イラスト", "お好きな絵に差し替えられます。出てくる場所ごとに色で対になっているので、どの絵がどこに出るかが分かります。"],
       ["動きを止める", "押したときの動きが気になるときは、同じ画面で止められます。"],
@@ -6215,7 +6209,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
 
           <div className="space-y-2.5 mb-4">
             <div className="flex justify-end">
-              <HelpTip label="バックアップ" text="記録と登録したイラストをまとめて1つのファイルに書き出します。機種を変えるときや、もしものときは「データ復元」で元に戻せます。" />
+              <HelpTip label="バックアップ" text="記録と設定をまとめて書き出します。「データ復元」で元に戻せます。" />
             </div>
             <button onClick={saveData} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"}>
               <Download size={18} /> データを保存
@@ -6828,6 +6822,10 @@ function AppMain() {
       + ("ft-font-" + (prefs.fontSize || "s"))}
       style={headerBg ? { "--ft-hdrbg": `url(${JSON.stringify(headerBg).slice(1, -1)})` } : undefined}>
       <style>{`
+        /* **@import は、この塊のいちばん先頭に置くこと。**
+           前に別の指定があると、ブラウザはこの行を読み飛ばし、
+           文字が用意した書体にならない */
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap');
         /* **画面ぜんたいを「高さの決まった箱」にしないこと。**
            dvh で高さを決める作りも、position:fixed の inset:0 で留める作りも、
            JSで実測して当てる作りも試した。どれも端末によって下のはしが画面と
@@ -6878,8 +6876,12 @@ function AppMain() {
           text-shadow: 0 1px 3px rgba(255,255,255,.95), 0 0 10px rgba(255,255,255,.75);
         }
 
-        @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@700;900&family=Noto+Sans+JP:wght@400;500;600;700;800&display=swap');
-        .font-display { font-family: 'Zen Kaku Gothic New', 'Noto Sans JP', sans-serif; font-weight: 900; }
+        /* 太字は600まで。見出しも Tailwind の font-bold（700）も、ここでゆるめる。
+           重い字が並ぶと、それだけで画面が固く見える */
+        .font-display { font-family: 'Noto Sans JP', sans-serif; font-weight: 600; letter-spacing: .01em; }
+        .font-bold { font-weight: 600; }
+        .font-medium { font-weight: 500; }
+        .font-semibold { font-weight: 600; }
         .font-sans, body { font-family: 'Noto Sans JP', sans-serif; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .btn-h { min-height: 40px; }
