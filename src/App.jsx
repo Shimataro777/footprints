@@ -954,7 +954,7 @@ function PasteDialog({ title, hint, actionLabel, onCancel, onSubmit }) {
       style={{ zIndex: 2147483400 }} onClick={onCancel}>
       <div className="bg-white rounded-2xl p-5 max-w-md w-full border-2 border-neutral-200 shadow-xl anim-pop"
         onClick={(e) => e.stopPropagation()}>
-        <h3 className="font-display text-[18px] text-neutral-900 mb-1.5">{title}</h3>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-1.5">{title}</h3>
         <p className="text-[13.5px] text-neutral-600 mb-3 leading-relaxed">{hint}</p>
         <textarea ref={ref} value={text} onChange={(e) => setText(e.target.value)}
           placeholder="ここに貼りつけてください"
@@ -1002,7 +1002,7 @@ function RecordPeekDialog({ record, onOpen, onClose }) {
             {recordSections(record).map((sc, i) => (
               <div key={i}>
                 {sc.label && (
-                  <span className="block text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-1.5">{sc.label}</span>
+                  <span className="block text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-1.5">{sc.label}</span>
                 )}
                 <HighlightedText text={sc.text} className="text-[14.5px] text-neutral-900 leading-relaxed whitespace-pre-line" />
               </div>
@@ -1055,7 +1055,7 @@ function TagPickDialog({ title, selected, known, onApply, onCancel, onCreate, no
         + (closing ? "anim-sheet-out" : "anim-sheet")}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 shrink-0">
-          <span className="font-display text-[18px] text-neutral-900 tracking-wide">{title}</span>
+          <span className="font-display text-[17px] text-neutral-900 tracking-wide">{title}</span>
           <button type="button" onClick={close} aria-label="閉じる"
             className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={24} /></button>
         </div>
@@ -1506,7 +1506,7 @@ function MonthNavHeader({ label, onPrev, onNext, onJump, onToday }) {
       <div className="flex items-center gap-1 min-w-0">
         <button type="button" onClick={onJump} aria-label="年月を選ぶ"
           className="flex items-center gap-1 px-2 min-h-[44px] rounded-lg hover:bg-neutral-100 ft-tap">
-          <span className="font-display text-[18px] text-neutral-900 whitespace-nowrap">{label}</span>
+          <span className="font-display text-[17px] text-neutral-900 whitespace-nowrap">{label}</span>
           <ChevronDown size={16} className="text-neutral-500 shrink-0" />
         </button>
         {onToday && (
@@ -1610,7 +1610,7 @@ function DateInput({ className, value, onChange }) {
             onClick={(e) => e.stopPropagation()}>
 
             <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 shrink-0">
-              <span className="font-display text-[18px] text-neutral-900 tracking-wide">日付を選ぶ</span>
+              <span className="font-display text-[17px] text-neutral-900 tracking-wide">日付を選ぶ</span>
               <button type="button" onClick={close} aria-label="閉じる"
                 className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={24} /></button>
             </div>
@@ -2315,7 +2315,7 @@ function HighlightTakeoverDialog({ what, existing, onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
-        <h3 className="font-display text-[18px] text-neutral-900 mb-2">{what}には、すでに別の聖句があります</h3>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-2">{what}には、すでに別の聖句があります</h3>
         <div className="rounded-xl border-2 border-neutral-200 bg-neutral-50 px-3 py-2.5 mb-3">
           <p className="text-[13.5px] text-neutral-700 whitespace-pre-line">{clampText(existing.text, 3)}</p>
         </div>
@@ -2336,7 +2336,7 @@ function ConfirmItemDeleteDialog({ label, onConfirm, onCancel }) {
     <div className="fixed inset-0 flex items-center justify-center px-6" style={{ zIndex: 2147483100 }}>
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
       <div className="relative bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl max-h-[88vh] overflow-y-auto">
-        <h3 className="font-display text-[18px] text-neutral-900 mb-2">{label}を削除します</h3>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-2">{label}を削除します</h3>
         <p className="text-[13.5px] text-neutral-600 mb-5">この入力欄と、入力した内容が消えます。記録そのものは削除されません。</p>
         <div className="flex gap-2.5">
           <button type="button" onClick={onCancel} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
@@ -3044,7 +3044,7 @@ function ScreenHeader({ title, right }) {
   return (
     <div className="ft-hdr px-5 pb-2.5 sticky top-0 ft-page z-10 border-b border-th-200" style={SAFE_TOP(18)}>
       <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0"><h1 className="font-display text-[29px] text-neutral-900 tracking-wide truncate">{title}</h1></div>
+        <div className="min-w-0"><h1 className="font-display text-[27px] text-neutral-900 tracking-wide truncate">{title}</h1></div>
         <div className="flex items-center gap-1 shrink-0">
           {right}
           {openMenu && (
@@ -3069,7 +3069,7 @@ function MenuRow({ it }) {
         + (pressed ? "bg-neutral-200 ft-tap-pressed" : "hover:bg-neutral-50")}>
       <span className="w-10 h-10 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center shrink-0 text-th-800">{it.icon}</span>
       <span className="flex-1 min-w-0">
-        <span className="block font-display text-[18px] text-neutral-900 tracking-wide">{it.label}</span>
+        <span className="block font-display text-[17px] text-neutral-900 tracking-wide">{it.label}</span>
         {it.desc && <span className="block text-[12.5px] text-neutral-500 mt-0.5">{it.desc}</span>}
       </span>
       <CountBadge n={it.badge} size={22} />
@@ -3126,7 +3126,7 @@ function SideMenu({ open, onClose, items, footer, instant }) {
         style={{ transform: shown ? "translateX(0)" : "translateX(100%)", transition: "transform 260ms cubic-bezier(0.16,1,0.3,1)" }}
       >
         <div className="ft-hdr flex items-center justify-between px-5 pb-4 border-b border-neutral-200 shrink-0" style={SAFE_TOP(16)}>
-          <span className="font-display text-[20px] text-neutral-900">メニュー</span>
+          <span className="font-display text-[18px] text-neutral-900">メニュー</span>
           <button onClick={onClose} aria-label="閉じる"
             className="min-w-[52px] min-h-[52px] flex items-center justify-center rounded-xl text-neutral-600 hover:bg-neutral-100"><X size={28} /></button>
         </div>
@@ -3190,7 +3190,7 @@ function ConfirmDeleteDialog({ onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
-        <h3 className="font-display text-[18px] text-neutral-900 mb-2">この記録を削除しますか？</h3>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-2">この記録を削除しますか？</h3>
         <p className="text-[13.5px] text-neutral-600 mb-5">記録そのものが消えます。この操作は取り消せません。</p>
         <div className="flex gap-2.5">
           <button onClick={onCancel} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
@@ -3205,7 +3205,7 @@ function ExitConfirmDialog({ onSave, onDiscard, onStay }) {
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
-        <h3 className="font-display text-[18px] text-neutral-900 mb-2">保存されていない内容があります</h3>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-2">保存されていない内容があります</h3>
         <p className="text-[13.5px] text-neutral-600 mb-5">この記録を保存しますか？保存しない場合、入力した内容は失われます。</p>
         <div className="flex gap-2.5 mb-2.5">
           <button onClick={onDiscard} className={BTN_DANGER_SOFT + " flex-1 " + BTN_H + " text-[14.5px]"}>保存しない</button>
@@ -3404,7 +3404,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
       <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
-        <h2 className="font-display text-[22px] text-neutral-900 flex-1 min-w-0 truncate pl-1 tracking-wide">{formTitle}</h2>
+        <h2 className="font-display text-[20px] text-neutral-900 flex-1 min-w-0 truncate pl-1 tracking-wide">{formTitle}</h2>
         {savedAt && (
           <span className={"text-[11.5px] font-bold shrink-0 tabular-nums " + (isDirty() ? "text-neutral-400" : "text-th-800/80")}>最終保存 {savedAt}</span>
         )}
@@ -3604,7 +3604,7 @@ function DuplicateDialog({ existing, onRegister, onViewExisting, onCancel }) {
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center px-6">
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
-        <h3 className="font-display text-[18px] text-neutral-900 mb-3">同じ聖句が登録済みです</h3>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-3">同じ聖句が登録済みです</h3>
         <div className="rounded-xl bg-neutral-50 border-2 border-neutral-200 p-3 mb-4">
           <p className="text-[13.5px] font-bold text-th-800 mb-1">{formatRef(primaryRef(existing.text))}</p>
           <p className="text-[13.5px] text-neutral-700 line-clamp-3">{existing.text}</p>
@@ -4004,7 +4004,7 @@ function FruitPickDialog({ title, note, current, onPick, onCancel }) {
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
-        <h3 className="font-display text-[18px] text-neutral-900 mb-1.5">{title}</h3>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-1.5">{title}</h3>
         {note && <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-3">{note}</p>}
         {/* 実を選び直すたびに、木がふわっと差し替わる */}
         <div key={sel} className="flex justify-center mb-2 ft-grow">
@@ -4038,7 +4038,7 @@ function ConfirmReplantDialog({ fruit, onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center px-6">
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop">
-        <h3 className="font-display text-[18px] text-neutral-900 mb-2">木を植え直します</h3>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-2">木を植え直します</h3>
         <p className="text-[13.5px] text-neutral-700 leading-relaxed mb-2">
           {fruitByKey(fruit).label}の種を新しく蒔きます。今の木は土からのやり直しになり、
           <span className="font-bold">育ってきた日数と件数は0から数え直し</span>になります。
@@ -4286,7 +4286,7 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
       <div className="px-5 pt-4 ft-rise">
         {/* 通読のつづきは、記録画面のいちばん上に置く */}
         <ContinueCard records={records} onStart={onStartReading} />
-        <h3 className="text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-3">最近の記録</h3>
+        <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-3">最近の記録</h3>
         {/* 記録がまだ無いときの案内は、2列の並びの中に入れない。
             中に入れると、横長の画面で左半分だけに寄ってしまう。
             記録があるときの2列はそのまま */}
@@ -4515,7 +4515,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
             探す前は並べ替える対象そのものが無いので、置いておくと迷いのもとになる */}
         {searched && !searching && (
           <div className="flex items-center justify-between gap-2 pt-1">
-            <h3 className="text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase">
+            <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase">
               {sortedRecords.length}件
             </h3>
             <div className="w-[150px] shrink-0">
@@ -4643,10 +4643,10 @@ function ProgressScreen({ records, onOpenDetail, onOpenBook, onOpenDay }) {
           <div className="text-[28px] font-display">{pct}%</div>
         </div>
 
-        <h3 className="text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-3 mt-5">日ごとの記録</h3>
+        <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-3 mt-5">日ごとの記録</h3>
         <CalendarView records={records} onOpenDay={onOpenDay} />
 
-        <h3 className="text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-3 mt-6">書ごとの記録</h3>
+        <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-3 mt-6">書ごとの記録</h3>
         <div className="space-y-2.5">
           {BOOK_GROUPS.map((g) => {
             const books = BOOKS.slice(g.from, g.to + 1);
@@ -4732,7 +4732,7 @@ function DayRecordsScreen({ date, records, onClose, onOpenDetail }) {
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[22px] text-neutral-900 truncate flex-1 tracking-wide">{date}</h2>
+        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">{date}</h2>
         <MenuButton />
       </div>
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
@@ -4743,7 +4743,7 @@ function DayRecordsScreen({ date, records, onClose, onOpenDetail }) {
           </div>
         ) : (
           <>
-            <h3 className="text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-3">{list.length}件の記録</h3>
+            <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-3">{list.length}件の記録</h3>
             <div className="space-y-2.5 ft-seq lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5">
               {list.map((r) => <RecordCard key={r.id} r={r} onClick={() => onOpenDetail(r)} />)}
             </div>
@@ -4780,13 +4780,13 @@ function BookRecordsScreen({ book, records, onClose, onOpenDetail, defaultSort }
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
       <div className="ft-hdr flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[22px] text-neutral-900 flex-1 min-w-0 truncate tracking-wide">{book}</h2>
+        <h2 className="font-display text-[20px] text-neutral-900 flex-1 min-w-0 truncate tracking-wide">{book}</h2>
         <MenuButton />
       </div>
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         <ChapterTiles book={book} counts={counts} />
         <div className="flex items-center gap-2 mb-3">
-          <p className="text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase">{list.length}件の記録</p>
+          <p className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase">{list.length}件の記録</p>
           <div className="ml-auto w-[150px]">
             <Select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
               {SORT_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
@@ -4903,7 +4903,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
       <div className="ft-hdr flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[18px] text-neutral-900 flex-1 min-w-0 truncate">{recordTitle(record)}</h2>
+        <h2 className="font-display text-[17px] text-neutral-900 flex-1 min-w-0 truncate">{recordTitle(record)}</h2>
         <MenuButton />
       </div>
 
@@ -4961,7 +4961,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
           {recordSections(record).map((sc, i) => (
             <div key={i}>
               {sc.label && (
-                <span className="block text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-1.5">{sc.label}</span>
+                <span className="block text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-1.5">{sc.label}</span>
               )}
               <HighlightedText text={sc.text} className="text-[15.5px] text-neutral-900 leading-relaxed whitespace-pre-line" />
             </div>
@@ -5064,7 +5064,7 @@ function SaveFallbackDialog({ onCopy, onCancel }) {
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
-        <h3 className="font-display text-[18px] text-neutral-900 mb-2">ファイルとして保存できませんでした</h3>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-2">ファイルとして保存できませんでした</h3>
         <p className="text-[13.5px] text-neutral-600 mb-2 leading-relaxed">
           この画面ではファイル保存が使えません。データをコピーして、メモアプリなどに貼り付けて保管してください。
         </p>
@@ -5236,14 +5236,14 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
       <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
         <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
           <button onClick={handleCloseAttempt} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</button>
-          <h2 className="font-display text-[22px] text-neutral-900 truncate flex-1 tracking-wide">画面のカスタマイズ</h2>
+          <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">画面のカスタマイズ</h2>
           <MenuButton />
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {msg && <div className={"rounded-xl border-2 px-3.5 py-3 mb-4 text-[13.5px] font-bold " + msgStyle}>{msg.text}</div>}
 
-          <h3 className="text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">テーマカラー</h3>
+          <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">テーマカラー</h3>
           <div className="grid grid-cols-3 gap-2 mb-5">
             {THEMES.map((t) => {
               const on = prefDraft.theme === t.key;
@@ -5259,7 +5259,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
             })}
           </div>
 
-          <h3 className="flex items-center gap-1 text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
+          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
             ヘッダーの背景
             <HelpTip label="ヘッダーの背景" text="画面のいちばん上の帯に、好きな写真を敷けます。" />
           </h3>
@@ -5270,7 +5270,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
                 <>
                   <img src={hdrDraft} alt="" className="absolute inset-0 w-full h-full object-cover" />
                   <span className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))" }} />
-                  <span className="relative font-display text-[22px] text-white tracking-wide"
+                  <span className="relative font-display text-[20px] text-white tracking-wide"
                     style={{ textShadow: "0 1px 3px rgba(0,0,0,.45)" }}>ホーム</span>
                 </>
               ) : (
@@ -5293,7 +5293,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
             </div>
           </div>
 
-          <h3 className="flex items-center gap-1 text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
+          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
             並び順のはじめの選び方
             <HelpTip label="並び順" text="「探す」やブックマークを開いたときの並び順です。" />
           </h3>
@@ -5311,7 +5311,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
             })}
           </div>
 
-          <h3 className="flex items-center gap-1 text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
+          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
             文字の大きさ
             <HelpTip label="文字の大きさ" text="画面の文字をまとめて大きくできます。" />
           </h3>
@@ -5330,7 +5330,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
             })}
           </div>
 
-          <h3 className="flex items-center gap-1 text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
+          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
             動きの演出
             <HelpTip label="動きの演出" text="切ると、画面の切り替わりや押したときの動きが止まります。" />
           </h3>
@@ -5347,7 +5347,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
               バックアップにも入れ続ける。消してしまうと、
               以前に名前を変えていた人の設定が黙って初期値に戻るため */}
 
-          <h3 className="flex items-center gap-1 text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
+          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
             イラスト
             <HelpTip label="イラスト" text={`画面ごとに、好きな絵と「ひとこと」を設定できます。全部で${ART_MAX}枚までです。`} />
           </h3>
@@ -5528,12 +5528,12 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[22px] text-neutral-900 truncate flex-1 tracking-wide">ブックマーク</h2>
+        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ブックマーク</h2>
         <MenuButton />
       </div>
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         <div className="flex items-center gap-2 mb-3">
-          <p className="text-[13.5px] font-bold tracking-wider text-th-800/70 uppercase">{list.length}件</p>
+          <p className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase">{list.length}件</p>
           <div className="ml-auto w-[150px]">
             <Select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
               {SORT_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
@@ -5659,7 +5659,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[22px] text-neutral-900 truncate flex-1 tracking-wide">タグの整理</h2>
+        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">タグの整理</h2>
         <MenuButton />
       </div>
 
@@ -5730,7 +5730,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
       {renaming && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
           <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop">
-            <h3 className="font-display text-[18px] text-neutral-900 mb-3">タグの名前を変える</h3>
+            <h3 className="font-display text-[17px] text-neutral-900 mb-3">タグの名前を変える</h3>
             <TextInput value={renaming.to} onChange={(e) => setRenaming({ ...renaming, to: e.target.value })} />
             <p className="text-[12.5px] text-neutral-500 mt-2 mb-5 leading-relaxed">
               このタグが付いている記録も、まとめて新しい名前に変わります。
@@ -5747,7 +5747,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
       {deleting && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
           <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop">
-            <h3 className="font-display text-[18px] text-neutral-900 mb-2">「{deleting.tag}」を削除しますか</h3>
+            <h3 className="font-display text-[17px] text-neutral-900 mb-2">「{deleting.tag}」を削除しますか</h3>
             <p className="text-[13.5px] text-neutral-600 mb-5 leading-relaxed">
               {deleting.n > 0
                 ? `${deleting.n}件の記録から、このタグが外れます。記録そのものは消えません。`
@@ -5834,7 +5834,7 @@ function HelpScreen({ onClose }) {
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[22px] text-neutral-900 truncate flex-1 tracking-wide">ヘルプ</h2>
+        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ヘルプ</h2>
         <MenuButton />
       </div>
 
@@ -5889,7 +5889,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
         <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[22px] text-neutral-900 truncate flex-1 tracking-wide">収穫した実</h2>
+        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">収穫した実</h2>
         <MenuButton />
       </div>
 
@@ -6183,7 +6183,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
       <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
         <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
           <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-          <h2 className="font-display text-[22px] text-neutral-900 truncate flex-1 tracking-wide">バックアップ</h2>
+          <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">バックアップ</h2>
           <MenuButton />
         </div>
 
@@ -7099,13 +7099,11 @@ function AppMain() {
         .ft-font-m .text-\\[16px\\] { font-size: 17px; }
         .ft-font-m .text-\\[17px\\] { font-size: 18.5px; }
         .ft-font-m .text-\\[18px\\] { font-size: 19.5px; }
-        .ft-font-m .text-\\[20px\\] { font-size: 21.5px; }
-        .ft-font-m .text-\\[22px\\] { font-size: 23.5px; }
+        .ft-font-m .text-\\[20px\\] { font-size: 22px; }
         .ft-font-m .text-\\[24px\\] { font-size: 26px; }
         .ft-font-m .text-\\[26px\\] { font-size: 28px; }
         .ft-font-m .text-\\[27px\\] { font-size: 29px; }
         .ft-font-m .text-\\[28px\\] { font-size: 30px; }
-        .ft-font-m .text-\\[29px\\] { font-size: 31px; }
 
         /* 文字の大きさ「大」。小さい字はしっかり、もともと大きい見出しは控えめに増やす。
            全部を同じ倍率で拡げると、見出しが画面の幅に収まらなくなる */
@@ -7117,13 +7115,11 @@ function AppMain() {
         .ft-font-l .text-\\[16px\\] { font-size: 18.5px; }
         .ft-font-l .text-\\[17px\\] { font-size: 20px; }
         .ft-font-l .text-\\[18px\\] { font-size: 21px; }
-        .ft-font-l .text-\\[20px\\] { font-size: 23.5px; }
-        .ft-font-l .text-\\[22px\\] { font-size: 25.5px; }
+        .ft-font-l .text-\\[20px\\] { font-size: 24px; }
         .ft-font-l .text-\\[24px\\] { font-size: 28px; }
         .ft-font-l .text-\\[26px\\] { font-size: 30.5px; }
         .ft-font-l .text-\\[27px\\] { font-size: 31.5px; }
         .ft-font-l .text-\\[28px\\] { font-size: 32.5px; }
-        .ft-font-l .text-\\[29px\\] { font-size: 34px; }
 
         /* --- 下からせり上がる小窓 ---
            高さは dvh（いま実際に見えている高さ）で決めること。
