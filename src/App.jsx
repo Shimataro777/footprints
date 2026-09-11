@@ -1235,6 +1235,11 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* 共通のボタン配色。主要な操作はすべて同じ深いティールに統一している */
 /* iPhoneの切り欠き（ノッチ・ダイナミックアイランド）に隠れないための上余白。
    index.html で viewport-fit=cover にしているため、自分で余白を取る必要がある */
+/* アプリの版数。**index.html の window.__FT_VERSION が本物。**
+   ここはアーティファクト版（index.html が無い）のための控え。
+   数を上げるときは index.html を直すこと */
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "1.0.0";
+
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
 const BTN_H = "btn-h"; // 全ボタン共通の高さ（実際の値はグローバルCSSの .btn-h で定義）
@@ -2289,10 +2294,11 @@ function RefInserter({ onInsert, onPickRange, label }) {
 
   return (
     <>
-      {/* **この印は、対象の欄のすぐ下に置くこと。**
-          認識した箇所の並びをはさむと、どの欄に入るのか分からなくなる */}
-      <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-th-800 mt-1.5 min-h-[30px] ft-tap">
-        <BookOpen size={13} /> {label || "書・章・節を選んで挿入"}
+      {/* **この印は、対象の欄にぴたりと寄せること。**
+          欄と印のふたつで、ひとつの項目。間を空けると別のものに見える。
+          認識した箇所の並びを間にはさむのも同じ理由で不可 */}
+      <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-th-800 mt-1 min-h-[28px] ft-tap">
+        <BookOpen size={13} /> {label || "聖書箇所を挿入"}
       </button>
       {open && (
         <div className="fixed inset-0 flex items-center justify-center px-5" style={{ zIndex: 2147483100 }} onClick={close}>
@@ -3096,8 +3102,23 @@ function MenuButton({ size = MENU_BTN }) {
 function ScreenHeader({ title, right }) {
   const openMenu = React.useContext(MenuContext);
   const unsaved = React.useContext(UnsavedContext);
+  /* 見出しの高さを測って、みんなが使えるところ（--ft-head-h）に書いておく。
+     **数を決め打ちしないこと。** 文字の大きさを変えると見出しも高くなり、
+     その下に貼りつけた部品が見出しに食い込む */
+  const headRef = useRef(null);
+  useEffect(() => {
+    const el = headRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const write = () => {
+      document.documentElement.style.setProperty("--ft-head-h", Math.round(el.getBoundingClientRect().height) + "px");
+    };
+    write();
+    const ro = new ResizeObserver(write);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <div className="ft-hdr px-5 pb-2.5 sticky top-0 ft-page z-10 border-b border-th-200" style={SAFE_TOP(18)}>
+    <div ref={headRef} className="ft-hdr px-5 pb-2.5 sticky top-0 ft-page z-10 border-b border-th-200" style={SAFE_TOP(18)}>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0"><h1 className="font-display text-[27px] text-neutral-900 tracking-wide truncate">{title}</h1></div>
         <div className="flex items-center gap-1 shrink-0">
@@ -3487,28 +3508,28 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
 
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         {!initial && (
-          <div className="flex flex-wrap gap-3 mb-5">
+          /* **項目名は出さないこと。** 部品を見れば何を選ぶ場所か分かる。
+             余白はほかの項目と同じ16px（mb-4）にそろえる */
+          <div className="flex flex-wrap gap-2 mb-4">
             {/* ＋から種類を選んで入った場合は、種類の選び直し欄は出さない */}
             {!typeLocked && (
-              <div className="w-[104px] shrink-0">
-                <span className="block text-[13.5px] font-bold text-neutral-700 mb-1.5 tracking-wide">種類</span>
+              <div className="w-[120px] shrink-0">
                 <Select value={type} onChange={(e) => setType(e.target.value)}>
                   {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </Select>
               </div>
             )}
             <div className="shrink-0">
-              <span className="block text-[13.5px] font-bold text-neutral-700 mb-1.5 tracking-wide">日付</span>
-              <DateInput className="w-[148px]" value={record.date} onChange={(e) => set({ date: e.target.value })} />
+              <DateInput className="w-[160px]" value={record.date} onChange={(e) => set({ date: e.target.value })} />
             </div>
           </div>
         )}
 
         {/* タグはどの種類にも共通なので、種類ごとの分岐の外に置いている */}
         {initial && (
-          <Field label="日付"><DateInput value={record.date} onChange={(e) => set({ date: e.target.value })} /></Field>
+          <Field><DateInput value={record.date} onChange={(e) => set({ date: e.target.value })} /></Field>
         )}
-        <Field label="タグ" help="自由なラベルを何個でも付けられます。「探す」で絞り込めます。">
+        <Field>
           <TagField value={record.tags} onChange={(v) => set({ tags: v })} knownTags={knownTags} onCreateTag={onCreateTag} />
         </Field>
 
@@ -3516,7 +3537,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
           <>
             <Field>
               <TextInput value={record.passageText || ""} onChange={(e) => set({ passageText: e.target.value })} placeholder="読んだ箇所（例：ヨハネの福音書 3章）" />
-              <RefInserter label="書・章・節を選ぶ"
+              <RefInserter
                 onPickRange={({ book, chapters, passageText }) => set({ book, chapters, passageText: appendRef(record.passageText, passageText) })} />
               <RecognizedRefs text={record.passageText} />
             </Field>
@@ -3573,7 +3594,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
             {/* 高さは決め打ちにしない。上下の余白だけを指定して、
                 中の文字の大きさに合わせて自然に伸び縮みするようにしている。
                 「？」も横に並べて、全部が上下の真ん中でそろう */}
-            <div className="rounded-xl border border-neutral-300 bg-white px-3.5 py-2 mb-2.5">
+            <div className="rounded-xl border border-neutral-300 bg-white px-3.5 py-2 mb-4">
               <div className="flex items-center gap-2">
                 <label className="flex items-center gap-2.5 cursor-pointer select-none flex-1 min-w-0 py-1.5">
                   <input type="checkbox" checked={!!record.monthYear}
@@ -4471,10 +4492,16 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
     /* 下の帯（タブ）に隠れない分だけの余白。＋ボタンが無い画面なので ft-pad-fab は要らない */
     <div className="ft-pad-nav">
       <ScreenHeader title="探す" />
-      <div className="px-5 pt-4 space-y-3 ft-rise">
+      {/* **検索の欄と絞り込みの帯は、見出しの下に貼りつけること。**
+          下まで見ていった先で探し直したくなったとき、
+          いちいち上まで戻らずに済む。
+          貼りつく位置は --ft-head-h（見出しの実際の高さ）から決める。
+          数を書き写すと、文字の大きさを変えたときに見出しへ食い込む */}
+      <div className="px-5 pt-4 pb-3 space-y-2.5 sticky ft-page z-20 ft-rise"
+        style={{ top: "var(--ft-head-h, 68px)" }}>
         <div className="flex gap-2">
           <div className="flex-1 min-w-0">
-            <TextInput value={keyword} onChange={(e) => setKeyword(e.target.value)}
+            <TextInput value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="ことばで探す"
               onKeyDown={(e) => { if (e.key === "Enter" && canSearch) runSearch(); }} />
           </div>
           <button type="button" onClick={runSearch} disabled={searching || !canSearch}
@@ -4484,7 +4511,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
         </div>
 
         {/* **開くだけで終わらせないこと。**
-            下のほうまで見ていった先で押しても、絞り込みの欄は画面の外（上）にあるので、
+            下のほうまで見ていった先で押しても、絞り込みの中身は画面の外（上）にあるので、
             何も起きていないように見える。いっしょに画面のてっぺんへ戻す */}
         <button onClick={() => { setFiltersOpen((v) => { if (!v) scrollPageTop(); return !v; }); }} className="w-full flex items-center justify-between min-h-[44px] rounded-xl border border-neutral-300 px-3.5 bg-white ft-tap ft-tap-card">
           <span className="flex items-center gap-1.5 text-[14.5px] font-bold text-neutral-700">
@@ -4492,7 +4519,11 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
           </span>
           <ChevronDown size={18} className={"text-neutral-500 ft-chev " + (filtersOpen ? "ft-chev-on" : "")} />
         </button>
+      </div>
 
+      {/* 絞り込みの中身は貼りつけない。開くと背が高く、
+          貼りつけると結果を見せる場所がほとんど無くなる */}
+      <div className="px-5 space-y-3">
         {filtersOpen && (
           /* iPhoneで開いたとき、はじめの状態がスクロールなしで収まるように、
              余白と行数をきつめに詰めている。ここを広げるときは実機の高さに注意 */
@@ -5798,7 +5829,7 @@ const HELP_SECTIONS = [
     items: [
       ["＋を押して始める", "記録タブの右下にある＋から、種類を選んで書き始めます。種類は「通読」「学び」「聖句」「その他」の4つです。"],
       ["書きかけでも消えない", "入力の途中でも自動で下書きが残ります。右上のボタンを押すと、その場で保存できます。輪がひとつ広がったら、保存できた合図です。"],
-      ["書・章・節を選んで入れる", "入力欄の下にある「書・章・節を選んで挿入」から選ぶと、正しい書き方で文章に足せます。章をまたぐとき（創世記 2章-5章）も選べます。"],
+      ["聖書箇所を挿入", "入力欄のすぐ下にある「聖書箇所を挿入」から選ぶと、正しい書き方で文章に足せます。章をまたぐとき（創世記 2章-5章）も選べます。"],
     ],
   },
   {
@@ -5886,6 +5917,7 @@ function HelpScreen({ onClose }) {
         </div>
         <div className="flex flex-col items-center pt-6 pb-2">
           <div className="opacity-70"><Mascot seed="help" size={126} /></div>
+          <p className="text-[11.5px] text-neutral-400 mt-3">Footprints v{APP_VERSION}</p>
         </div>
       </div>
     </div>
