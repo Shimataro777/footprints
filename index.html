@@ -14,42 +14,45 @@
     <link rel="apple-touch-icon" href="./apple-touch-icon-v4.png" />
     <link rel="icon" type="image/png" href="./icon-192-v4.png" />
     <title>Footprints</title>
+    <!-- **版数はここ1か所で決めること。** 起動の画面にも、アプリの中にも同じ値が出る -->
+    <script>window.__FT_VERSION = "1.0.0";</script>
     <style>
       /* ============================================================
-         起動中の覆い（スプラッシュ）
-         読み込みが終わるまで真っ白な画面が続くと不安になるので、
-         アイコンとくるくるを出しておく。
+         起動の画面（スプラッシュ）
+         アプリ名と双葉が主役。版数は小さく。くるくるは出さない。
          **このCSSは index.html の中に直接書くこと。**
          別のファイルにすると、そのファイルを読み込むまで白いままになり、
          白い画面を隠すという目的を果たせない
          ============================================================ */
-      html, body { margin: 0; background: #DCF0FA; }
+      html, body { margin: 0; background: #F4FBFE; }
       #splash {
         position: fixed; inset: 0; z-index: 2147483600;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
-        gap: 22px; background: linear-gradient(#DCF0FA, #F2FAFE);
+        background: #F4FBFE;
         font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
-        transition: opacity .38s ease-out;
+        transition: opacity .45s ease-out;
       }
-      /* 読み込みが終わったら、ふわっと消える */
       #splash.gone { opacity: 0; pointer-events: none; }
       #splash .mark {
-        width: 108px; height: 108px; border-radius: 26px; background: #fff;
-        box-shadow: 0 10px 30px rgba(15,118,110,.16);
-        animation: splash-in .5s cubic-bezier(.22,1,.36,1) backwards;
+        width: 112px; height: 112px; border-radius: 28px; background: #fff;
+        box-shadow: 0 8px 26px rgba(12,74,110,.12);
+        animation: splash-in .55s cubic-bezier(.22,1,.36,1) backwards;
       }
-      @keyframes splash-in { from { opacity: 0; transform: scale(.9) translateY(8px); } to { opacity: 1; transform: none; } }
-      #splash .name { font-size: 17px; font-weight: 700; color: #0C4A6E; letter-spacing: .06em; }
-      #splash .ring {
-        width: 26px; height: 26px; border-radius: 50%;
-        border: 3px solid rgba(12,74,110,.18); border-top-color: #0369A1;
-        animation: splash-spin .8s linear infinite;
+      @keyframes splash-in { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+      #splash .name {
+        margin-top: 20px; font-size: 25px; font-weight: 600; color: #0C4A6E; letter-spacing: .08em;
+        animation: splash-in .55s .1s cubic-bezier(.22,1,.36,1) backwards;
       }
-      @keyframes splash-spin { to { transform: rotate(360deg); } }
+      /* 版数は控えめに。目に入るが、読ませるためのものではない */
+      #splash .ver {
+        margin-top: 8px; font-size: 11.5px; color: rgba(12,74,110,.45); letter-spacing: .04em;
+        animation: splash-in .55s .18s cubic-bezier(.22,1,.36,1) backwards;
+      }
 
       /* うまく読み込めなかったときの案内。ふつうに動けば目に触れない */
-      .boot { font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
-              color: #404040; padding: 0 24px; max-width: 480px; line-height: 1.8;
+      .boot { position: absolute; bottom: 0; left: 0; right: 0;
+              font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
+              color: #404040; padding: 0 24px 32px; max-width: 480px; margin: 0 auto; line-height: 1.8;
               opacity: 0; animation: bootlate 0s 3.5s forwards; }
       @keyframes bootlate { to { opacity: 1; } }
       .boot-h { font-size: 17px; font-weight: 700; color: #0C4A6E; margin-bottom: 4px; }
@@ -57,9 +60,9 @@
       .boot li { margin-bottom: 10px; }
       .boot code { background: rgba(255,255,255,.7); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
 
-      /* 画面の動きを減らす設定のときは、回さない */
+      /* 画面の動きを減らす設定のときは、動かさない */
       @media (prefers-reduced-motion: reduce) {
-        #splash .mark, #splash .ring { animation: none; }
+        #splash .mark, #splash .name, #splash .ver { animation: none; }
         #splash { transition: none; }
       }
     </style>
@@ -67,12 +70,12 @@
   <body>
     <div id="root"></div>
 
-    <!-- 起動中の覆い。読み込みが終わると、アプリ側から外される。
-         いつまでも外れないときは、うまく読み込めていないので案内を出す -->
+    <!-- 起動の画面。読み込みが終わり、かつ1秒たつと、ふわっと消える。
+         いつまでも消えないときは、うまく読み込めていないので案内を出す -->
     <div id="splash">
-      <img class="mark" src="./icon-192-v4.png" alt="" width="108" height="108" />
+      <img class="mark" src="./icon-192-v4.png" alt="" width="112" height="112" />
       <p class="name">Footprints</p>
-      <div class="ring"></div>
+      <p class="ver" id="splash-ver"></p>
       <div class="boot">
         <p class="boot-h">プログラムを読み込めませんでした</p>
         <p>GitHubで公開している場合は、次の2つをご確認ください。</p>
@@ -86,19 +89,25 @@
     </div>
 
     <script>
-      /* 覆いを外す手だて。アプリの読み込みが終わったときに呼ばれる。
+      document.getElementById("splash-ver").textContent = "v" + window.__FT_VERSION;
+
+      /* 起動の画面を外す手だて。アプリの読み込みが終わったときに呼ばれる。
+         **かならず最低の時間だけ見せること。** 読み込みが速い端末では
+         一瞬だけ光って消え、かえって目ざわりになる。
          **この処理は index.html の中に直接書くこと。**
          組み立て後のファイルに置くと、それを読み込めなかったときに
-         覆いを外す手だてごと失われる */
+         外す手だてごと失われる */
+      var FT_SPLASH_MS = 1000;
+      var ftSplashFrom = Date.now();
       window.__ftHideSplash = function () {
         var el = document.getElementById("splash");
         if (!el || el.dataset.going) return;
         el.dataset.going = "1";
-        /* 一度描いてから消し始める。すぐ消すと、消える動きが出ないことがある */
-        requestAnimationFrame(function () {
+        var wait = Math.max(0, FT_SPLASH_MS - (Date.now() - ftSplashFrom));
+        setTimeout(function () {
           el.classList.add("gone");
-          setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 500);
-        });
+          setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 600);
+        }, wait);
       };
     </script>
     <script type="module" src="/src/main.jsx"></script>
