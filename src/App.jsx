@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
-  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, Pin, Bookmark, Tag, Copy, ClipboardPaste
+  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste
 } from "lucide-react";
 
 /* ============================================================
@@ -593,6 +593,49 @@ const FONT_SIZES = [
 ];
 const BACKUP_REMIND_DAYS = 14; // これだけ日が空いたら、そっとお知らせする
 /* 前回の書き出し以降に作られた・書き直された記録の数 */
+/* **端末に「消さないでほしい」と頼んでおくこと。**
+   iPhone は、ホーム画面に追加していないと、しばらく使わないだけで
+   記録を消すことがある。頼んでおけば、その見込みが下がる。
+   断られても困らないので、返事は待たずに投げっぱなしでよい */
+async function askPersist() {
+  try {
+    if (navigator.storage && navigator.storage.persist && navigator.storage.persisted) {
+      if (await navigator.storage.persisted()) return true;
+      return await navigator.storage.persist();
+    }
+  } catch (e) { /* 分からない端末もある */ }
+  return false;
+}
+
+/* 端末がどれくらい置かせてくれるか、いまどれだけ使っているか。
+   **数を決め打ちしないこと。** 端末と空き容量で大きく変わる */
+async function storageRoom() {
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const e = await navigator.storage.estimate();
+      if (e && e.quota) return { used: e.usage || 0, quota: e.quota };
+    }
+  } catch (e) { /* 分からない端末もある */ }
+  return null;
+}
+
+/* 画面のてっぺんへ戻す。「動きの演出」を切っているときは、すべらせない */
+function scrollPageTop() {
+  try {
+    const still = document.documentElement.classList.contains("ft-still");
+    window.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
+  } catch (e) { /* noop */ }
+}
+
+const fmtBytes = (n) => (n > 900000 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
+/* 「2026年3月8日」の形。日付だけの文字列でも、時刻つきでも受ける */
+function fmtJpDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
 function unsavedCount(records, prefs) {
   const last = prefs && prefs.lastBackup ? prefs.lastBackup : null;
   if (!last) return records.length;
@@ -789,13 +832,21 @@ function migrateRecord(r) {
 /* ============================================================
    共通UIパーツ
    ============================================================ */
+/* 入力のひと区切り。
+   **記録を書く画面では、項目名を出さないこと。**
+   何を書く欄かは、欄の中の薄い字（placeholder）で分かるようにしてある。
+   名前と説明を並べると、書きたいことより先に字を読むことになって手が止まる。
+   label は日付やタグのように、薄い字では言い表せないところだけで使う */
 function Field({ label, children, hint, help }) {
   return (
-    <div className="block mb-5">
+    /* 欄と欄の間は16px。ここを広げると、1画面に入る欄が減って書きにくくなる */
+    <div className="block mb-4">
+      {label && (
       <span className="flex items-center gap-1 text-[13.5px] font-bold text-neutral-700 mb-1.5 tracking-wide">
         {label}
         {help && <HelpTip text={help} label={typeof label === "string" ? label : undefined} />}
       </span>
+      )}
       {children}
       {hint && <span className="block text-[12.5px] text-neutral-500 mt-1.5">{hint}</span>}
     </div>
@@ -952,13 +1003,13 @@ function PasteDialog({ title, hint, actionLabel, onCancel, onSubmit }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center px-5"
       style={{ zIndex: 2147483400 }} onClick={onCancel}>
-      <div className="bg-white rounded-2xl p-5 max-w-md w-full border-2 border-neutral-200 shadow-xl anim-pop"
+      <div className="bg-white rounded-2xl p-5 max-w-md w-full border border-neutral-200 shadow-xl anim-pop"
         onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display text-[17px] text-neutral-900 mb-1.5">{title}</h3>
         <p className="text-[13.5px] text-neutral-600 mb-3 leading-relaxed">{hint}</p>
         <textarea ref={ref} value={text} onChange={(e) => setText(e.target.value)}
           placeholder="ここに貼りつけてください"
-          className="w-full h-40 rounded-xl border-2 border-neutral-300 p-3.5 ft-input leading-relaxed text-neutral-900 placeholder-neutral-400 resize-none focus:outline-none focus:ring-4 focus:ring-th-800/20 focus:border-th-800" />
+          className="w-full h-40 rounded-xl border border-neutral-300 p-3.5 ft-input leading-relaxed text-neutral-900 placeholder-neutral-400 resize-none focus:outline-none focus:ring-4 focus:ring-th-800/20 focus:border-th-800" />
         <button type="button" onClick={pasteFromClipboard}
           className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px] mt-2"}>
           <Download size={16} /> 貼り付け先から読み取る
@@ -1071,7 +1122,7 @@ function TagPickDialog({ title, selected, known, onApply, onCancel, onCreate, no
                 打ち込んだ言葉がまだ一覧に無いときだけ押せるようにする */}
             {onCreate && (
               <button type="button" onClick={create} disabled={!canCreate}
-                className={(canCreate ? BTN_PRIMARY : BTN_BASE + " bg-neutral-100 border-2 border-neutral-200 text-neutral-400")
+                className={(canCreate ? BTN_PRIMARY : BTN_BASE + " bg-neutral-100 border border-neutral-200 text-neutral-400")
                   + " " + BTN_H + " px-3.5 text-[14.5px] shrink-0"}><Plus size={15} /> 作る</button>
             )}
           </div>
@@ -1124,7 +1175,7 @@ function TagField({ value, onChange, knownTags, onCreateTag }) {
       {tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
           {tags.map((t) => (
-            <span key={t} className="ft-chip inline-flex items-center gap-1 rounded-full bg-th-50 border-2 border-th-200 pl-3 pr-1 py-1">
+            <span key={t} className="ft-chip inline-flex items-center gap-1 rounded-full bg-th-50 border border-th-200 pl-3 pr-1 py-1">
               <span className="text-[13.5px] font-bold text-th-900">{t}</span>
               <button type="button" onClick={() => onChange(tags.filter((x) => x !== t))} aria-label={`${t} を外す`}
                 className="w-6 h-6 flex items-center justify-center rounded-full text-th-800/60 hover:text-red-700 ft-tap ft-tap-icon"><X size={14} /></button>
@@ -1177,7 +1228,9 @@ function CountBadge({ n, size = 22, className = "" }) {
    iPhoneのSafariは、16pxより小さい入力欄に触れると画面を勝手に拡大する。
    拡大されると横にも動くようになり、書きづらくなる。
    文字の大きさの設定（小・中・大）からも、入力欄だけは外している */
-const inputCls = "w-full rounded-xl bg-white border-2 border-neutral-300 px-3.5 py-3 ft-input leading-normal text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-4 focus:ring-th-800/20 focus:border-th-800 h-[48px]";
+/* **枠の線は1px。** 2pxにすると、欄が並んだときに線ばかりが目に入る（姉妹アプリに合わせた）
+   選んだときだけ、色と輪が付いて浮かび上がる */
+const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py-3 ft-input leading-normal text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-4 focus:ring-th-800/20 focus:border-th-800 h-[48px]";
 
 /* 共通のボタン配色。主要な操作はすべて同じ深いティールに統一している */
 /* iPhoneの切り欠き（ノッチ・ダイナミックアイランド）に隠れないための上余白。
@@ -1192,9 +1245,9 @@ const BTN_H = "btn-h"; // 全ボタン共通の高さ（実際の値はグロー
    1か所にまとめておけば、全体の手ざわりをここだけで整えられる */
 const BTN_BASE = "rounded-xl font-bold flex items-center justify-center gap-1.5 disabled:opacity-40 ft-tap";
 const BTN_PRIMARY = BTN_BASE + " bg-th-900 text-white hover:bg-th-800 shadow-sm";
-const BTN_SECONDARY = BTN_BASE + " bg-white border-2 border-neutral-300 text-neutral-700 hover:bg-neutral-50";
+const BTN_SECONDARY = BTN_BASE + " bg-white border border-neutral-300 text-neutral-700 hover:bg-neutral-50";
 const BTN_DANGER = BTN_BASE + " bg-rose-800 text-white hover:bg-rose-900 shadow-sm";
-const BTN_DANGER_SOFT = BTN_BASE + " bg-white border-2 border-rose-200 text-rose-700 hover:bg-rose-50";
+const BTN_DANGER_SOFT = BTN_BASE + " bg-white border border-rose-200 text-rose-700 hover:bg-rose-50";
 const BTN_QUIET = BTN_BASE + " text-neutral-500 hover:bg-neutral-100";
 function TextInput(props) { return <input {...props} className={inputCls + " " + (props.className || "")} />; }
 
@@ -1594,7 +1647,7 @@ function DateInput({ className, value, onChange }) {
   return (
     <>
       <button type="button" onClick={openSheet}
-        className={"h-[48px] rounded-xl border-2 border-neutral-300 bg-white flex items-center justify-between px-3 text-left ft-tap ft-tap-card " + (className || "w-[170px]")}>
+        className={"h-[48px] rounded-xl border border-neutral-300 bg-white flex items-center justify-between px-3 text-left ft-tap ft-tap-card " + (className || "w-[170px]")}>
         <span className={"text-[15.5px] truncate " + (p ? "text-neutral-900" : "text-neutral-400")}>
           {p ? `${p.y}/${p.mo}/${p.d}` : "日付を選択"}
         </span>
@@ -1748,7 +1801,7 @@ function ChapterMultiSelect({ book, selected, onChange }) {
 
   const ranges = chapterRanges(chosen);
   return (
-    <div className="rounded-xl bg-white border-2 border-neutral-300 p-3">
+    <div className="rounded-xl bg-white border border-neutral-300 p-3">
       <div className="flex items-end gap-2">
         <div className="flex-1 min-w-0">
           <span className="block text-[12.5px] font-bold text-neutral-500 mb-1">開始</span>
@@ -1782,7 +1835,7 @@ function ChapterMultiSelect({ book, selected, onChange }) {
         ) : (
           <div className="flex flex-wrap gap-2">
             {ranges.map(([s, e]) => (
-              <span key={`${s}-${e}`} className="inline-flex items-center gap-1 rounded-full bg-th-50 border-2 border-th-200 pl-3 pr-1 py-1 ft-chip">
+              <span key={`${s}-${e}`} className="inline-flex items-center gap-1 rounded-full bg-th-50 border border-th-200 pl-3 pr-1 py-1 ft-chip">
                 <span className="text-[13.5px] font-bold text-th-900">{s === e ? `${s}章` : `${s}-${e}章`}</span>
                 <button type="button" onClick={() => removeRange(s, e)}
                   className="w-7 h-7 flex items-center justify-center rounded-full text-th-700 hover:bg-th-100"><X size={15} /></button>
@@ -2236,13 +2289,15 @@ function RefInserter({ onInsert, onPickRange, label }) {
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-th-800 mt-2 min-h-[32px] ft-tap">
+      {/* **この印は、対象の欄のすぐ下に置くこと。**
+          認識した箇所の並びをはさむと、どの欄に入るのか分からなくなる */}
+      <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-th-800 mt-1.5 min-h-[30px] ft-tap">
         <BookOpen size={13} /> {label || "書・章・節を選んで挿入"}
       </button>
       {open && (
         <div className="fixed inset-0 flex items-center justify-center px-5" style={{ zIndex: 2147483100 }} onClick={close}>
           <div className="absolute inset-0 bg-black/45" />
-          <div className="relative w-full max-w-sm bg-white rounded-2xl border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto"
+          <div className="relative w-full max-w-sm bg-white rounded-2xl border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200">
               <span className="font-display text-[15.5px] text-neutral-900">聖書箇所を選ぶ</span>
@@ -2314,9 +2369,9 @@ function RefInserter({ onInsert, onPickRange, label }) {
 function HighlightTakeoverDialog({ what, existing, onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">{what}には、すでに別の聖句があります</h3>
-        <div className="rounded-xl border-2 border-neutral-200 bg-neutral-50 px-3 py-2.5 mb-3">
+        <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 mb-3">
           <p className="text-[13.5px] text-neutral-700 whitespace-pre-line">{clampText(existing.text, 3)}</p>
         </div>
         <p className="text-[13.5px] text-neutral-600 mb-5 leading-relaxed">
@@ -2335,7 +2390,7 @@ function ConfirmItemDeleteDialog({ label, onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 flex items-center justify-center px-6" style={{ zIndex: 2147483100 }}>
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
-      <div className="relative bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl max-h-[88vh] overflow-y-auto">
+      <div className="relative bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">{label}を削除します</h3>
         <p className="text-[13.5px] text-neutral-600 mb-5">この入力欄と、入力した内容が消えます。記録そのものは削除されません。</p>
         <div className="flex gap-2.5">
@@ -3189,7 +3244,7 @@ function emptyRecord(type) {
 function ConfirmDeleteDialog({ onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">この記録を削除しますか？</h3>
         <p className="text-[13.5px] text-neutral-600 mb-5">記録そのものが消えます。この操作は取り消せません。</p>
         <div className="flex gap-2.5">
@@ -3204,7 +3259,7 @@ function ConfirmDeleteDialog({ onConfirm, onCancel }) {
 function ExitConfirmDialog({ onSave, onDiscard, onStay }) {
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">保存されていない内容があります</h3>
         <p className="text-[13.5px] text-neutral-600 mb-5">この記録を保存しますか？保存しない場合、入力した内容は失われます。</p>
         <div className="flex gap-2.5 mb-2.5">
@@ -3222,7 +3277,7 @@ function PastNotesPanel({ notes }) {
   const [open, setOpen] = useState(false);
   if (!notes.length) return null;
   return (
-    <div className="mb-5 rounded-xl border-2 border-amber-200 bg-amber-50/60 overflow-hidden">
+    <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/60 overflow-hidden">
       <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-2 px-3.5 py-3 text-left min-h-[48px] ft-tap ft-tap-card">
         <Sparkles size={16} className="text-amber-700 shrink-0" />
         <span className="flex-1 text-[13.5px] font-bold text-amber-900">この箇所には過去のメモがあります（{notes.length}件）</span>
@@ -3459,18 +3514,18 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
 
         {type === "reading" && (
           <>
-            <Field label="読んだ箇所" help="ここで選んだ箇所は、実績にも反映されます。">
-              <TextInput value={record.passageText || ""} onChange={(e) => set({ passageText: e.target.value })} />
-              <RecognizedRefs text={record.passageText} />
+            <Field>
+              <TextInput value={record.passageText || ""} onChange={(e) => set({ passageText: e.target.value })} placeholder="読んだ箇所（例：ヨハネの福音書 3章）" />
               <RefInserter label="書・章・節を選ぶ"
                 onPickRange={({ book, chapters, passageText }) => set({ book, chapters, passageText: appendRef(record.passageText, passageText) })} />
+              <RecognizedRefs text={record.passageText} />
             </Field>
             <PastNotesPanel notes={pastNotes} />
-            <Field label="メモ">
-              <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={3} />
-              <RecognizedRefs text={record.notes} />
+            <Field>
+              <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={3} placeholder="気づいたこと、感じたこと" />
               <RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />
               <MemorizeLink text={record.notes} allRecords={allRecords} onQuickMemorize={onQuickMemorize} />
+              <RecognizedRefs text={record.notes} />
             </Field>
           </>
         )}
@@ -3479,46 +3534,46 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
           <>
             {/* テーマ（礼拝メッセージの題）。
                 ここに聖書箇所を挿入する仕組みは付けない。題を書く場所なので不要 */}
-            <Field label="テーマ">
-              <TextInput value={record.theme || ""} onChange={(e) => set({ theme: e.target.value })} />
+            <Field>
+              <TextInput value={record.theme || ""} onChange={(e) => set({ theme: e.target.value })} placeholder="テーマ" />
             </Field>
-            <Field label="聖書箇所">
-              <TextInput value={record.passageText} onChange={(e) => set({ passageText: e.target.value })} />
-              <RecognizedRefs text={record.passageText} />
+            <Field>
+              <TextInput value={record.passageText} onChange={(e) => set({ passageText: e.target.value })} placeholder="聖書箇所" />
               <RefInserter onInsert={(ref) => set({ passageText: appendRef(record.passageText, ref) })} />
+              <RecognizedRefs text={record.passageText} />
             </Field>
             <PastNotesPanel notes={pastNotes} />
-            <Field label="主題聖句" help="「聖句に追加」から、聖句の記録としても残せます。">
-              <TextArea value={record.mainVerseText} onChange={(e) => set({ mainVerseText: e.target.value })} minRows={2} />
-              <RecognizedRefs text={record.mainVerseText} />
+            <Field>
+              <TextArea value={record.mainVerseText} onChange={(e) => set({ mainVerseText: e.target.value })} minRows={2} placeholder="主題聖句" />
               <RefInserter onInsert={(ref) => set({ mainVerseText: appendRef(record.mainVerseText, ref) })} />
               <MemorizeLink text={record.mainVerseText} allRecords={allRecords} onQuickMemorize={onQuickMemorize} />
+              <RecognizedRefs text={record.mainVerseText} />
             </Field>
-            <Field label="メモ">
-              <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} />
-              <RecognizedRefs text={record.notes} />
+            <Field>
+              <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="聞いたこと、心に残ったこと" />
               <RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />
               <MemorizeLink text={record.notes} allRecords={allRecords} onQuickMemorize={onQuickMemorize} />
+              <RecognizedRefs text={record.notes} />
             </Field>
           </>
         )}
 
         {type === "memorization" && (
           <>
-            <Field label="聖書のことば" help="末尾に箇所を書いておくと、同じ箇所の記録とつながります。">
+            <Field>
               {/* 学びの「主題聖句」と同じ高さ（2行ぶん）にそろえている */}
-              <TextArea value={record.text} onChange={(e) => set({ text: e.target.value })} minRows={2} />
-              <RecognizedRefs text={record.text} />
+              <TextArea value={record.text} onChange={(e) => set({ text: e.target.value })} minRows={2} placeholder="覚えたい聖書のことば（末尾に箇所を書くと、同じ箇所の記録とつながります）" />
               <RefInserter onInsert={(ref) => set({ text: appendRef(record.text, ref) })} />
+              <RecognizedRefs text={record.text} />
             </Field>
-            <Field label="メモ">
-              <TextArea value={record.note} onChange={(e) => set({ note: e.target.value })} minRows={2} />
+            <Field>
+              <TextArea value={record.note} onChange={(e) => set({ note: e.target.value })} minRows={2} placeholder="メモ" />
               <RefInserter onInsert={(ref) => set({ note: appendRef(record.note, ref) })} />
             </Field>
             {/* 高さは決め打ちにしない。上下の余白だけを指定して、
                 中の文字の大きさに合わせて自然に伸び縮みするようにしている。
                 「？」も横に並べて、全部が上下の真ん中でそろう */}
-            <div className="rounded-xl border-2 border-neutral-300 bg-white px-3.5 py-2 mb-2.5">
+            <div className="rounded-xl border border-neutral-300 bg-white px-3.5 py-2 mb-2.5">
               <div className="flex items-center gap-2">
                 <label className="flex items-center gap-2.5 cursor-pointer select-none flex-1 min-w-0 py-1.5">
                   <input type="checkbox" checked={!!record.monthYear}
@@ -3535,7 +3590,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
                 </div>
               )}
             </div>
-            <div className="rounded-xl border-2 border-th-700/30 bg-th-50/40 px-3.5 py-2">
+            <div className="rounded-xl border border-th-700/30 bg-th-50/40 px-3.5 py-2">
               <div className="flex items-center gap-2">
                 <label className="flex items-center gap-2.5 cursor-pointer select-none flex-1 min-w-0 py-1.5">
                   <input type="checkbox" checked={!!record.themeYear}
@@ -3556,16 +3611,16 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
 
         {type === "memo" && (
           <>
-            <Field label="メモ">
-              <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} />
-              <RecognizedRefs text={record.notes} />
+            <Field>
+              <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="書きとめておきたいこと" />
               <RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />
+              <RecognizedRefs text={record.notes} />
             </Field>
           </>
         )}
 
         <div className="flex flex-col items-center pt-3 pb-1">
-          <div className="opacity-70"><Mascot seed={"form-" + type} size={84} /></div>
+          <div className="opacity-70"><Mascot seed={"form-" + type} size={104} /></div>
           {((captions && captions[type]) || "").trim() && (
             /* 改行をそのまま出す。ひとことは何行になってもよい */
             <p className="text-[12.5px] text-neutral-500 mt-1.5 text-center px-4 leading-relaxed whitespace-pre-line">{captions[type]}</p>
@@ -3603,9 +3658,9 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
 function DuplicateDialog({ existing, onRegister, onViewExisting, onCancel }) {
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center px-6">
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-3">同じ聖句が登録済みです</h3>
-        <div className="rounded-xl bg-neutral-50 border-2 border-neutral-200 p-3 mb-4">
+        <div className="rounded-xl bg-neutral-50 border border-neutral-200 p-3 mb-4">
           <p className="text-[13.5px] font-bold text-th-800 mb-1">{formatRef(primaryRef(existing.text))}</p>
           <p className="text-[13.5px] text-neutral-700 line-clamp-3">{existing.text}</p>
         </div>
@@ -3860,8 +3915,8 @@ function HighlightBanner({ records }) {
 
   if (!yearly && !monthly) {
     return (
-      <div className="rounded-2xl border-2 border-dashed border-neutral-300 p-3 mb-3 flex items-center gap-3">
-        <Mascot seed="home-banner" size={56} className="shrink-0" />
+      <div className="rounded-2xl border border-dashed border-neutral-300 p-3 mb-3 flex items-center gap-3">
+        <Mascot seed="home-banner" size={64} className="shrink-0" />
         <p className="text-[12.5px] text-neutral-500 flex-1">
           聖句の記録で「今年の聖句にする」「今月の聖句にする」を選ぶと、ここに出ます。
         </p>
@@ -3884,7 +3939,7 @@ function HighlightBanner({ records }) {
   };
 
   return (
-    <div className="rounded-2xl border-2 border-th-700/25 bg-white p-3 mb-3 shadow-sm">
+    <div className="rounded-2xl border border-th-700/25 bg-white p-3 mb-3 shadow-sm">
       {/* 切り替え。両方あるときだけ出す。片方しか無いなら選ぶ意味がない */}
       {yearly && monthly && (
         <div className="flex gap-1 p-1 rounded-xl bg-neutral-100 mb-2.5">
@@ -3953,7 +4008,7 @@ function ContinueCard({ records, onStart }) {
   return (
     <button
       onClick={() => onStart({ book: next.book, chapters: [next.chapter] })}
-      className="w-full text-left rounded-2xl border-2 border-th-700/25 bg-white p-4 mb-4 flex items-center gap-3 ft-tap ft-tap-card shadow-sm"
+      className="w-full text-left rounded-2xl border border-th-700/25 bg-white p-4 mb-4 flex items-center gap-3 ft-tap ft-tap-card shadow-sm"
     >
       <span className="w-11 h-11 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center shrink-0">
         <BookOpen size={20} className="text-th-800" />
@@ -3982,7 +4037,7 @@ function BackupReminder({ records, prefs, onOpenBackup }) {
   const lastLabel = last ? `${last.getFullYear()}年${last.getMonth() + 1}月${last.getDate()}日` : null;
   return (
     <button onClick={onOpenBackup}
-      className="w-full text-left rounded-2xl border-2 border-amber-200 bg-amber-50/70 px-4 py-3 mb-3 flex items-center gap-3 ft-tap ft-tap-card">
+      className="w-full text-left rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 mb-3 flex items-center gap-3 ft-tap ft-tap-card">
       <span className="relative w-10 h-10 rounded-xl bg-white border border-amber-200 flex items-center justify-center shrink-0 text-amber-700">
         <Download size={18} />
         <CountBadge n={n} size={20} className="absolute -top-1.5 -right-1.5" />
@@ -4003,7 +4058,7 @@ function FruitPickDialog({ title, note, current, onPick, onCancel }) {
   const [sel, setSel] = useState(current || FRUITS[0].key);
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-1.5">{title}</h3>
         {note && <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-3">{note}</p>}
         {/* 実を選び直すたびに、木がふわっと差し替わる */}
@@ -4037,7 +4092,7 @@ function FruitPickDialog({ title, note, current, onPick, onCancel }) {
 function ConfirmReplantDialog({ fruit, onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center px-6">
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop">
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">木を植え直します</h3>
         <p className="text-[13.5px] text-neutral-700 leading-relaxed mb-2">
           {fruitByKey(fruit).label}の種を新しく蒔きます。今の木は土からのやり直しになり、
@@ -4060,7 +4115,7 @@ function HarvestDialog({ fruit, onReplant, onLater }) {
   const f = fruitByKey(fruit);
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop text-center">
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop text-center">
         <div className="flex justify-center mb-1 ft-grow">
           <FruitTree stage={10} fruit={fruit} size={160} />
         </div>
@@ -4234,7 +4289,7 @@ function DraftDialog({ draft, onResume, onDiscard, names }) {
     : null;
   return (
     <div className="fixed inset-0 z-[75] bg-black/50 flex items-center justify-center px-6">
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop">
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
       <div className="flex items-start gap-3">
         <span className="w-11 h-11 rounded-xl bg-white border border-amber-200 flex items-center justify-center shrink-0">
           <Pencil size={20} className="text-amber-600" />
@@ -4291,8 +4346,8 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
             中に入れると、横長の画面で左半分だけに寄ってしまう。
             記録があるときの2列はそのまま */}
         {recent.length === 0 ? (
-          <div className="rounded-2xl border-2 border-dashed border-neutral-300 p-6 text-center flex flex-col items-center">
-            <Mascot seed="records-empty" size={140} withNotes />
+          <div className="rounded-2xl border border-dashed border-neutral-300 p-6 text-center flex flex-col items-center">
+            <Mascot seed="records-empty" size={168} withNotes />
             <p className="text-[14.5px] font-bold text-neutral-700 mb-1 mt-2">最初の一歩を記録しませんか</p>
             <p className="text-[13.5px] text-neutral-500">右下の＋から、今日読んだ箇所や心に残ったことばを残せます。</p>
           </div>
@@ -4303,7 +4358,7 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
         )}
         {recent.length > 0 && (
           <div className="flex flex-col items-center pt-6 pb-2 opacity-75">
-            <Mascot seed="records-end" size={96} />
+            <Mascot seed="records-end" size={116} />
             <p className="text-[12.5px] text-neutral-500 mt-1">直近10件はここまで</p>
           </div>
         )}
@@ -4428,7 +4483,10 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
           </button>
         </div>
 
-        <button onClick={() => setFiltersOpen((v) => !v)} className="w-full flex items-center justify-between min-h-[44px] rounded-xl border-2 border-neutral-300 px-3.5 bg-white ft-tap ft-tap-card">
+        {/* **開くだけで終わらせないこと。**
+            下のほうまで見ていった先で押しても、絞り込みの欄は画面の外（上）にあるので、
+            何も起きていないように見える。いっしょに画面のてっぺんへ戻す */}
+        <button onClick={() => { setFiltersOpen((v) => { if (!v) scrollPageTop(); return !v; }); }} className="w-full flex items-center justify-between min-h-[44px] rounded-xl border border-neutral-300 px-3.5 bg-white ft-tap ft-tap-card">
           <span className="flex items-center gap-1.5 text-[14.5px] font-bold text-neutral-700">
             <SlidersHorizontal size={16} /> 絞り込み{activeFilterCount > 0 ? `（${activeFilterCount}）` : ""}
           </span>
@@ -4438,7 +4496,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
         {filtersOpen && (
           /* iPhoneで開いたとき、はじめの状態がスクロールなしで収まるように、
              余白と行数をきつめに詰めている。ここを広げるときは実機の高さに注意 */
-          <div className="space-y-2.5 rounded-xl border-2 border-neutral-200 bg-neutral-50 p-2.5 ft-open">
+          <div className="space-y-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 ft-open">
             <div>
               <span className="flex items-center gap-1 text-[12.5px] font-bold text-neutral-600 mb-1">
                 記録の種類
@@ -4465,7 +4523,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
               {filterTags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-1.5">
                   {filterTags.map((t) => (
-                    <span key={t} className="ft-chip inline-flex items-center gap-0.5 rounded-full bg-th-50 border-2 border-th-200 pl-2.5 pr-0.5 py-0.5">
+                    <span key={t} className="ft-chip inline-flex items-center gap-0.5 rounded-full bg-th-50 border border-th-200 pl-2.5 pr-0.5 py-0.5">
                       <span className="text-[12.5px] font-bold text-th-900">{t}</span>
                       <button type="button" onClick={() => setFilterTags((prev) => prev.filter((x) => x !== t))} aria-label={`${t} を外す`}
                         className="w-5 h-5 flex items-center justify-center rounded-full text-th-800/60 hover:text-red-700 ft-tap ft-tap-icon"><X size={12} /></button>
@@ -4537,7 +4595,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
         <div key={resultKey} className="ft-seq space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5 lg:items-start">
           {sortedRecords.length === 0 && (
             <div className="flex flex-col items-center py-6 lg:col-span-2 ft-noresult">
-              <Mascot seed="search-empty" size={118} />
+              <Mascot seed="search-empty" size={142} />
               <p className="text-[14.5px] text-neutral-500 mt-1">該当する記録がありません</p>
             </div>
           )}
@@ -4702,7 +4760,7 @@ function ProgressScreen({ records, onOpenDetail, onOpenBook, onOpenDay }) {
         </div>
         {/* いちばん下に添えることば。絵の下に中央そろえで置く */}
         <div className="flex flex-col items-center pt-8 pb-2">
-          <div className="opacity-70"><Mascot seed="progress-foot" size={100} /></div>
+          <div className="opacity-70"><Mascot seed="progress-foot" size={120} /></div>
           <p className="text-[12.5px] text-neutral-500 mt-1.5 text-center px-4 leading-relaxed whitespace-pre-line">
             {"聖書はすべて神の霊感によるもので、教えと戒めと矯正と義の訓練のために有益です。\nテモテへの手紙 第二 3:16"}
           </p>
@@ -4738,7 +4796,7 @@ function DayRecordsScreen({ date, records, onClose, onOpenDetail }) {
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         {list.length === 0 ? (
           <div className="flex flex-col items-center py-8">
-            <Mascot seed="calendar-empty" size={124} />
+            <Mascot seed="calendar-empty" size={148} />
             <p className="text-[14.5px] text-neutral-500 mt-1">この日はまだ記録がありません</p>
           </div>
         ) : (
@@ -4796,7 +4854,7 @@ function BookRecordsScreen({ book, records, onClose, onOpenDetail, defaultSort }
         <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5">
           {list.length === 0 && (
             <div className="flex flex-col items-center py-6 lg:col-span-2">
-              <Mascot seed="book-empty" size={118} />
+              <Mascot seed="book-empty" size={142} />
               <p className="text-[14.5px] text-neutral-500 mt-1">この書を含む記録はまだありません</p>
             </div>
           )}
@@ -4811,12 +4869,17 @@ function BookRecordsScreen({ book, records, onClose, onOpenDetail, defaultSort }
 /* ============================================================
    記録の詳細画面（検索結果タップ時に表示。右上の「編集」で編集画面へ）
    ============================================================ */
-/* いま開いている記録と、同じ聖書箇所を含む他の記録を集める */
+/* いま開いている記録と、同じ聖書箇所を含む他の記録を集める。
+   **書と章だけで見ないこと。** 以前はそうしていたため、
+   ヨハネ3:13-24 の記録に、重なっていない 3:1-12 の記録まで出ていた。
+   ・重なりの判定は refsOverlap（節の範囲まで見る）
+   ・どこを扱っている記録かは recordScopeRefs
+     （メモの中の「3章の前半について」のような章だけの言い及びは、
+      同じ章に節つきの箇所があれば落とす） */
 function relatedRecords(records, target) {
-  const refs = recordRefs(target).filter((x) => x.book);
+  const refs = recordScopeRefs(target).filter((x) => x.book);
   if (!refs.length) return [];
-  const hit = (r) => recordRefs(r).some((x) =>
-    refs.some((t) => x.book === t.book && (t.chapter == null || x.chapter == null || x.chapter === t.chapter)));
+  const hit = (r) => recordScopeRefs(r).some((x) => refs.some((t) => refsOverlap(x, t)));
   return records
     .filter((r) => r.id !== target.id && hit(r))
     .sort((a, b) => (b.date || b.createdAt || "").localeCompare(a.date || a.createdAt || ""))
@@ -4979,7 +5042,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
         {record.type === "memorization" && (record.monthYear || record.themeYear) && (
           <div className="mt-5 flex flex-wrap gap-1.5">
             {record.monthYear && (
-              <span className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-full bg-th-50 text-th-900 border-2 border-th-200">
+              <span className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-full bg-th-50 text-th-900 border border-th-200">
                 <Star size={14} /> {record.monthYear}年{record.monthMonth}月の聖句
               </span>
             )}
@@ -4994,7 +5057,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
         {/* 入力画面の「この箇所には過去のメモがあります」と同じ、たたんだ見せ方に揃えている。
             開くまでは1行で済むので、本文の下がすっきりする */}
         {related.length > 0 && (<div className="mt-5">
-          <div className="rounded-xl border-2 border-amber-200 bg-amber-50/60 overflow-hidden">
+          <div className="rounded-xl border border-amber-200 bg-amber-50/60 overflow-hidden">
             <button type="button" onClick={() => setRelatedOpen((v) => !v)} aria-expanded={relatedOpen}
               className="w-full flex items-center gap-2 px-3.5 py-3 text-left min-h-[48px] ft-tap ft-tap-card">
               <Sparkles size={16} className="text-amber-700 shrink-0" />
@@ -5063,7 +5126,7 @@ async function copyToClipboard(text) {
 function SaveFallbackDialog({ onCopy, onCancel }) {
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">ファイルとして保存できませんでした</h3>
         <p className="text-[13.5px] text-neutral-600 mb-2 leading-relaxed">
           この画面ではファイル保存が使えません。データをコピーして、メモアプリなどに貼り付けて保管してください。
@@ -5407,7 +5470,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
                                 setTimeout(() => inputRef.current && inputRef.current.click(), 0);
                               }}
                               disabled={busy || full || over}
-                              className={((full || over) ? BTN_BASE + " bg-neutral-100 border-2 border-neutral-200 text-neutral-400" : BTN_SECONDARY)
+                              className={((full || over) ? BTN_BASE + " bg-neutral-100 border border-neutral-200 text-neutral-400" : BTN_SECONDARY)
                                 + " w-full " + BTN_H + " text-[14.5px]"}>
                               <Plus size={16} /> ここに絵を追加
                             </button>
@@ -5448,7 +5511,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
                               style={{ borderColor: pairColor(i).ring, background: pairColor(i).bg }}>
                               <img src={a.src} alt="" className="max-w-full max-h-full object-contain p-1" />
                               <button onClick={() => setPendingId(a.id)} aria-label="削除"
-                                className="absolute -top-1.5 -right-1.5 w-7 h-7 rounded-full bg-white border-2 border-neutral-200 flex items-center justify-center text-neutral-600 hover:text-rose-700 hover:bg-rose-50">
+                                className="absolute -top-1.5 -right-1.5 w-7 h-7 rounded-full bg-white border border-neutral-200 flex items-center justify-center text-neutral-600 hover:text-rose-700 hover:bg-rose-50">
                                 <X size={13} />
                               </button>
                             </div>
@@ -5541,8 +5604,8 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
           </div>
         </div>
         {list.length === 0 ? (
-          <div className="rounded-2xl border-2 border-dashed border-neutral-300 p-6 flex flex-col items-center">
-            <Mascot seed="records-empty" size={118} />
+          <div className="rounded-2xl border border-dashed border-neutral-300 p-6 flex flex-col items-center">
+            <Mascot seed="records-empty" size={142} />
             <p className="text-[13.5px] text-neutral-500 mt-2 text-center">記録を見る画面の右上にある<br />しおりの印を押すと、ここに集まります。</p>
           </div>
         ) : (
@@ -5563,6 +5626,47 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
    名前を変えたり消したりすると、記録に付いているタグにも同じことをする。
    一覧だけ直して記録を放っておくと、名前が食い違ってしまうため
    ============================================================ */
+/* つまんで並べ替える。
+   **指の位置は、いま並んでいる札の実際の位置とくらべること。**
+   「1枚ぶんの高さ」を見積もって割り算する作りだと、札の高さがそろっていないときや
+   画面を送ったときに1つずれる。
+   動かしている最中にその場で入れ替えるので、どこへ入るのかが目で分かる。
+   よけるためのずれ（translateY）も要らなくなり、指を離したときに跳ねない */
+function useReorder(ids, onChange) {
+  const [dragId, setDragId] = useState(null);
+  const rowsRef = useRef({});
+  const setRow = (id) => (el) => { rowsRef.current[id] = el; };
+  const moveTo = (id, clientY) => {
+    const from = ids.indexOf(id);
+    if (from < 0) return;
+    let to = from;
+    ids.forEach((x, k) => {
+      const el = rowsRef.current[x];
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (clientY > r.top && clientY < r.bottom) to = k;
+    });
+    if (to === from) return;
+    const next = ids.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onChange(next);
+  };
+  /* **取っ手にだけ付けること。** 札ぜんたいに付けると、指で画面を送れなくなる */
+  const handleProps = (id) => ({
+    onPointerDown: (e) => {
+      e.preventDefault();
+      setDragId(id);
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* 使えない端末は無視 */ }
+    },
+    onPointerMove: (e) => { if (dragId) moveTo(dragId, e.clientY); },
+    onPointerUp: () => setDragId(null),
+    onPointerCancel: () => setDragId(null),
+    style: { touchAction: "none", cursor: "grab" },
+  });
+  return { dragId, setRow, handleProps };
+}
+
 function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, onClose }) {
   const [closing, close] = useClosing(onClose);
   const { stripRef, screenRef } = useEdgeSwipeBack(close);
@@ -5572,82 +5676,16 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
 
   const list = normalizeTags(tags);
 
-  /* ============================================================
-     並び替え（三本線をつまんで上下に動かす）
-     動かしている札だけを指について動かし、ほかの札は
-     1枚ぶんずつ「よける」。並びを入れ替えるのは指を離したときだけ。
-     途中で並びを作り直すと、そのたび画面が組み直されて跳ねてしまう
-     ============================================================ */
-  const listRef = useRef(null);
-  const [drag, setDrag] = useState(null);   // { from, to, dy }
-  const dragRef = useRef(null);
+  const { dragId, setRow, handleProps } = useReorder(list, onReorder || (() => {}));
+
   /* 一覧が「順に現れる」動きは、画面を開いたときの一度だけにする。
-     並び替えのあとも掛かるままにすると、指を離した瞬間に
-     札が一斉に出直して点滅して見える（実際そうなっていた）。
-     並びが変わると札の順番も入れ替わるので、動きが必ず掛け直されてしまう */
+     並び替えのあとも掛かるままにすると、札が一斉に出直して点滅して見える */
   const [seq, setSeq] = useState(true);
   useEffect(() => {
     const t = setTimeout(() => setSeq(false), 800);
     return () => clearTimeout(t);
   }, []);
 
-  const rowHeight = () => {
-    const el = listRef.current;
-    if (!el || el.children.length < 2) return 64;
-    const a = el.children[0].getBoundingClientRect();
-    const b = el.children[1].getBoundingClientRect();
-    return Math.max(1, b.top - a.top);
-  };
-
-  const onGrab = (i) => (e) => {
-    e.preventDefault();
-    setSeq(false);   // つまんだ時点で、現れる動きは二度と掛けない
-    e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { from: i, startY: e.clientY, h: rowHeight() };
-    setDrag({ from: i, to: i, dy: 0 });
-  };
-  const onMoveRow = (e) => {
-    const d = dragRef.current;
-    if (!d) return;
-    const dy = e.clientY - d.startY;
-    const to = Math.max(0, Math.min(list.length - 1, d.from + Math.round(dy / d.h)));
-    setDrag({ from: d.from, to, dy });
-  };
-  /* 入れ替えた直後は、いっさい動かさない。
-     並びが変わると札は新しい位置へ移るのに、
-     よけるために付けていたずれ（translateY）も同時に0へ戻ろうとする。
-     どちらも動くと、札が1つぶん跳ね上がって見える（実際そうなった）。
-     ひと呼吸だけ動きを止めて、静かに入れ替わったように見せる */
-  const [settling, setSettling] = useState(false);
-  const settleTimer = useRef(null);
-  useEffect(() => () => clearTimeout(settleTimer.current), []);
-
-  const onDrop = () => {
-    const d = dragRef.current;
-    dragRef.current = null;
-    setDrag((cur) => {
-      if (d && cur && cur.to !== cur.from && onReorder) {
-        const next = [...list];
-        const [moved] = next.splice(cur.from, 1);
-        next.splice(cur.to, 0, moved);
-        setSettling(true);
-        clearTimeout(settleTimer.current);
-        settleTimer.current = setTimeout(() => setSettling(false), 260);
-        onReorder(next);
-      }
-      return null;
-    });
-  };
-  /* 動かしていない札が、よけるぶんのずれ */
-  const shiftOf = (i) => {
-    if (!drag) return 0;
-    const { from, to } = drag;
-    const h = (dragRef.current && dragRef.current.h) || rowHeight();
-    if (i === from) return null;                      // これは指について動く
-    if (from < to && i > from && i <= to) return -h;
-    if (to < from && i >= to && i < from) return h;
-    return 0;
-  };
   const countOf = (t) => (records || []).filter((r) => (r.tags || []).some((x) => x === t)).length;
   const canAdd = !!draft.trim() && !list.some((t) => t.toLowerCase() === draft.trim().toLowerCase());
   const renameOk = renaming && !!renaming.to.trim() && renaming.to.trim() !== renaming.from
@@ -5671,55 +5709,38 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
           </div>
           <button type="button" disabled={!canAdd}
             onClick={() => { onAdd(draft.trim()); setDraft(""); }}
-            className={(canAdd ? BTN_PRIMARY : BTN_BASE + " bg-neutral-100 border-2 border-neutral-200 text-neutral-400")
+            className={(canAdd ? BTN_PRIMARY : BTN_BASE + " bg-neutral-100 border border-neutral-200 text-neutral-400")
               + " " + BTN_H + " px-3.5 text-[14.5px] shrink-0"}><Plus size={15} /> 追加</button>
         </div>
 
         {list.length === 0 ? (
           <div className="flex flex-col items-center py-8">
-            <Mascot seed="tags-empty" size={118} />
+            <Mascot seed="tags-empty" size={142} />
             <p className="text-[14.5px] text-neutral-500 mt-1">まだタグがありません</p>
           </div>
         ) : (
-          <div ref={listRef} className={"space-y-2 " + (seq && !drag ? "ft-seq" : "")}>
-            {list.map((t, i) => {
+          <div className={"space-y-2 " + (seq && !dragId ? "ft-seq" : "")}>
+            {list.map((t) => {
               const n = countOf(t);
-              const held = drag && drag.from === i;
-              const shift = shiftOf(i);
+              const held = dragId === t;
               return (
-                <div key={t}
-                  className={"flex items-center gap-2 rounded-xl border-2 bg-white px-3.5 py-2.5 "
-                    + (held ? "border-th-700 shadow-xl" : "border-neutral-200")}
-                  style={{
-                    transform: held ? `translateY(${drag.dy}px)` : `translateY(${shift || 0}px)`,
-                    /* つまんでいる札は指にぴたりと付く。よける札だけ滑らかに動かす。
-                       **勢いのある動き方（cubic-bezier(.22,1,…)）は使わないこと。**
-                       行き過ぎてから戻るので、札が跳ねて見える。
-                       まっすぐ動く ease-out にしておくこと。
-                       つまんだ札を大きくするのもやめた（動かすたびに膨らんで落ち着かない） */
-                    transition: (held || settling) ? "none" : "transform .16s ease-out",
-                    position: held ? "relative" : undefined,
-                    zIndex: held ? 5 : undefined,
-                    touchAction: drag ? "none" : undefined,
-                  }}>
+                <div key={t} ref={setRow(t)}
+                  className={"flex items-center gap-2 rounded-xl border px-3.5 py-2.5 "
+                    + (held ? "border-th-700 bg-th-50" : "border-neutral-200 bg-white")}>
                   <span className="flex-1 min-w-0">
                     <span className="block text-[15.5px] font-bold text-neutral-900 truncate">{t}</span>
                     <span className="block text-[12.5px] text-neutral-500">{n > 0 ? `${n}件の記録で使用中` : "まだ使われていません"}</span>
                   </span>
                   <button type="button" onClick={() => setRenaming({ from: t, to: t })} aria-label={`${t} の名前を変える`}
-                    className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl border-2 border-neutral-200 text-neutral-600 hover:bg-neutral-50 ft-tap ft-tap-icon"><Pencil size={16} /></button>
+                    className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl border border-neutral-200 text-neutral-600 hover:bg-neutral-50 ft-tap ft-tap-icon"><Pencil size={16} /></button>
                   <button type="button" onClick={() => setDeleting({ tag: t, n })} aria-label={`${t} を削除`}
-                    className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl border-2 border-rose-200 text-rose-700 hover:bg-rose-50 ft-tap ft-tap-icon"><Trash2 size={16} /></button>
-                  {/* つまんで上下に動かす取っ手。
-                      **ここだけ touchAction を none にすること。**
-                      札ぜんたいに付けると、指で画面を送れなくなる */}
-                  <span role="button" tabIndex={0} aria-label={`${t} の並びを変える`}
-                    onPointerDown={onGrab(i)} onPointerMove={onMoveRow}
-                    onPointerUp={onDrop} onPointerCancel={onDrop}
-                    style={{ touchAction: "none" }}
-                    className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl text-neutral-300 hover:text-neutral-500 cursor-grab">
-                    <Menu size={18} />
-                  </span>
+                    className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 ft-tap ft-tap-icon"><Trash2 size={16} /></button>
+                  {list.length > 1 && (
+                    <span role="button" tabIndex={0} aria-label={`${t} の並びを変える`} {...handleProps(t)}
+                      className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl text-neutral-300 hover:text-neutral-500">
+                      <GripVertical size={18} />
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -5729,7 +5750,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
 
       {renaming && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
-          <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop">
+          <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
             <h3 className="font-display text-[17px] text-neutral-900 mb-3">タグの名前を変える</h3>
             <TextInput value={renaming.to} onChange={(e) => setRenaming({ ...renaming, to: e.target.value })} />
             <p className="text-[12.5px] text-neutral-500 mt-2 mb-5 leading-relaxed">
@@ -5746,7 +5767,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
 
       {deleting && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
-          <div className="bg-white rounded-2xl p-5 max-w-sm w-full border-2 border-neutral-200 shadow-xl anim-pop">
+          <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
             <h3 className="font-display text-[17px] text-neutral-900 mb-2">「{deleting.tag}」を削除しますか</h3>
             <p className="text-[13.5px] text-neutral-600 mb-5 leading-relaxed">
               {deleting.n > 0
@@ -5843,7 +5864,7 @@ function HelpScreen({ onClose }) {
           {HELP_SECTIONS.map((sec) => {
             const on = open === sec.title;
             return (
-              <div key={sec.title} className="rounded-2xl border-2 border-neutral-200 bg-white overflow-hidden">
+              <div key={sec.title} className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
                 <button onClick={() => setOpen(on ? null : sec.title)}
                   className="w-full flex items-center gap-2 px-4 py-3 min-h-[56px] text-left ft-tap ft-tap-card">
                   <span className="flex-1 font-display text-[15.5px] text-neutral-900">{sec.title}</span>
@@ -5864,7 +5885,7 @@ function HelpScreen({ onClose }) {
           })}
         </div>
         <div className="flex flex-col items-center pt-6 pb-2">
-          <div className="opacity-70"><Mascot seed="help" size={104} /></div>
+          <div className="opacity-70"><Mascot seed="help" size={126} /></div>
         </div>
       </div>
     </div>
@@ -5895,7 +5916,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
 
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         {cycle && (
-          <div className="rounded-2xl border-2 border-th-700/25 bg-white p-4 mb-4 flex items-center gap-4">
+          <div className="rounded-2xl border border-th-700/25 bg-white p-4 mb-4 flex items-center gap-4">
             <FruitTree stage={cur.n} fruit={cycle.fruit} size={86} />
             <div className="flex-1 min-w-0">
               <p className="text-[11.5px] font-bold tracking-wider text-th-800/70">育てている木</p>
@@ -5921,7 +5942,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
         </div>
 
         {harvests.length === 0 ? (
-          <div className="rounded-2xl border-2 border-dashed border-neutral-300 p-6 flex flex-col items-center">
+          <div className="rounded-2xl border border-dashed border-neutral-300 p-6 flex flex-col items-center">
             <FruitTree stage={1} fruit="apple" size={120} />
             <p className="text-[12.5px] text-neutral-500 mt-2 text-center">これまでの実りが、ここに並びます。</p>
           </div>
@@ -6177,6 +6198,12 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
         : "bg-rose-50 border-rose-200 text-rose-900"
     : "";
 
+  /* 端末の置き場にどれくらい余裕があるか。分からない端末もあるので、
+     取れなかったときは何も出さない */
+  const [room, setRoom] = useState(null);
+  useEffect(() => { storageRoom().then(setRoom); }, []);
+  const unsaved = unsavedCount(records, prefs);
+
   return (
     <OverlayScreen from="right" closing={closing}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
@@ -6205,8 +6232,27 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
                 ひとこと、ヘッダーの背景などの設定も一緒に保存されます。
                 ファイルは1つだけです。そのまま読める形で、復元にも使えます。
               </p>
+              {prefs && prefs.lastBackup && (
+                <p className="text-[12.5px] text-neutral-400 mt-1.5">前回 {fmtJpDate(prefs.lastBackup)}</p>
+              )}
+              {room && (
+                <p className="text-[12.5px] text-neutral-400 mt-1.5 tabular-nums">
+                  この端末の置き場は約{fmtBytes(room.quota)}。いま{fmtBytes(room.used)}を使っています
+                </p>
+              )}
 </div>
           </div>
+
+          {/* **控えを取っていない書きかえがあることは、ここで一度だけ知らせること。**
+              あちこちに出すと、ただの飾りになって読み飛ばされる */}
+          {unsaved > 0 && (
+            <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 mb-4">
+              <p className="text-[13.5px] font-bold text-amber-800">
+                {prefs && prefs.lastBackup ? `前回の書き出しのあとに、${unsaved}件の書きかえがあります` : "まだ一度も書き出していません"}
+              </p>
+              <p className="text-[12.5px] text-neutral-600 mt-0.5">記録はこの端末の中だけにあります。下から書き出しておけます。</p>
+            </div>
+          )}
 
           <div className="space-y-2.5 mb-4">
             <div className="flex justify-end">
@@ -6251,7 +6297,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
                     className={"flex-1 min-h-[40px] rounded-lg text-[13.5px] font-bold border-2 ft-tap " + (previewMode === "json" ? "bg-th-50 border-th-800 text-th-900" : "border-neutral-300 text-neutral-600")}>復元用データ</button>
                 </div>
                 <textarea readOnly value={previewMode === "readable" ? readableText : jsonText}
-                  className="w-full h-56 rounded-xl border-2 border-neutral-300 p-3.5 text-[12.5px] leading-relaxed font-mono text-neutral-800 resize-none bg-neutral-50" />
+                  className="w-full h-56 rounded-xl border border-neutral-300 p-3.5 text-[12.5px] leading-relaxed font-mono text-neutral-800 resize-none bg-neutral-50" />
                 <button
                   onClick={() => copyText(previewMode === "readable" ? readableText : jsonText, previewMode === "readable" ? "読みやすい形式のテキスト" : "復元用データ")}
                   className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px] mt-2.5"}>コピー</button>
@@ -6259,7 +6305,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
             )}
           </div>
 
-          <div className="rounded-2xl border-2 border-amber-200 bg-amber-50/60 p-4 mt-6">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 mt-6">
             {/* **文字の色をそろえること。**
                 以前は濃い茶・薄い茶・灰色が混ざっていて、まだらに見えた。
                 見出しだけ濃く、本文はすべて同じ色にする */}
@@ -6454,6 +6500,7 @@ function AppMain() {
       .catch(() => { setRecordsState([]); })
       .finally(() => { setLoaded(true); });
   }, []);
+  useEffect(() => { askPersist(); }, []);
   useEffect(() => { loadArtworks().then(setArtworks); }, []);
   useEffect(() => { loadHeaderBg().then(setHeaderBg); }, []);
   useEffect(() => { loadCaptions().then(setCaptions); }, []);
@@ -7400,7 +7447,11 @@ function AppMain() {
             },
             {
               label: "バックアップ",
-              desc: "書き出しと復元",
+              /* **いつ書き出したかを、開かなくても分かるようにすること。**
+                 「書き出しと復元」とだけ書いてあっても、控えが古いことに気づけない */
+              desc: unsavedNow > 0
+                ? (prefs.lastBackup ? `前回は ${fmtJpDate(prefs.lastBackup)}・${unsavedNow}件が未書き出し` : "まだ一度も書き出していません")
+                : (prefs.lastBackup ? `${fmtJpDate(prefs.lastBackup)} に書き出しました` : "書き出しと復元"),
               icon: <Download size={20} />,
               badge: unsavedNow,
               onClick: () => goFromMenu(() => setBackupOpen(true)),
@@ -7411,6 +7462,9 @@ function AppMain() {
                気づいたときに指がどこに当たっても開けるように */
             <TapButton onClick={() => goFromMenu(() => setHelpOpen(true))}
               className="w-full flex items-center gap-3 -my-1 py-2 rounded-xl text-left hover:bg-neutral-50 ft-tap-card">
+              {/* **ここだけは大きくしないこと。**
+                  この段の高さは下の帯（--ft-nav-h＝57px）にそろえてある。
+                  絵を大きくすると段が高くなり、帯と食い違って見える */}
               <Mascot seed="menu" size={48} className="shrink-0" />
               <span className="flex-1 min-w-0 text-[14.5px] font-bold text-neutral-700">使い方を見る</span>
               <ChevronRight size={18} className="text-neutral-400 shrink-0" />
