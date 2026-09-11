@@ -1238,7 +1238,7 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* アプリの版数。**index.html の window.__FT_VERSION が本物。**
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
-const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "1.0.0";
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "1.1.0";
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
