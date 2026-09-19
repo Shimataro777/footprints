@@ -1,124 +1,61 @@
-# 聖書学習記録
+# 聖書学習記録（Footprints）
 
-React + Vite + Tailwind CSS で作られた、聖書通読・学び・聖句・疑問メモなどを記録するアプリです。
-データは端末のブラウザ内(localStorage)に保存されます。
+React で作られた、聖書通読・学び・聖句・メモなどを記録するアプリです。
+データは端末のブラウザ内（localStorage）に保存されます。
 
-## 公開手順（GitHubのみで完結・おすすめ）
+## 公開しているファイルについて
 
-GitHub Pages と GitHub Actions を使うと、他のサービスを使わずGitHubだけで公開できます。
-コマンド操作が不要な **方法A** と、コマンドを使う **方法B** があります。はじめての方は方法Aで。
+このリポジトリのファイルは、**Claude があらかじめ組み立て済みの「完成品」**です。
+GitHub 側では何もビルドしません（`npm install` や `npm run build` は不要）。
+すべて1階層に並んでいて、`.github` のような隠しフォルダもありません。
 
----
+| ファイル | 役割 |
+|---|---|
+| `index.html` | 骨組み・起動画面 |
+| `app.js` | アプリ本体（組み立て済み。書き換えて直接使うものではありません） |
+| `app.css` | 見た目（組み立て済み） |
+| `manifest-v4.json` / `icon-*-v4.png` / `apple-touch-icon-v4.png` | ホーム画面追加まわり |
+| `App.jsx` | もとの材料（Claude が次に直すときに使う資料。公開には使っていません） |
 
-## 方法A：ブラウザだけで公開する（コマンド不要）
+## 公開手順（最初の1回だけ）
 
-### 1. zipを展開する
-
-`bible-tracker.zip` を展開すると、`index.html` や `App.jsx` などのファイルと、`.github` フォルダが出てきます。
-**`.github` 以外はすべていちばん上に並んでいます**（`src` や `public` といったフォルダはありません）。
-**この中身を丸ごと**アップロードします（`bible-tracker` というフォルダごとではなく、その中身）。
-
-### 2. GitHubでリポジトリを作る
+### 1. リポジトリを作る
 
 1. GitHub にログインし、右上の「＋」→「New repository」
-2. Repository name に `bible-tracker` と入力
+2. Repository name を決める（例: `bible-tracker`）
 3. **Public** を選ぶ（無料プランでは、Publicでないと公開機能が使えません）
 4. 「Create repository」
 
-### 3. ファイルをアップロードする
+### 2. ファイルをアップロードする
 
-1. 作ったリポジトリの「uploading an existing file」（または「Add file」→「Upload files」）
-2. 展開したファイル・フォルダをすべてドラッグ＆ドロップ
-3. 下の「Commit changes」を押す
+1. 「uploading an existing file」（または「Add file」→「Upload files」）
+2. Claude から受け取ったファイルを**すべて**ドラッグ＆ドロップ
+3. 「Commit changes」
 
-### 4. 自動公開の設定ファイルを置く（重要）
-
-`.github` のように**ドットで始まるフォルダは、アップロードで抜け落ちることがあります。**
-リポジトリの一覧に `.github` が見当たらない場合は、次の手順で作ってください。
-
-1. 「Add file」→「Create new file」
-2. ファイル名の欄に、次を**そのまま**入力します（`/` を打つとフォルダが作られます）
-
-   ```
-   .github/workflows/deploy.yml
-   ```
-
-3. 本文に、zipの中の `.github/workflows/deploy.yml` の中身をそのまま貼り付ける
-4. 「Commit changes」
-
-### 5. GitHub Pagesを有効にする（最初の1回だけ）
+### 3. GitHub Pages を有効にする
 
 1. リポジトリの「Settings」→ 左メニューの「Pages」
-2. 「Build and deployment」の「Source」を **「GitHub Actions」** に変更
+2. 「Build and deployment」の「Source」を **「Deploy from a branch」** にする
+3. 「Branch」をアップロードした枝（ふつうは `main`）、フォルダは **`/ (root)`** にして「Save」
 
-> **ここで注意。**
-> GitHubが「Static HTML」などのテンプレートをすすめてくることがありますが、**選ばないでください。**
-> それらはビルドをしないため、画面が真っ白になります。
-> このアプリは `App.jsx` をブラウザが読める形に変換（ビルド）してから公開する必要があります。
-> Source を「GitHub Actions」にしたら、そのまま何も選ばずにこの画面を閉じて大丈夫です。
-> 手順4で置いた `deploy.yml` が自動的に使われます。
->
-> Actionsタブで動いているものの名前が **「Deploy to GitHub Pages」** ならば正解です。
-> 「Deploy static content to Pages」になっていたら、テンプレートが使われています。
-> `.github/workflows` の中の余計なファイルを削除し、`deploy.yml` だけにしてください。
+> ここは「GitHub Actions」ではなく「Deploy from a branch」です。ビルドをしない配り方なので、
+> こちらを選びます。GitHubが薦めてくるテンプレートは選ばなくて大丈夫です。
 
-### 6. 公開を待つ
+### 4. 公開を待つ
 
-「Actions」タブを開くと、ビルドが動いています。**緑のチェックがついたら公開完了**です（数分かかります）。
-公開URLは `Settings → Pages` の上部に出ます。だいたい次の形です。
+1〜2分ほどで公開されます。URLは `Settings → Pages` の上部に出ます。だいたい次の形です。
 
 ```
-https://【あなたのユーザー名】.github.io/bible-tracker/
+https://【あなたのユーザー名】.github.io/【リポジトリ名】/
 ```
 
-### 7. あとから中身を差し替えるとき
+## あとから中身を差し替えるとき
 
-ファイルはすべていちばん上にあるので、フォルダに入る必要はありません。
+Claude に頼んで直してもらったら、できあがったファイル（`index.html` / `app.js` / `app.css` など）を
+そのままアップロードし直すだけです。同じ名前のファイルは上書きされます。
+「Add file」→「Upload files」→ まとめてドラッグ＆ドロップ →「Commit changes」。
 
-- **1つだけ替えるとき**：リポジトリで `App.jsx` を開く → 右上の鉛筆マーク（Edit）→ 中身を全部消して新しい中身を貼り付け →「Commit changes」
-- **まとめて替えるとき**：「Add file」→「Upload files」で、替えたいファイルをまとめてドラッグ＆ドロップ →「Commit changes」（同じ名前のファイルは上書きされます）
-
-`.github/workflows/deploy.yml` だけは、GitHubの決まりでこの場所から動かせません。ふだん替えることはないので、最初に1回置けば済みます。
-
-保存すると自動で作り直され、数分後に公開ページが新しくなります。
-
----
-
-## 方法B：コマンドで公開する
-
-### 1. リポジトリを作ってpushする
-
-1. GitHubで新しいリポジトリを作成（例: `bible-tracker`）
-2. このフォルダの中身をすべてpush（`.github` フォルダも忘れずに）
-
-```bash
-cd bible-tracker
-git init
-git add .
-git commit -m "first commit"
-git branch -M main
-git remote add origin https://github.com/【あなたのユーザー名】/bible-tracker.git
-git push -u origin main
-```
-
-### 2. GitHub Pagesを有効にする（最初の1回だけ）
-
-1. リポジトリの「Settings」→ 左メニューの「Pages」を開く
-2. 「Build and deployment」の「Source」を **「GitHub Actions」** に設定
-
-以降は、コードを直して `git push` するだけで自動的に再ビルド・再公開されます。
-
----
-
-## 以前の作り（`src`・`public` フォルダあり）から移るとき
-
-1. 新しいファイルをすべて、リポジトリのいちばん上にアップロードする
-2. 古い `src` フォルダと `public` フォルダの中のファイルを削除する
-   （ファイルを開き、右上の「…」→「Delete file」。フォルダは中が空になると消えます）
-
-古いフォルダが残っていても動きはしますが、どちらが使われているのか紛らわしくなるので消しておくのがおすすめです。
-
----
+保存すると、数分後には公開ページが新しくなります（ビルドを待つ必要はありません）。
 
 ## 公開してから
 
@@ -127,7 +64,7 @@ git push -u origin main
 1. 公開されたURLをiPhoneのSafariで開く
 2. 共有ボタン → 「ホーム画面に追加」
 
-ひつじのアイコンで追加され、通常のアプリと同じ感覚で使えます。
+アイコンが追加され、通常のアプリと同じ感覚で使えます。
 ブラウザの制約がなくなるため、バックアップのファイル保存も正常に動きます。
 
 ### 公開しても、記録は他人に見られません
@@ -137,23 +74,14 @@ GitHubで公開されるのは**アプリの仕組み（プログラム）だけ
 
 ### うまくいかないときは
 
-- **Actionsが赤くなる** … 「Actions」タブでエラー内容が見られます。`.github/workflows/deploy.yml` が正しい場所にあるか確認してください
-- **404が出る** … Settings → Pages の Source が「GitHub Actions」になっているか確認。公開直後は数分かかります
+- **画面に案内が出る（プログラムを読み込めませんでした）** … `app.js` と `app.css` が、
+  他のファイルと同じ場所（1階層）にアップロードされているか確認してください
+- **404が出る** … Settings → Pages の Source が「Deploy from a branch」になっているか、
+  Branch/Folder が正しいか確認。公開直後は数分かかります
 - **古い画面のまま** … ブラウザの再読み込み（iPhoneなら一度ホーム画面のアイコンを削除して追加し直す）で直ります
-- **真っ白で何も出ない** … 次の2つがよくある原因です
-  1. `App.jsx`・`main.jsx`・`index.css` のどれかが入っていない（3つともいちばん上に置きます）
-  2. ビルドしないワークフローが使われている。Actionsタブの名前が「Deploy to GitHub Pages」か確認してください。
-     実行時間が20秒ほどで終わっている場合はビルドされていません（正しく動けば1分前後かかります）
-
-## ローカルで動作確認する場合
-
-```bash
-npm install
-npm run dev
-```
 
 ## データについて
 
-- データは `localStorage` に保存されるため、**ブラウザ・端末ごとに別々**になります（Claude版のような自動同期はありません）
-- ホーム画面のバックアップ機能から、定期的にデータ（JSON）を書き出して保管することをおすすめします
+- データは `localStorage` に保存されるため、**ブラウザ・端末ごとに別々**になります
+- メニューの「バックアップ」から、定期的にデータ（ファイル）を書き出して保管することをおすすめします
 - Safariの「Webサイトのデータを消去」を行うとデータが消えるため注意してください

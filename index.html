@@ -13,6 +13,7 @@
     <link rel="manifest" href="./manifest-v4.json" />
     <link rel="apple-touch-icon" href="./apple-touch-icon-v4.png" />
     <link rel="icon" type="image/png" href="./icon-192-v4.png" />
+    <link rel="stylesheet" href="./app.css" />
     <!-- 書体の読み込みを早めるための下ごしらえ（アプリの中からも読み込むが、先に始めておく） -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -95,10 +96,10 @@
         <p class="boot-h">プログラムを読み込めませんでした</p>
         <p>GitHubで公開している場合は、次の2つをご確認ください。</p>
         <ol>
-          <li>リポジトリに <code>.github/workflows/deploy.yml</code> があるか<br>
-            （隠しフォルダのため、アップロードの際に抜け落ちることがあります）</li>
-          <li>Settings → Pages の Source が <b>GitHub Actions</b> になっているか<br>
-            （Deploy from a branch だと、組み立て前のファイルがそのまま配られ、この画面になります）</li>
+          <li><code>app.js</code> と <code>app.css</code> が、このファイルと同じ場所に<br>
+            アップロードされているか</li>
+          <li>Settings → Pages の Source が <b>Deploy from a branch</b> になっているか<br>
+            （Branch は保存した場所、Folder は <code>/ (root)</code>）</li>
         </ol>
       </div>
     </div>
@@ -131,6 +132,6 @@
         }, wait);
       };
     </script>
-    <script type="module" src="./main.jsx"></script>
+    <script defer src="./app.js"></script>
   </body>
 </html>

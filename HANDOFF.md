@@ -18,25 +18,143 @@ React 単一ファイル（約3,450行）で作られている。
 | ファイル | 用途 |
 |---|---|
 | `BibleTracker.jsx` | Claudeのアーティファクトとして開く版 |
-| `bible-tracker.zip` | GitHub Pages で公開する独立版（Vite + React + Tailwind） |
+| `App.jsx`（zipの中） | GitHub Pages で公開する版の「材料」（人が読み書きする元のファイル） |
 
-**重要**: 保存処理を共通化したので、2つのファイルは**完全に同一**。
+**重要**: 保存処理を共通化したので、2つの `.jsx` は**完全に同一**。
 片方を直したら必ずもう片方にもコピーし、`diff -q` で一致を確認すること。
 
 ```
 cp BibleTracker.jsx /mnt/user-data/outputs/BibleTracker.jsx
-cp BibleTracker.jsx bible-tracker/App.jsx
+cp BibleTracker.jsx App.jsx   # zipに入れるほう
 ```
 
-zip の公開手順は `bible-tracker/README.md` に記載済み（GitHub Actions で自動デプロイ）。
+### 公開の形（2.3.2〜）：GitHubではビルドしない「組み立て済み」配布
 
-**zip の中はフォルダを作らない（`.github/workflows/deploy.yml` だけは例外）。**
-GitHub での差し替えを楽にするため、`src` と `public` はやめて、すべていちばん上に置いている。
-- `index.html` は `./main.jsx` を読む。`tailwind.config.js` は `./*.jsx` を見る
-- アイコンとマニフェストは `vite.config.js` の係が dist へ写す（`publicDir: false`）。
-  `index.html` から指すアイコン類は、組み立て中だけ目印に置き換えて Vite に触らせない
-  （触らせると assets へ移され、マニフェストの start_url とアイコンの場所がずれる）
-- **新しいファイルやフォルダを足すときも、いちばん上に置くこと**
+以前は Vite + GitHub Actions で、GitHub 側が `npm install` → `npm run build` していた。
+それには `.github/workflows/deploy.yml` という**隠しフォルダ**が要り、これがスマホからの
+アップロードで抜け落ちる事故が繰り返し起きたため、**2.3.2 でやめた**。
+
+今は、**Claude の手元で先に組み立てて**、できあがった「完成品」だけを渡す形にしている。
+渡すファイルは全部で7つ、**すべて1階層（フォルダなし）**。
+
+| ファイル | 中身 |
+|---|---|
+| `index.html` | 骨組み。起動画面（スプラッシュ）もここに直書き |
+| `app.js` | React・アイコン・`App.jsx` を1つにまとめた、組み立て済みの本体（Reactの構文はもう含まない） |
+| `app.css` | Tailwind のユーティリティクラスを、実際に使っているぶんだけ書き出したもの |
+| `manifest-v4.json` / `icon-192-v4.png` / `icon-512-v4.png` / `apple-touch-icon-v4.png` | ホーム画面追加まわり |
+
+**GitHub側の設定は「Deploy from a branch」（Actionsではない）。** ビルドをしないので、
+`.github` フォルダは要らない。アップロードは、上の7ファイル（＋任意で `App.jsx` を資料として）を
+まとめてドラッグ＆ドロップするだけで済む。
+
+**この形を崩さないこと。** `index.html` が読み込むのは `./app.js`（`<script defer>`。`type="module"` ではない）
+と `./app.css`。`./main.jsx` や `./App.jsx` を直接読ませない
+（ブラウザはJSXの構文をそのままでは理解できないため、読ませても白い画面になる）。
+
+---
+
+## 2-2. 組み立て方（`App.jsx` → 配る7ファイル）
+
+`App.jsx` を直したら、**このとおりに組み立て直してから**配ること。試験用のモック（アイコンが空）で
+済ませて渡さないこと。手順は3つ。
+
+### ① 本体（`app.js`）を組み立てる
+
+アイコン（`lucide-react`）は npm から取れない（ネットワークが使えない環境のため）。
+その代わり、**`react-icons/lu` が中身の同じ Lucide アイコン集**なので、これを本物として使う。
+名前が `Lu` 接頭辞になるのと、`Home` だけ本家で `House` に改名されている点だけ読み替える。
+
+```bash
+mkdir -p /home/claude/flat/src && cd /home/claude/flat
+cp /home/claude/bt/App.jsx src/App.jsx
+
+cat > src/entry.jsx <<'EOF'
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App.jsx";
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode><App /></React.StrictMode>
+);
+EOF
+
+cat > src/lucide-shim.js <<'EOF'
+export {
+  LuBookOpen as BookOpen, LuSearch as Search, LuTrendingUp as TrendingUp,
+  LuBookMarked as BookMarked, LuPlus as Plus, LuX as X, LuCheck as Check,
+  LuPencil as Pencil, LuTrash2 as Trash2, LuChevronLeft as ChevronLeft,
+  LuChevronRight as ChevronRight, LuChevronDown as ChevronDown, LuStar as Star,
+  LuAward as Award, LuSparkles as Sparkles, LuPlay as Play, LuHouse as Home,
+  LuDownload as Download, LuLink as LinkIcon, LuSlidersHorizontal as SlidersHorizontal,
+  LuUpload as Upload, LuImagePlus as ImagePlus, LuMenu as Menu,
+  LuGripVertical as GripVertical, LuPin as Pin, LuBookmark as Bookmark, LuTag as Tag,
+  LuCopy as Copy, LuClipboardPaste as ClipboardPaste, LuCalendarDays as CalendarDays,
+  LuImage as ImageIcon, LuUndo2 as Undo2, LuRedo2 as Redo2, LuArrowUpDown as ArrowUpDown,
+} from "react-icons/lu";
+EOF
+
+ESB=/home/claude/.npm-global/lib/node_modules/tsx/node_modules/.bin/esbuild
+$ESB src/entry.jsx --bundle --format=iife --platform=browser \
+  --alias:lucide-react=./src/lucide-shim.js \
+  --alias:react=/home/claude/.npm-global/lib/node_modules/react \
+  --alias:react-dom=/home/claude/.npm-global/lib/node_modules/react-dom \
+  --alias:react-icons=/home/claude/.npm-global/lib/node_modules/react-icons \
+  --define:process.env.NODE_ENV='"production"' \
+  --loader:.js=jsx --minify --outfile=app.js
+```
+
+**新しく `import { 何か } from "lucide-react"` を足したら、`src/lucide-shim.js` にも同じ行を足すこと。**
+足し忘れると、その部品だけアイコンが出ない（ブラウザは黙って何も描かない）。
+
+### ② 見た目（`app.css`）を組み立てる
+
+Tailwind 本体は npm から取れないが、`@mermaid-js/mermaid-cli` が道連れに入れている
+`tailwindcss`（v3系。zipの `package.json` が求める版とも合う）がそのまま使える。
+**`th-` や `ft-` で始まるクラス（テーマ色・独自の当たり判定など）は Tailwind の仕事ではない。**
+`App.jsx` の末尾近くにある `<style>` タグの中に直書きしてあり、それは `app.js` に含まれて実行時に効く。
+ここで作る `app.css` は、ふつうの Tailwind ユーティリティ（`flex`・`px-4`・`rounded-2xl` など）だけでよい。
+
+```bash
+cd /home/claude/flat
+cat > tw-input.css <<'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+html, body { background: #FFFFFF; }
+EOF
+cat > tailwind.config.js <<'EOF'
+module.exports = { content: ["./src/App.jsx", "./index.html"], theme: { extend: {} }, plugins: [] };
+EOF
+TW=/home/claude/.npm-global/lib/node_modules/@mermaid-js/mermaid-cli/node_modules/.bin/tailwindcss
+$TW -i tw-input.css -o app.css -c tailwind.config.js --no-autoprefixer --minify
+rm -f tw-input.css tailwind.config.js  # 出来上がった app.css だけ渡す。設定ファイルは渡さない
+```
+
+**組み立てたら、漏れがないか必ず確かめること。** `App.jsx` の `className="..."` から実際に使っている
+クラス名をすべて拾い、`th-`／`ft-`／`anim-` などの自前クラスを除いて、`app.css` に同じ名前が
+（Tailwindのエスケープを考慮して）存在するかを突き合わせる。抜けがあれば、その部品だけ無地で出てしまう
+（`--content` の対象に `src/App.jsx` が入っているか、クラス名がテンプレート文字列の途中で
+壊れていないかを疑うこと）。
+
+### ③ `index.html` ／ アイコン類
+
+`index.html` はふだん変えない（起動画面と、この節の①②が作る `app.js` / `app.css` を読み込む1行ずつだけ）。
+変えたのは次の2か所だけ：
+- `<script type="module" src="./main.jsx">` → `<script defer src="./app.js">`
+- `<link rel="stylesheet" href="./app.css">` を `<head>` に追加
+
+アイコン（`icon-192-v4.png` など）とマニフェストは、いままでどおり zip の中のものをそのまま使う。
+**版数を上げて絵を差し替えたときは、ファイル名の `-v4` も一緒に上げ、`index.html` と `manifest-v4.json`
+の両方の参照を書き換えること**（以前 Vite が担っていた仕事を、いまは手でやる）。
+
+### ④ 渡す前の確認（省略しないこと）
+
+Chromium（`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`、playwright 経由）で
+`index.html` を実際に開き、スプラッシュが消えてホーム画面が描かれること、
+主要4タブ（ホーム／記録／探す／実績）とメニューを開いてエラーが出ないことを確認してから渡す。
+（Googleフォントの読み込み失敗はサンドボックスにネットワークが無いためで、実機では起きない）
 
 ---
 
@@ -54,6 +172,8 @@ GitHub での差し替えを楽にするため、`src` と `public` はやめて
    ```
    `/tmp/rtcheck2/` は毎回消えている。無ければ `entry.jsx` と `lucide-mock.js` を作り直す。
    `--alias:react=...` を付けないと react が見つからず失敗する。
+   **これは構文の下ごしらえの確認用（アイコンは空のモック）。** 実際に配るファイルは、
+   必ず「2-2. 組み立て方」の手順（`react-icons/lu` を使う本物のアイコン）で作り直すこと。
 
 2. **ビルドが成功したか必ず確かめてから試験する。**
    esbuild が失敗しても古い `.cjs` が残っていると、そのまま動いて「合格」に見えてしまう。
