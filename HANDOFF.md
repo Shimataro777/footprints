@@ -25,10 +25,18 @@ React 単一ファイル（約3,450行）で作られている。
 
 ```
 cp BibleTracker.jsx /mnt/user-data/outputs/BibleTracker.jsx
-cp BibleTracker.jsx bible-tracker/src/App.jsx
+cp BibleTracker.jsx bible-tracker/App.jsx
 ```
 
 zip の公開手順は `bible-tracker/README.md` に記載済み（GitHub Actions で自動デプロイ）。
+
+**zip の中はフォルダを作らない（`.github/workflows/deploy.yml` だけは例外）。**
+GitHub での差し替えを楽にするため、`src` と `public` はやめて、すべていちばん上に置いている。
+- `index.html` は `./main.jsx` を読む。`tailwind.config.js` は `./*.jsx` を見る
+- アイコンとマニフェストは `vite.config.js` の係が dist へ写す（`publicDir: false`）。
+  `index.html` から指すアイコン類は、組み立て中だけ目印に置き換えて Vite に触らせない
+  （触らせると assets へ移され、マニフェストの start_url とアイコンの場所がずれる）
+- **新しいファイルやフォルダを足すときも、いちばん上に置くこと**
 
 ---
 
@@ -230,7 +238,7 @@ zip の公開手順は `bible-tracker/README.md` に記載済み（GitHub Action
 - 今日の記録が1件でもあると（種類は問わない）、木に金色のキラキラが出る（`FruitTree` の `sparkle`）。
   `.ft-sparkle` でゆっくり瞬く。SVG の図形なので `transform-box: fill-box` が要る（無いと中心で拡大しない）
 - ウェブアプリとしての名前は **Footprints**（`manifest.json` と `index.html`）。
-  アイコンはりんごの芽（Stage 2）。`public/` の3つのPNGは
+  アイコンはりんごの芽（Stage 2）。いちばん上に置いた3つのPNGは
   芽の絵を自動で切り出して中央に置いて作った（中心のずれ0px・四辺の余白を揃えてある）
 - イラストは `FruitTree`（stage 1〜10 × 5種類）。Stage 1〜5 は種類共通、6〜10 は品種ごとに描き分ける
 - 保存先は `bible-tracker-garden`。書き出し形式は version 3 になったが、
@@ -517,7 +525,7 @@ Tailwind の `border-l-[…]` は「太さ」しか決めず、線種は土台�
 大きくするときは `/tmp/rtcheck2/tree.cjs` で、画面に収まるかを測ってから決める。
 ※段階ごとの聖句の長さで縦が伸び縮みするので、小さい端末で少しスクロールが要るのは元からの仕様。
 
-### アプリのアイコン（`public/icon-*.png`）
+### アプリのアイコン（`icon-*.png`）
 背景はごく淡い空色。土は絵の下端まで塗りつぶし、下に白い帯を残さない。
 絵はアプリの3段階目（かわいい双葉）と同じ座標・同じ色をそのまま使っている。
 寄り引きは `make-icon.cjs` の `GROUND_AT` / `LEAF_AT` で決まる（差が大きいほど双葉が大きく写る）。
