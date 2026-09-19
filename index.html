@@ -19,7 +19,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>Footprints</title>
     <!-- **版数はここ1か所で決めること。** 起動の画面にも、アプリの中にも同じ値が出る -->
-    <script>window.__FT_VERSION = "2.3.2";</script>
+    <script>window.__FT_VERSION = "2.3.3";</script>
     <style>
       /* ============================================================
          起動の画面（スプラッシュ）
@@ -43,12 +43,26 @@
            inset: 0 だけだと、端末によっては下の端が数十px空く */
         position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 2147483600;
         height: 100vh; height: 100lvh;
-        display: flex; flex-direction: column; align-items: center; justify-content: center;
         background: #F4FBFE;
         font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
         transition: opacity .45s ease-out;
       }
       #splash.gone { opacity: 0; pointer-events: none; }
+      /* アイコン・名前・版数を、ひとつの箱にまとめて置く場所。
+         **ホーム画面から開いたとき、アイコンが上から下へ動いて見える不具合の直し。**
+         原因：iPhoneはホーム画面から開いた直後、本体の高さ（window.innerHeight）がいちど変わる
+         （実測でおよそ51px）。中身を #splash の高さ（100vh）のまんなかに置いていたため、
+         その変化のぶんの半分だけ、中身がまるごと下へ動いて見えていた。
+         直し方：中身の位置は、変わらない「端末の画面そのものの高さ」（screen.height）で決める。
+         下のスクリプトが、ホーム画面から開いたときだけ top を screen.height の半分に固定し直す
+         （ブラウザのタブで開いたときは、上下の帯の分だけ画面のまん中と端末の画面のまん中が
+         食い違うため、直さず従来どおり本体の高さのまん中に置く）。
+         **top の書き換えは、この JS の1か所だけにすること。** ほかの場所で位置を決め直すと、
+         せっかく固定した位置がまた動く原因になる */
+      #splash .splash-inner {
+        position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        display: flex; flex-direction: column; align-items: center;
+      }
       #splash .mark {
         width: 112px; height: 112px; border-radius: 28px; background: #fff;
         box-shadow: 0 8px 26px rgba(12,74,110,.12);
@@ -89,9 +103,11 @@
     <!-- 起動の画面。読み込みが終わり、かつ1秒たつと、ふわっと消える。
          いつまでも消えないときは、うまく読み込めていないので案内を出す -->
     <div id="splash">
-      <img class="mark" src="./icon-192-v4.png" alt="" width="112" height="112" />
-      <p class="name">Footprints</p>
-      <p class="ver" id="splash-ver"></p>
+      <div class="splash-inner">
+        <img class="mark" src="./icon-192-v4.png" alt="" width="112" height="112" />
+        <p class="name">Footprints</p>
+        <p class="ver" id="splash-ver"></p>
+      </div>
       <div class="boot">
         <p class="boot-h">プログラムを読み込めませんでした</p>
         <p>GitHubで公開している場合は、次の2つをご確認ください。</p>
@@ -106,6 +122,24 @@
 
     <script>
       document.getElementById("splash-ver").textContent = "v" + window.__FT_VERSION;
+
+      /* アイコンが動いて見える不具合の直し（本体）。
+         ホーム画面から開いたとき（standalone）だけ、中身の top を
+         「端末の画面そのものの高さ」（screen.height。起動中も変わらない）の半分に固定し直す。
+         これは本体の高さ（window.innerHeight）が変わるより前、できるだけ早く行うこと。
+         遅れると、動いたあとの位置で一瞬止まってから直る＝結局チラつく形で見えてしまう。
+         ブラウザのタブで開いたとき（standalone でない）は、なにもしない
+         （画面の上下に出る帯の分だけ、画面のまん中と本体のまん中が食い違うため、
+         従来どおり本体の高さのまん中に置いたままにする） */
+      (function () {
+        var standalone = window.navigator.standalone === true
+          || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+        if (!standalone) return;
+        var h = window.screen && window.screen.height;
+        if (!h) return;
+        var inner = document.querySelector("#splash .splash-inner");
+        if (inner) inner.style.top = (h / 2) + "px";
+      })();
 
       /* 起動の画面を外す手だて。アプリの読み込みが終わったときに呼ばれる。
          **かならず最低の時間だけ見せること。** 読み込みが速い端末では
