@@ -18,7 +18,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>Footprints</title>
     <!-- **版数はここ1か所で決めること。** 起動の画面にも、アプリの中にも同じ値が出る -->
-    <script>window.__FT_VERSION = "2.2.1";</script>
+    <script>window.__FT_VERSION = "2.2.2";</script>
     <style>
       /* ============================================================
          起動の画面（スプラッシュ）
@@ -28,8 +28,20 @@
          白い画面を隠すという目的を果たせない
          ============================================================ */
       html, body { margin: 0; background: #F4FBFE; }
+      /* **起動の画面が出ているあいだ、アプリの本体は見えなくしておくこと。**
+         本体（下の帯や右下のボタン）は、読み込みの途中でも先に描かれる。
+         覆いの下に隠れているはずだが、iPhone では下の端（ホームバーのあたり）や、
+         覆いが出る前後の一瞬に、下の帯だけが透けて見えることがあった。
+         そもそも見えなければ透けようがないので、覆いを外し始めるとき（ふわっと消えるのと同時）まで
+         visibility: hidden にしておく。**display: none にしないこと**
+         （中の高さを測る部品が、0のまま測ってしまう）。
+         印は html に付ける ft-shown。付けるのは下の __ftHideSplash と、いつまでも付かないときの保険の2か所 */
+      html:not(.ft-shown) #root { visibility: hidden; }
       #splash {
-        position: fixed; inset: 0; z-index: 2147483600;
+        /* 上下左右を明示し、高さも大きいほうの画面（bar が引っ込んだときの高さ）まで取っておく。
+           inset: 0 だけだと、端末によっては下の端が数十px空く */
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 2147483600;
+        height: 100vh; height: 100lvh;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
         background: #F4FBFE;
         font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
@@ -102,12 +114,18 @@
          外す手だてごと失われる */
       var FT_SPLASH_MS = 2000;
       var ftSplashFrom = Date.now();
+      /* 本体を見せる。起動の画面が消え始めるときに呼ぶ */
+      function ftShow() { document.documentElement.classList.add("ft-shown"); }
+      /* 保険。アプリが読み込みの完了を知らせてこなくても、いつまでも真っ白にはしない。
+         読み込みに失敗しているときは、本体は空なので、案内（.boot）はそのまま見える */
+      setTimeout(ftShow, 12000);
       window.__ftHideSplash = function () {
         var el = document.getElementById("splash");
         if (!el || el.dataset.going) return;
         el.dataset.going = "1";
         var wait = Math.max(0, FT_SPLASH_MS - (Date.now() - ftSplashFrom));
         setTimeout(function () {
+          ftShow();
           el.classList.add("gone");
           setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 600);
         }, wait);
