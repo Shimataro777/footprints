@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
-  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste, CalendarDays, Undo2, Redo2, ArrowUpDown
+  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste, CalendarDays, Image as ImageIcon, Undo2, Redo2, ArrowUpDown
 } from "lucide-react";
 
 /* ============================================================
@@ -462,10 +462,17 @@ async function persistArtworks(list) {
 }
 
 /* ヘッダの背景に敷く絵。
-   イラスト（最大5枚）とは別枠にする。役目が違ううえ、
-   横長で1枚だけなので、枚数の数え上げに混ぜると分かりにくい */
+   イラスト（最大5枚）とは別枠にする。役目が違ううえ、横長で1枚だけなので、枚数の数え上げに混ぜると分かりにくい。
+
+   **絵の中身（data URL）を、ここ（設定の置き場）に持たないこと。**
+   ふだんの置き場は端末の容量が小さく（5MBほど）、ヘッダーの絵だけで大半を使ってしまうため、
+   記録そのものが保存できなくなる。2.2.0 からは写真の置き場（IndexedDB）へ入れ、
+   ここには「photo:番号」だけを持つ（記録に付ける写真と同じ持ち方）。
+   ただし、置き場から消えても戻せるよう、絵の控えは DECO_PHOTO_KEY に写しておく（syncDecoPhotos）。
+   2.1.1 までに設定した絵（data URL がそのまま入っているもの）は、読み込んだときにそのまま使えるようにし、
+   選び直された時点で新しい持ち方に変わる */
 const HEADER_KEY = "bible-tracker-headerbg";
-const HEADER_LIMIT = 1_200_000; // 保存する文字数の上限（安全側）
+const HEADER_LIMIT = 1_200_000; // 古い持ち方のときの上限（安全側）
 async function loadHeaderBg() {
   try {
     const raw = await storageGet(HEADER_KEY);
@@ -478,11 +485,202 @@ async function loadHeaderBg() {
   } catch (e) { return null; }
 }
 async function persistHeaderBg(src) {
-  const payload = JSON.stringify(src ? { src } : null);
-  if (payload.length > HEADER_LIMIT) {
+  /* 絵そのものを渡されたときは、先に写真の置き場へ入れて「photo:番号」に変える。
+     置き場が使えない端末では、これまでどおり中身を持つ（そのときだけ大きさの上限を見る） */
+  let ref = src || null;
+  if (src && !isPhotoRef(src)) {
+    const id = "ph_" + uid();
+    const res = await photoPut(id, src);
+    if (res !== null) ref = "photo:" + id;
+  }
+  const payload = JSON.stringify(ref ? { src: ref } : null);
+  if (!isPhotoRef(ref) && payload.length > HEADER_LIMIT) {
     return { ok: false, message: "画像が大きすぎます。もう少し小さいものをお選びください。" };
   }
-  return await storageSet(HEADER_KEY, payload);
+  const res = await storageSet(HEADER_KEY, payload);
+  if (res && res.ok === false) return res;
+  /* 置き場から消えても戻せるように、絵の控えを作り直す */
+  await syncDecoPhotos(ref);
+  return { ...(res || { ok: true }), src: ref };
+}
+
+/* ============================================================
+   写真の置き場（IndexedDB）　※姉妹アプリ My手帳 から移植
+   **写真を記録の中に文字（data URL）のまま持たないこと。**
+   端末がふつうに置ける量（5MBほど）をすぐ超えて、記録そのものが保存できなくなる。
+   記録には「photo:番号」だけを持たせ、絵の中身はここに置く
+   ============================================================ */
+const PHOTO_DB = "bible-tracker-photos";
+const PHOTO_STORE = "photos";
+/* 置き場を開くのを待つ上限。これを過ぎたら「開けなかった」とみなす */
+const PHOTO_DB_WAIT_MS = 4000;
+/* 置き場が開けた・控えから絵を戻せたことを、絵を出している部品へ知らせる。
+   **一度読めなかった部品を、そのままあきらめさせないこと。** */
+const photoListeners = new Set();
+function notifyPhotoStore() {
+  photoListeners.forEach((fn) => { try { fn(); } catch (e) { /* noop */ } });
+}
+const photoCache = new Map(); // 一度読んだ絵は覚えておく
+let photoDbPromise = null;
+function photoDB() {
+  if (photoDbPromise) return photoDbPromise;
+  /* **「開けなかった」を覚えこまないこと。** 起ち上がりの一瞬など、たまたま一度開けなかっただけで
+     覚えてしまうと、そのあいだずっと「置き場が無い」ことになり、ヘッダーの絵が白いまま戻らない。
+     **返事を待ち続けないこと。** iPhone では、入れ直した直後や更新の直後に indexedDB.open が
+     成功も失敗も返さないまま止まることがある。決まった時間で見切り、あとから開けたらそれを使う */
+  let failed = false;
+  let settled = false;
+  const pr = new Promise((resolve) => {
+    const finish = (db) => {
+      if (settled) { if (db && !photoDbPromise) photoDbPromise = Promise.resolve(db); return; }
+      settled = true;
+      if (!db) { failed = true; if (photoDbPromise === pr) photoDbPromise = null; }
+      resolve(db);
+      if (db) notifyPhotoStore();
+    };
+    const fail = () => finish(null);
+    try {
+      if (typeof indexedDB === "undefined") { resolve(null); return; }
+      const req = indexedDB.open(PHOTO_DB, 1);
+      setTimeout(() => { if (!settled) fail(); }, PHOTO_DB_WAIT_MS);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(PHOTO_STORE)) db.createObjectStore(PHOTO_STORE);
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        try {
+          db.onversionchange = () => { try { db.close(); } catch (e2) { /* noop */ } photoDbPromise = null; };
+          db.onclose = () => { photoDbPromise = null; };
+        } catch (e2) { /* 使えなくても構わない */ }
+        finish(db);
+      };
+      req.onerror = fail;
+      req.onblocked = fail;
+    } catch (e) { fail(); }
+  });
+  photoDbPromise = failed ? null : pr;
+  return pr;
+}
+function photoTx(mode, fn) {
+  return photoDB().then((db) => {
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(PHOTO_STORE, mode);
+        const req = fn(tx.objectStore(PHOTO_STORE));
+        tx.oncomplete = () => resolve(req && "result" in req ? req.result : true);
+        tx.onerror = () => resolve(null);
+        tx.onabort = () => resolve(null);
+      } catch (e) { resolve(null); }
+    });
+  });
+}
+const isPhotoRef = (v) => typeof v === "string" && v.slice(0, 6) === "photo:";
+async function photoPut(id, dataUrl) {
+  photoCache.set(id, dataUrl);
+  return photoTx("readwrite", (st) => st.put(dataUrl, id));
+}
+async function photoGet(id) {
+  if (photoCache.has(id)) return photoCache.get(id);
+  const v = await photoTx("readonly", (st) => st.get(id));
+  if (typeof v === "string") { photoCache.set(id, v); return v; }
+  /* 置き場に無い（消された・開けなかった）ときは、ヘッダーの控えを見る。
+     見つかったら置き場へ戻しておく */
+  const m = await loadDecoPhotos();
+  const d = m && m[id];
+  if (typeof d === "string" && d) {
+    photoCache.set(id, d);
+    photoTx("readwrite", (st) => st.put(d, id));
+    return d;
+  }
+  return null;
+}
+async function photoDel(id) {
+  photoCache.delete(id);
+  return photoTx("readwrite", (st) => st.delete(id));
+}
+/* 記録の中の写真を、置き場へ移す。**保存の前に必ず通すこと**（通さないと data URL のまま記録に残る） */
+async function stashPhotos(rec) {
+  const imgs = rec && rec.images;
+  if (!Array.isArray(imgs) || !imgs.length) return rec;
+  const out = [];
+  for (const src of imgs) {
+    if (isPhotoRef(src)) { out.push(src); continue; }
+    const id = "ph_" + uid();
+    const res = await photoPut(id, src);
+    /* 置き場が使えない端末では、これまでどおり記録の中に持つ */
+    out.push(res === null ? src : "photo:" + id);
+  }
+  return { ...rec, images: out };
+}
+/* 中身をすみずみまで見て「photo:番号」を拾い集める。
+   **記録の images だけを見にいかないこと。** ヘッダーに敷いた絵も同じ置き場にある。
+   数えそこねると「もう使われていない絵」と見なされ、片づけで消える */
+function collectPhotoRefs(value, out, depth) {
+  const set = out || new Set();
+  const d = depth || 0;
+  if (d > 8 || value === null || value === undefined) return set;
+  if (typeof value === "string") { if (isPhotoRef(value)) set.add(value.slice(6)); return set; }
+  if (Array.isArray(value)) { for (const v of value) collectPhotoRefs(v, set, d + 1); return set; }
+  if (typeof value === "object") {
+    for (const k in value) if (Object.prototype.hasOwnProperty.call(value, k)) collectPhotoRefs(value[k], set, d + 1);
+  }
+  return set;
+}
+/* 使われなくなった写真を片づける。
+   **記録の配列だけを渡さないこと。** 渡されなかったぶんは、まるごと消える。
+   まとめ（{ records, headerBg, ... }）を必ず渡すこと。形になっていないときは、安全側に倒して何もしない */
+async function sweepPhotos(all) {
+  if (!all || typeof all !== "object" || Array.isArray(all) || !("records" in all)) {
+    console.warn("sweepPhotos: まとめが渡されていないので、片づけを見送りました");
+    return;
+  }
+  const used = collectPhotoRefs(all);
+  /* **ヘッダーの控えにある絵は、ここでは消さないこと。** 控えはヘッダーを保存したときに作り直すので、
+     使われなくなったものはそちらで外れ、次の片づけで消える。
+     ここで消すと、ほかのタブや古い版が持っていた古い一覧で数えたとき、ヘッダーの絵だけが置き場から消える */
+  const deco = await loadDecoPhotos();
+  const keys = await photoTx("readonly", (st) => st.getAllKeys());
+  if (!Array.isArray(keys)) return;
+  for (const k of keys) if (!used.has(k) && !(deco && Object.prototype.hasOwnProperty.call(deco, k))) await photoDel(k);
+}
+
+/* ヘッダーの絵の控え。
+   **ヘッダーの絵を置き場ひとつにだけ預けないこと。**
+   記録の写真は、保存のたびに記録といっしょに「使用中」と数えられ、記録の一覧もしょっちゅう書き直されるので、
+   どこかで取りこぼしても自然に戻る。ヘッダーは
+   ・絵は選んだ時点で置き場へ、参照（photo:番号）は保存した時点で設定へ、と別々のときに別々の場所へ書く
+   ・設定はめったに書き直されない
+   ので、一度欠けると戻る道がない。そこで、ふだんの置き場（storageSet）にも絵を写しておき、
+   置き場に無いときはここから読んで戻す（My手帳 が実際に「ヘッダーだけ絵が消える」不具合を踏んだ） */
+const DECO_PHOTO_KEY = "bible-tracker-decophotos";
+let decoPhotos = null;
+let decoLoading = null;
+function loadDecoPhotos() {
+  if (decoPhotos) return Promise.resolve(decoPhotos);
+  if (decoLoading) return decoLoading;
+  decoLoading = storageGet(DECO_PHOTO_KEY).then((raw) => {
+    try { const d = raw ? JSON.parse(raw) : null; decoPhotos = (d && typeof d === "object" && !Array.isArray(d)) ? d : {}; }
+    catch (e) { decoPhotos = {}; }
+    decoLoading = null;
+    if (Object.keys(decoPhotos).length) notifyPhotoStore();
+    return decoPhotos;
+  });
+  return decoLoading;
+}
+/* いま使っているヘッダーの絵だけを控えに残す（使わなくなったものは落とす）。
+   **手元に無い絵があっても止めないこと。** 止めると、あとから選んだ絵の控えも作られない */
+async function syncDecoPhotos(headerRef) {
+  const map = {};
+  if (isPhotoRef(headerRef)) {
+    const id = headerRef.slice(6);
+    const src = photoCache.get(id) || await photoTx("readonly", (st) => st.get(id))
+      || ((await loadDecoPhotos()) || {})[id];
+    if (typeof src === "string" && src) map[id] = src;
+  }
+  decoPhotos = map;
+  await storageSet(DECO_PHOTO_KEY, JSON.stringify(map));
 }
 
 /* ============================================================
@@ -711,6 +909,39 @@ async function persistCaptions(map) {
 
 /* 端末の容量を圧迫しないよう、しっかり縮めてから保存する。
    線画などの透過を活かしたいので、軽ければPNG、重ければWebP→JPEGの順に切り替える */
+/* 記録に付ける写真の縮小。
+   **イラスト用の shrinkImage（長辺220px）を使い回さないこと。** 写真が粗くなって見るに堪えない。
+   長辺900px・WebP 0.72（使えない端末は JPEG 0.78）で、1枚およそ130KBに収める。
+   置き場は IndexedDB なので、この大きさでも記録の保存を圧迫しない */
+function shrinkPhoto(file, maxSide = 900) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("画像を読み込めませんでした"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("画像を解析できませんでした"));
+      img.onload = () => {
+        try {
+          const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          /* 透過のある絵を敷いたとき、黒くならないように下地を白で塗っておく */
+          ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          const webp = canvas.toDataURL("image/webp", 0.72);
+          if (webp.startsWith("data:image/webp")) return resolve(webp);
+          resolve(canvas.toDataURL("image/jpeg", 0.78));
+        } catch (e) { reject(new Error("画像を変換できませんでした")); }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function shrinkImage(file, maxSide = 220) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -770,6 +1001,10 @@ const canonicalBook = (name) => (name && BOOK_RENAME[name]) || name;
 
 function migrateRecord(r) {
   if (!r || typeof r !== "object") return null;
+  /* 写真（2.2.0 から）。古い記録には無いので、空の並びにしておく。
+     中身がおかしいもの（配列でない・文字でない）は落とす */
+  if (!Array.isArray(r.images)) r = { ...r, images: [] };
+  else if (r.images.some((x) => typeof x !== "string")) r = { ...r, images: r.images.filter((x) => typeof x === "string") };
   if (r.book && BOOK_RENAME[r.book]) r = { ...r, book: BOOK_RENAME[r.book] };
   if (["reading", "message", "memo"].includes(r.type) && !r.questionItems) {
     const items = [];
@@ -1260,7 +1495,7 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* アプリの版数。**index.html の window.__FT_VERSION が本物。**
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
-const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.1.1";
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.2.0";
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
@@ -2151,6 +2386,73 @@ function RecognizedRefs({ text, inline }) {
   return inline ? <>{chips}</> : <div className="flex flex-wrap gap-1.5 mt-2">{chips}</div>;
 }
 
+/* 記録に付ける写真。**タグのすぐ上、記録のいちばん下に置くこと**（姉妹アプリ My手帳 と同じ）。
+   書くことが主で、写真はおまけなので、上のほうに置くと本文までが遠くなる。
+   ・1枚も無いときは、枠線だけの1つのボタン（**高くしすぎないこと。** 写真が主役の記録ばかりではない）
+   ・1枚以上あるときは、並べたうえで「写真を追加（あと○枚）」
+   ・✕は TapOnceButton で受ける（値が変わるだけのボタン）。白いふちを付けて、白い写真の上でも見えるようにする */
+/* 記録1件に付けられる写真の枚数。**増やすときは、札の見本の出し方も見直すこと**
+   （札では4枚まで並べ、それを超えたぶんは「＋○」と数で出している） */
+const MAX_IMAGES = 4;
+function ImagesField({ images, onChange, onError }) {
+  const fileRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const list = images || [];
+  const rest = Math.max(0, MAX_IMAGES - list.length);
+  const pick = async (files) => {
+    if (!files || !files.length) return;
+    /* **入らなかったぶんを黙って捨てないこと。** なぜ入らなかったのかが分からない */
+    if (files.length > rest && onError) onError(`写真は ${MAX_IMAGES} 枚までです`);
+    setBusy(true);
+    try {
+      const out = [];
+      for (const f of Array.from(files).slice(0, rest)) {
+        try { out.push(await shrinkPhoto(f)); }
+        catch (e) { onError && onError("読み込めない画像がありました"); }
+      }
+      if (out.length) onChange([...list, ...out].slice(0, MAX_IMAGES));
+    } finally { setBusy(false); }
+  };
+  const open = () => { if (fileRef.current) fileRef.current.click(); };
+  return (
+    <div>
+      <input ref={fileRef} type="file" accept="image/*" multiple
+        style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+        /* **files を配列に写してから value を空にすること。** value を空にした時点で
+           e.target.files も空になるので、先に写さないと1枚も受け取れない。
+           value を空にするのは、同じ写真をもう一度選んだときにも onChange が起きるようにするため */
+        onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ""; pick(fs); }} />
+      {list.length === 0 ? (
+        <button type="button" onClick={open} disabled={busy}
+          className="w-full min-h-[96px] rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 flex flex-col items-center justify-center gap-1.5 text-neutral-400 ft-tap ft-tap-card">
+          {busy ? <Spinner size={20} /> : <ImageIcon size={24} />}
+          <span className="text-[13.5px] font-bold">{busy ? "読み込み中" : "写真を選ぶ"}</span>
+        </button>
+      ) : (
+        <>
+          <div className={"grid gap-2 mb-2 " + (list.length === 1 ? "grid-cols-1" : "grid-cols-2")}>
+            {list.map((src, i) => (
+              <div key={i} className="relative rounded-2xl overflow-hidden border border-neutral-200 bg-neutral-100"
+                style={{ aspectRatio: list.length === 1 ? "4 / 3" : "1 / 1" }}>
+                <Photo src={src} className="block w-full h-full" style={{ objectFit: "cover" }} />
+                <TapOnceButton onTap={() => onChange(list.filter((_, k) => k !== i))} aria-label="この写真を外す"
+                  className="absolute top-1.5 right-1.5 z-10 w-9 h-9 rounded-full bg-black/55 text-white border-2 border-white/90 flex items-center justify-center ft-tap ft-tap-icon">
+                  <X size={17} strokeWidth={2.5} />
+                </TapOnceButton>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={open} disabled={busy || rest === 0}
+            className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px]"}>
+            {busy ? <Spinner size={15} /> : <Plus size={15} />}
+            {rest === 0 ? `写真は ${MAX_IMAGES} 枚まで` : `写真を追加（あと${rest}枚）`}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* 「聖書箇所を挿入」つきの入力欄。
    **入力欄と挿入ボタンを、ひとつの枠にまとめること。** 枠の下に別のリンクとして置いていたときは、
    ボタンがどの欄に入るのか分かりにくかった。いまは、入力欄の下に薄い帯を敷き、左端に挿入ボタン、
@@ -2386,6 +2688,42 @@ function OverlayScreen({ from = "right", closing, children, zIndex = 50 }) {
       <div className={"absolute inset-0 " + (closing ? outCls : inCls)}>{children}</div>
     </div>
   );
+}
+
+/* 「photo:番号」を、実際に出せる絵（data URL）に直す。
+   **一度読めなかっただけで、あきらめないこと。** 開いた直後は置き場（IndexedDB）がまだ開き終わっておらず、
+   ここで空にすると、ヘッダーや写真だけが白いまま残る。
+   **1秒足らずであきらめないこと。** 更新の直後は、置き場が開くまでに数秒かかることがある */
+function usePhotoSrc(src) {
+  const [url, setUrl] = useState(() => (isPhotoRef(src) ? (photoCache.get(src.slice(6)) || "") : src || ""));
+  useEffect(() => {
+    let alive = true;
+    if (!isPhotoRef(src)) { setUrl(src || ""); return undefined; }
+    const cached = photoCache.get(src.slice(6));
+    if (cached) { setUrl(cached); return undefined; }
+    let timer = null;
+    let got = false;
+    const WAITS = [300, 600, 1200, 2400, 4800];
+    const tryGet = (i) => {
+      photoGet(src.slice(6)).then((v) => {
+        if (!alive || got) return;
+        if (v) { got = true; setUrl(v); return; }
+        if (i < WAITS.length) { timer = setTimeout(() => tryGet(i + 1), WAITS[i]); return; }
+        setUrl("");
+      });
+    };
+    const onStore = () => { if (alive && !got) tryGet(WAITS.length); };
+    photoListeners.add(onStore);
+    tryGet(0);
+    return () => { alive = false; photoListeners.delete(onStore); if (timer) clearTimeout(timer); };
+  }, [src]);
+  return url;
+}
+/* 写真1枚。**<img src> に photo:番号 をそのまま渡さないこと**（出ない）。かならずこれを通す */
+function Photo({ src, className, style, alt = "" }) {
+  const url = usePhotoSrc(src);
+  if (!url) return <span className={"block bg-neutral-100 " + (className || "")} style={style} aria-hidden="true" />;
+  return <img src={url} alt={alt} draggable={false} className={className} style={style} />;
 }
 
 /* 読み込み中の目印。少し時間がかかる処理で使う */
@@ -3504,7 +3842,8 @@ function TypeBadge({ type }) { const N = useTypeName(); return <span className={
    決まった一覧を持たず、これまでに使った言葉を集めて候補にするので、
    新しいタグが増えても探す側の作りを直す必要はない */
 function emptyRecord(type) {
-  const base = { id: uid(), type, createdAt: new Date().toISOString(), tags: [] };
+  /* images ＝ 記録に付けた写真（「photo:番号」の並び）。**どの種類にも持たせること** */
+  const base = { id: uid(), type, createdAt: new Date().toISOString(), tags: [], images: [] };
   if (type === "reading") return { ...base, date: todayStr(), book: "", chapters: [], passageText: "", notes: "" };
   if (type === "message") return { ...base, date: todayStr(), theme: "", passageText: "", mainVerseText: "", notes: "" };
   if (type === "memorization") return { ...base, date: todayStr(), text: "", note: "", monthYear: null, monthMonth: null, themeYear: null };
@@ -3584,6 +3923,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
   const [type, setType] = useState(initial?.type || draft?.type || "reading");
   const [record, setRecord] = useState(startRecord);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [imgMsg, setImgMsg] = useState("");
   /* 今月・今年の聖句を、ほかの記録から付け替えるとき。
      ここでは記録を書き換えず、どれから外すかだけ覚えておき、
      保存が押されたときに実際の付け替えを行う。
@@ -3907,6 +4247,11 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
           </>
         )}
 
+        {/* 写真 → タグ の順。**記録の種類にかかわらず、ここに置くこと**（どの種類でも同じ場所にある） */}
+        <Field>
+          <ImagesField images={record.images} onChange={(v) => set({ images: v })} onError={(m) => setImgMsg(m)} />
+          {imgMsg && <p className="text-[12.5px] text-red-700 mt-1.5">{imgMsg}</p>}
+        </Field>
         <Field>
           <TagField value={record.tags} onChange={(v) => set({ tags: v })} knownTags={knownTags} onCreateTag={onCreateTag} />
         </Field>
@@ -4099,6 +4444,20 @@ function RecordCard({ r, onClick, hit, selectMode, selected, onLongPress }) {
       </div>
       <div className="text-[15.5px] text-neutral-900 font-bold"><HitText text={title} word={hit} /></div>
       {snippet && <div className="text-[13.5px] text-neutral-600 whitespace-pre-line"><HitText text={snippet} word={hit} /></div>}
+      {/* 写真の小さな見本。**札の中では押せるようにしないこと。**
+          札そのものを押して開くのが先で、中に別の押し所があると、どちらが効くのか分からなくなる */}
+      {(r.images || []).length > 0 && (
+        <div className="flex gap-1.5 mt-0.5">
+          {(r.images || []).slice(0, 4).map((src, i) => (
+            <span key={i} className="block w-12 h-12 rounded-lg overflow-hidden border border-neutral-200 bg-neutral-100 shrink-0">
+              <Photo src={src} className="block w-full h-full" style={{ objectFit: "cover" }} />
+            </span>
+          ))}
+          {(r.images || []).length > 4 && (
+            <span className="self-center text-[11.5px] font-bold text-neutral-500">＋{(r.images || []).length - 4}</span>
+          )}
+        </div>
+      )}
       {chips.length > 0 && <div className="flex flex-wrap gap-1.5 mt-0.5">{chips.map((c, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">{c.book}{c.chapter ? ` ${c.chapter}` : ""}</span>)}</div>}
       {extra.length > 0 && (
         <div className="mt-0.5 rounded-lg bg-th-50/60 border border-th-100 px-2.5 py-1.5 space-y-0.5">
@@ -4751,7 +5110,7 @@ function FilterPill({ on, onClick, children }) {
   );
 }
 
-function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSort, resetSig = 0 }) {
+function SearchScreen({ records, setRecords, onDeleteMany, openDetail, allKnownTags, defaultSort, resetSig = 0 }) {
   const typeNames = useTypeName();
   const [keyword, setKeyword] = useState("");
   const [filterBook, setFilterBook] = useState("");
@@ -5011,7 +5370,9 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
             <p className="text-[13.5px] text-neutral-600 mb-5">記録そのものが消えます。この操作は取り消せません。</p>
             <div className="flex gap-2.5">
               <button onClick={() => setConfirmMany(false)} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
-              <button onClick={() => { const ids = selIds; setRecords((prev) => prev.filter((r) => !ids.includes(r.id))); stopSelect(); }}
+              <button
+                /* **ここで setRecords を直に呼ばないこと。** 消した記録に付いていた写真が置き場に残る */
+                onClick={() => { onDeleteMany(selIds); stopSelect(); }}
                 className={BTN_DANGER + " flex-1 " + BTN_H + " text-[14.5px]"}>削除する</button>
             </div>
           </div>
@@ -5299,6 +5660,93 @@ function relatedRecords(records, target) {
 /* zIndex は既定（50）より大きくすること。
    ブックマークやタグの整理など、ほかの重なる画面から開くことがあり、
    同じ高さだと、あとに書かれた画面の下に隠れてしまう（実際そうなっていた） */
+/* 写真を大きく見る画面。
+   **地は黒く、上下の余白まで覆うこと。** 写真の色に引きずられないようにする。
+   横に払って次の写真へ、下に払うと閉じる（払った量だけ地がうすくなる）。
+   拡大（つまむ）は入れていない。入れるなら、横に払う動きと取り合いにならないよう気をつけること */
+function PhotoViewer({ images, index, onClose }) {
+  const list = images || [];
+  const last = Math.max(0, list.length - 1);
+  const [i, setI] = useState(Math.min(Math.max(0, index || 0), last));
+  const [closing, close] = useClosing(onClose);
+  const wrapRef = useRef(null);
+  const trackRef = useRef(null);
+  const backRef = useRef(null);
+  const st = useRef({ x: 0, y: 0, dx: 0, dy: 0, mode: null, on: false });
+
+  const width = () => (wrapRef.current ? wrapRef.current.clientWidth : 1);
+  const apply = (anim, at) => {
+    const s2 = st.current;
+    const w = width();
+    const ease = "cubic-bezier(0.22,1,0.36,1)";
+    if (trackRef.current) {
+      trackRef.current.style.transition = anim ? `transform .26s ${ease}` : "none";
+      trackRef.current.style.transform = `translate3d(${-(at === undefined ? i : at) * w + s2.dx}px, ${s2.dy}px, 0)`;
+    }
+    if (backRef.current) {
+      const k = Math.max(0, 1 - Math.abs(s2.dy) / 420);
+      backRef.current.style.transition = anim ? "opacity .26s ease" : "none";
+      backRef.current.style.opacity = String(0.35 + 0.65 * k);
+    }
+  };
+  useEffect(() => { apply(false); }, [i]); // eslint-disable-line
+
+  const onDown = (e) => {
+    const s2 = st.current;
+    s2.on = true; s2.mode = null; s2.x = e.clientX; s2.y = e.clientY; s2.dx = 0; s2.dy = 0;
+  };
+  const onMove = (e) => {
+    const s2 = st.current;
+    if (!s2.on) return;
+    const dx = e.clientX - s2.x, dy = e.clientY - s2.y;
+    if (!s2.mode) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      s2.mode = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    }
+    if (s2.mode === "x") { s2.dx = dx; s2.dy = 0; } else { s2.dy = Math.max(0, dy); s2.dx = 0; }
+    apply(false);
+  };
+  const onUp = () => {
+    const s2 = st.current;
+    if (!s2.on) return;
+    s2.on = false;
+    const w = width();
+    if (s2.mode === "y" && s2.dy > 110) { close(); return; }
+    let next = i;
+    if (s2.mode === "x" && Math.abs(s2.dx) > w * 0.22) next = Math.min(last, Math.max(0, i - Math.sign(s2.dx)));
+    s2.dx = 0; s2.dy = 0;
+    apply(true, next);
+    if (next !== i) setI(next);
+  };
+
+  return (
+    <div data-ft-overlay="" className={"fixed inset-0 " + (closing ? "anim-fade-out" : "anim-fade")} style={{ zIndex: 2147483200 }}>
+      <BackgroundLock />
+      <div ref={backRef} className="absolute inset-0 bg-black" />
+      <div ref={wrapRef} className="absolute inset-0 overflow-hidden"
+        style={{ touchAction: "none" }}
+        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+        <div ref={trackRef} className="absolute inset-0 flex" style={{ willChange: "transform" }}>
+          {list.map((src, k) => (
+            <div key={k} className="shrink-0 w-full h-full flex items-center justify-center px-2">
+              <Photo src={src} className="max-w-full max-h-full" style={{ objectFit: "contain" }} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <button type="button" onClick={close} aria-label="閉じる"
+        className="absolute right-3 w-11 h-11 rounded-full bg-black/45 text-white flex items-center justify-center ft-tap ft-tap-icon"
+        style={{ top: "calc(env(safe-area-inset-top) + 10px)" }}><X size={24} /></button>
+      {list.length > 1 && (
+        /* **指を通すこと（pointer-events-none）。** 左右いっぱいに広げた帯なので、
+           そのままだと右上の「閉じる」の上に重なり、押せなくなる */
+        <span className="absolute left-0 right-0 text-center text-[13.5px] font-bold text-white/90 pointer-events-none"
+          style={{ top: "calc(env(safe-area-inset-top) + 20px)" }}>{i + 1} / {list.length}</span>
+      )}
+    </div>
+  );
+}
+
 function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail, onToggleMark, from = "right" }) {
   /* 関連する記録を押したときも、右から新しい画面が来るように見せる */
   const [swapping, setSwapping] = useState(false);
@@ -5366,6 +5814,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
   const chips = chipRefs(recordRefs(record));
   const related = useMemo(() => relatedRecords(allRecords || [], record), [allRecords, record]);
   const [closing, close] = useClosing(onClose);
+  const [viewer, setViewer] = useState(null); // 大きく見ている写真の番号
   const { stripRef, screenRef } = useEdgeSwipeBack(close);
 
   return (
@@ -5382,6 +5831,8 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
           **本文の下に置かないこと。** 押すボタンは画面の上にあるので、
           下に出しても目に入らず、押せたのか分からない（実際そうなっていた）。
           画面の下から浮かせて、確かに見えるようにする */}
+      {viewer !== null && <PhotoViewer images={record.images} index={viewer} onClose={() => setViewer(null)} />}
+
       {shareMsg && (
         /* **画面の中ほどに出すこと。**
            下のほうに置くと、長い記録では画面の外に回って見えないことがある。
@@ -5438,6 +5889,19 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
             </div>
           ))}
         </div>
+
+        {/* 写真。**本文のあと、タグや箇所より前に置くこと**（入力画面と同じ並び） */}
+        {(record.images || []).length > 0 && (
+          <div className={"mt-5 grid gap-2 " + ((record.images || []).length === 1 ? "grid-cols-1" : "grid-cols-2")}>
+            {(record.images || []).map((src, i) => (
+              <button key={i} type="button" onClick={() => setViewer(i)} aria-label={`写真 ${i + 1} を大きく見る`}
+                className="relative rounded-2xl overflow-hidden border border-neutral-200 bg-neutral-100 ft-tap ft-tap-card"
+                style={{ aspectRatio: (record.images || []).length === 1 ? "4 / 3" : "1 / 1" }}>
+                <Photo src={src} className="block w-full h-full" style={{ objectFit: "cover" }} />
+              </button>
+            ))}
+          </div>
+        )}
 
         {chips.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-5 pt-4 border-t border-neutral-200">
@@ -5678,7 +6142,8 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     if (!f) return;
     setBusy(true);
     try {
-      const src = await shrinkImage(f, 720);
+      /* **イラスト用の shrinkImage を使わないこと。** 横に広げて敷くので、粗さが目立つ */
+      const src = await shrinkPhoto(f, 1000);
       setHdrDraft(src);
       setMsg({ kind: "warn", text: "ヘッダーの背景を選びました。下の「保存」を押すと反映されます。" });
     } catch (err) {
@@ -5740,7 +6205,8 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
             <div className="relative h-20 rounded-xl overflow-hidden border border-neutral-200 bg-neutral-100 flex items-center justify-center mb-2.5">
               {hdrDraft ? (
                 <>
-                  <img src={hdrDraft} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                  {/* **<img src> に photo:番号 をそのまま渡さないこと**（出ない）。Photo を通す */}
+                  <Photo src={hdrDraft} className="absolute inset-0 w-full h-full" style={{ objectFit: "cover" }} />
                   <span className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))" }} />
                   <span className="relative font-display text-[20px] text-white tracking-wide"
                     style={{ textShadow: "0 1px 3px rgba(0,0,0,.45)" }}>ホーム</span>
@@ -6398,8 +6864,29 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
 function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, onClose, onRestore, onBackedUp, onImportOne }) {
   const [closing, close] = useClosing(onClose);
   const readableText = useMemo(() => buildBackupText(records), [records]);
+  /* 写真の中身は置き場（IndexedDB）にあり、記録には「photo:番号」しか入っていない。
+     **書き出すときは、絵の中身も一緒に入れること。** 入れないと、機種を変えたときに写真だけが失われる。
+     読み出しは非同期なので、ここで集めて photos に持っておく（集め終わるまでは写真ぬきの内容になる） */
+  const [photos, setPhotos] = useState(null);
+  const photoIds = useMemo(() => Array.from(collectPhotoRefs({ records, headerBg })), [records, headerBg]);
+  useEffect(() => {
+    let alive = true;
+    if (!photoIds.length) { setPhotos({}); return undefined; }
+    setPhotos(null);
+    (async () => {
+      const map = {};
+      for (const id of photoIds) {
+        const v = await photoGet(id);
+        if (!alive) return;
+        if (typeof v === "string" && v) map[id] = v;
+      }
+      if (alive) setPhotos(map);
+    })();
+    return () => { alive = false; };
+  }, [photoIds]);
+  const photosReady = photos !== null;
   const jsonText = useMemo(() => JSON.stringify({
-    app: "bible-tracker", version: 6, exportedAt: new Date().toISOString(),
+    app: "bible-tracker", version: 7, exportedAt: new Date().toISOString(),
     records, artworks: artworks || [], garden: garden || DEFAULT_GARDEN,
     /* タグの一覧も一緒に書き出す。これが無いと、機種を変えたときに
        まだ使っていないタグが消え、また作り直すことになる */
@@ -6415,7 +6902,9 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
     /* ヘッダの背景も一緒に書き出す（version 6 から）。
        新しく設定を増やしたら、ここにも足すこと。足し忘れると機種変更で消える */
     headerBg: headerBg || undefined,
-  }, null, 2), [records, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg]);
+    /* 記録に付けた写真と、ヘッダーの絵の中身（version 7 から）。{ 番号: 絵 } の形 */
+    photos: photos && Object.keys(photos).length ? photos : undefined,
+  }, null, 2), [records, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, photos]);
   const [previewMode, setPreviewMode] = useState("readable"); // readable | json
   const [previewOpen, setPreviewOpen] = useState(false);
   const [msg, setMsg] = useState(null); // {kind:'ok'|'warn'|'err', text}
@@ -6557,6 +7046,15 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
           if (Array.isArray(data.artworks)) arts = data.artworks;
           if (data.garden && typeof data.garden === "object") gard = data.garden;
           if (Array.isArray(data.tags)) tgs = data.tags;            // タグの一覧（version 4 から）
+          /* 写真の中身（version 7 から）。**記録を戻すより先に置き場へ入れること。**
+             あとから入れると、記録を描いたときに絵が見つからず、白いままになる */
+          if (data.photos && typeof data.photos === "object") {
+            for (const id in data.photos) {
+              if (!Object.prototype.hasOwnProperty.call(data.photos, id)) continue;
+              const src = data.photos[id];
+              if (typeof src === "string" && src) await photoPut(id, src);
+            }
+          }
           /* 画面の設定（version 5 から）。古いファイルには入っていないので、
              そのときは今の設定をそのまま残す */
           setting = {
@@ -6630,13 +7128,16 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
               {(artworks || []).length > 0 && (
                 <span className="text-[13.5px] font-bold text-neutral-500">＋ イラスト{artworks.length}枚</span>
               )}
-              <span className="text-[12.5px] text-neutral-500 ml-auto">約{sizeKb}KB</span>
+              {photoIds.length > 0 && (
+                <span className="text-[13.5px] font-bold text-neutral-500">＋ 写真{photoIds.length}枚</span>
+              )}
+              <span className="text-[12.5px] text-neutral-500 ml-auto">{photosReady ? `約${sizeKb}KB` : "写真を読み込み中"}</span>
             </div>
             {/* 何が入っているかを言葉でも書いておく。
                 「設定は戻るのか」が分からないままだと、機種変更のときに不安になる */}
             <div className="mt-2">
               <p className="text-[12.5px] text-neutral-500 leading-relaxed">
-                記録・イラスト・果樹・タグの一覧に加えて、テーマ色や文字の大きさ、
+                記録・イラスト・果樹・タグの一覧に加えて、記録に付けた写真、テーマ色や文字の大きさ、
                 ひとこと、ヘッダーの背景などの設定も一緒に保存されます。
                 ファイルは1つだけです。そのまま読める形で、復元にも使えます。
               </p>
@@ -6912,7 +7413,13 @@ function AppMain() {
     setMenuOpen(false);
   };
   const [artworks, setArtworks] = useState([]);
-  const [headerBg, setHeaderBg] = useState(null); // ヘッダの背景に敷く絵（1枚だけ）
+  const [headerBg, setHeaderBg] = useState(null); // ヘッダの背景に敷く絵（1枚だけ。「photo:番号」）
+  /* 片づけ（sweepPhotos）は、記録を消した流れの中から呼ぶ。そのときの headerBg を
+     描き直しの値から拾うと古いことがあるので、覚え（ref）から取る */
+  const headerBgRef = useRef(null);
+  headerBgRef.current = headerBg;
+  /* 実際に敷ける形（data URL）。置き場が開くまでは空なので、そのあいだは地の色のまま */
+  const headerBgUrl = usePhotoSrc(headerBg);
   const [tagMaster, setTagMaster] = useState([]);
   const [captions, setCaptions] = useState({ ...DEFAULT_CAPTIONS });
   const [prefs, setPrefs] = useState({ ...DEFAULT_PREFS });
@@ -6961,7 +7468,10 @@ function AppMain() {
 
   const saveHeaderBg = useCallback(async (src) => {
     const res = await persistHeaderBg(src || null);
-    if (!res || res.ok) setHeaderBg(src || null);
+    /* 画面には、置き場に入れたあとの姿（photo:番号）を持たせる。
+       **元の data URL を持ち続けないこと。** 持ち続けると、書き出しや片づけで「使用中」と数えられず、
+       いま出ている絵と置き場の中身が食い違う */
+    if (!res || res.ok) setHeaderBg((res && res.src !== undefined ? res.src : src) || null);
     return res;
   }, []);
 
@@ -7130,7 +7640,8 @@ function AppMain() {
         add.push(rec);
       });
       const added = add.length;
-      if (added) setRecords((prev) => [...add, ...prev]);
+      /* 取り込んだ記録の写真も、置き場へ移してから足す（書き出したファイルには絵が中身のまま入っている） */
+      if (added) Promise.all(add.map(stashPhotos)).then((list) => setRecords((prev) => [...list, ...prev]));
       /* 受け取った記録に付いていたタグも、選べるように控えておく */
       incoming.forEach((raw) => normalizeTags(raw.tags).forEach((t) => addTagToMaster(t)));
       tellImport(added > 0
@@ -7160,8 +7671,14 @@ function AppMain() {
   /* 書ごとの記録一覧は閉じずに重ねる。戻ったとき、元の一覧に戻れるようにするため */
   const openDetailFromBook = (r) => openDetail(r);
 
+  /* **記録を残す道は、かならずここを通すこと。**
+     写真は先に置き場（IndexedDB）へ移し、記録には「photo:番号」だけを残す（stashPhotos）。
+     通さずに setRecords すると、絵の中身が記録に入ったまま保存され、容量を使い切って記録ごと保存できなくなる */
   const commitSaveOrAdd = (rec) => {
-    setRecords((prev) => { const exists = prev.some((p) => p.id === rec.id); return exists ? prev.map((p) => (p.id === rec.id ? rec : p)) : [...prev, rec]; });
+    stashPhotos(rec).then((stashed) => {
+      setRecords((prev) => { const exists = prev.some((p) => p.id === stashed.id); return exists ? prev.map((p) => (p.id === stashed.id ? stashed : p)) : [...prev, stashed]; });
+      setViewing((prev) => (prev && prev.id === stashed.id ? stashed : prev));
+    });
   };
 
 
@@ -7204,8 +7721,24 @@ function AppMain() {
     commitSaveOrAdd(rec); closeForm();
     setViewing((prev) => (prev && prev.id === rec.id ? rec : prev));
   };
+  /* まとめて削除（探す画面の選ぶモード）。写真の片づけもここを通す */
+  const handleDeleteMany = (ids) => {
+    const gone = new Set(ids);
+    setRecords((prev) => {
+      const next = prev.filter((p) => !gone.has(p.id));
+      sweepPhotos({ records: next, headerBg: headerBgRef.current });
+      return next;
+    });
+    setViewing((prev) => (prev && gone.has(prev.id) ? null : prev));
+  };
   const handleDelete = (id) => {
-    setRecords((prev) => prev.filter((p) => p.id !== id));
+    setRecords((prev) => {
+      const next = prev.filter((p) => p.id !== id);
+      /* 消した記録に付いていた写真を、置き場からも片づける。
+         **いま描かれている records を渡さないこと**（消す前の一覧なので、何も片づかない） */
+      sweepPhotos({ records: next, headerBg: headerBgRef.current });
+      return next;
+    });
     closeForm();
     setViewing((prev) => (prev && prev.id === id ? null : prev));
   };
@@ -7242,9 +7775,10 @@ function AppMain() {
         return next;
       });
     }
+    const stashed = await Promise.all(importedRecords.map(async (r) => (r && r.id ? await stashPhotos(migrateRecord(r)) : null)));
     setRecords((prev) => {
       const map = new Map(prev.map((r) => [r.id, r]));
-      importedRecords.forEach((r) => { const m = r && r.id ? migrateRecord(r) : null; if (m) map.set(r.id, m); });
+      stashed.forEach((m) => { if (m) map.set(m.id, m); });
       return Array.from(map.values());
     });
     if (Array.isArray(importedArtworks) && importedArtworks.length) {
@@ -7280,10 +7814,12 @@ function AppMain() {
     <MenuContext.Provider value={() => setMenuOpen(true)}>
     {/* ft-root ＝ 動きの効き先。「動きの演出」を切ると ft-still が付いて、すべて止まる */}
     <div className={"ft-shell ft-page font-sans text-neutral-900 ft-root "
-      + (headerBg ? "ft-hasbg " : "")
+      + (headerBgUrl ? "ft-hasbg " : "")
       + (prefs.motion === false ? "ft-still " : "")
       + ("ft-font-" + (prefs.fontSize || "s"))}
-      style={headerBg ? { "--ft-hdrbg": `url(${JSON.stringify(headerBg).slice(1, -1)})` } : undefined}>
+      /* **headerBg（photo:番号）をそのまま url() に入れないこと。** 絵は置き場にあるので出ない。
+         usePhotoSrc で中身に直してから敷く */
+      style={headerBgUrl ? { "--ft-hdrbg": `url(${JSON.stringify(headerBgUrl).slice(1, -1)})` } : undefined}>
       <style>{`
         /* **@import は、この塊のいちばん先頭に置くこと。**
            前に別の指定があると、ブラウザはこの行を読み飛ばし、
@@ -7741,7 +8277,7 @@ function AppMain() {
         <div key={tab} className="ft-tabswap">
         {tab === "home" && <HomeScreen records={records} prefs={prefs} onOpenBackup={() => setBackupOpen(true)} garden={garden} onStartCycle={() => setPickFruit(true)} onHarvest={harvestFruit} />}
         {tab === "record" && <RecordScreen records={records} onOpenDetail={openDetail} onStartReading={openNewReading} />}
-        {tab === "search" && <SearchScreen records={records} setRecords={setRecords} openDetail={openDetail} allKnownTags={knownTags} defaultSort={prefs.sortMode} resetSig={searchReset} />}
+        {tab === "search" && <SearchScreen records={records} setRecords={setRecords} onDeleteMany={handleDeleteMany} openDetail={openDetail} allKnownTags={knownTags} defaultSort={prefs.sortMode} resetSig={searchReset} />}
         {tab === "progress" && <ProgressScreen records={records} onOpenDetail={openDetail} onOpenBook={openBook} onOpenDay={setViewingDay} />}
         </div>
       </div>
