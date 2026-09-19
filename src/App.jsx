@@ -1495,7 +1495,7 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* アプリの版数。**index.html の window.__FT_VERSION が本物。**
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
-const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.2.2";
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.2.3";
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
@@ -2397,11 +2397,13 @@ function RecognizedRefs({ text, inline }) {
 
 /* 記録に付ける写真。**タグのすぐ上、記録のいちばん下に置くこと**（姉妹アプリ My手帳 と同じ）。
    書くことが主で、写真はおまけなので、上のほうに置くと本文までが遠くなる。
-   ・1枚も無いときは、枠線だけの1つのボタン（**高くしすぎないこと。** 写真が主役の記録ばかりではない）
-   ・1枚以上あるときは、並べたうえで「写真を追加（あと○枚）」
+   ・**0枚のときも、追加のボタン1本だけにすること**（点線の大きな箱にしない。写真が主役の記録ばかりではない）。
+     1枚以上あるときと同じボタン・同じ余白で、並べた写真の下に付く
+   ・**枚数にかかわらず、2列・正方形にすること。** 1枚めだけ大きくすると、2枚めを足した瞬間に
+     写真の大きさが変わり、✕の位置も動く（押した指の下に別の✕が来る原因にもなる）
+   ・上限に達したときの知らせは出さない。ボタンに「あと○枚」「写真は ○ 枚まで」と出ているため。
+     出すのは、読み込めない画像があったときだけ
    ・✕は TapOnceButton で受ける（値が変わるだけのボタン）。白いふちを付けて、白い写真の上でも見えるようにする */
-/* 記録1件に付けられる写真の枚数。**増やすときは、札の見本の出し方も見直すこと**
-   （札では4枚まで並べ、それを超えたぶんは「＋○」と数で出している） */
 const MAX_IMAGES = 4;
 function ImagesField({ images, onChange, onError }) {
   const fileRef = useRef(null);
@@ -2410,11 +2412,10 @@ function ImagesField({ images, onChange, onError }) {
   const rest = Math.max(0, MAX_IMAGES - list.length);
   const pick = async (files) => {
     if (!files || !files.length) return;
-    /* **入らなかったぶんを黙って捨てないこと。** なぜ入らなかったのかが分からない */
-    if (files.length > rest && onError) onError(`写真は ${MAX_IMAGES} 枚までです`);
     setBusy(true);
     try {
       const out = [];
+      /* 入りきらないぶんは、黙って捨てる（ボタンの「あと○枚」で分かるようにしてある） */
       for (const f of Array.from(files).slice(0, rest)) {
         try { out.push(await shrinkPhoto(f)); }
         catch (e) { onError && onError("読み込めない画像がありました"); }
@@ -2431,33 +2432,25 @@ function ImagesField({ images, onChange, onError }) {
            e.target.files も空になるので、先に写さないと1枚も受け取れない。
            value を空にするのは、同じ写真をもう一度選んだときにも onChange が起きるようにするため */
         onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ""; pick(fs); }} />
-      {list.length === 0 ? (
-        <button type="button" onClick={open} disabled={busy}
-          className="w-full min-h-[96px] rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 flex flex-col items-center justify-center gap-1.5 text-neutral-400 ft-tap ft-tap-card">
-          {busy ? <Spinner size={20} /> : <ImageIcon size={24} />}
-          <span className="text-[13.5px] font-bold">{busy ? "読み込み中" : "写真を選ぶ"}</span>
-        </button>
-      ) : (
-        <>
-          <div className={"grid gap-2 mb-2 " + (list.length === 1 ? "grid-cols-1" : "grid-cols-2")}>
-            {list.map((src, i) => (
-              <div key={i} className="relative rounded-2xl overflow-hidden border border-neutral-200 bg-neutral-100"
-                style={{ aspectRatio: list.length === 1 ? "4 / 3" : "1 / 1" }}>
-                <Photo src={src} className="block w-full h-full" style={{ objectFit: "cover" }} />
-                <TapOnceButton onTap={() => onChange(list.filter((_, k) => k !== i))} aria-label="この写真を外す"
-                  className="absolute top-1.5 right-1.5 z-10 w-9 h-9 rounded-full bg-black/55 text-white border-2 border-white/90 flex items-center justify-center ft-tap ft-tap-icon">
-                  <X size={17} strokeWidth={2.5} />
-                </TapOnceButton>
-              </div>
-            ))}
-          </div>
-          <button type="button" onClick={open} disabled={busy || rest === 0}
-            className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px]"}>
-            {busy ? <Spinner size={15} /> : <Plus size={15} />}
-            {rest === 0 ? `写真は ${MAX_IMAGES} 枚まで` : `写真を追加（あと${rest}枚）`}
-          </button>
-        </>
+      {list.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          {list.map((src, i) => (
+            <div key={i} className="relative rounded-2xl overflow-hidden border border-neutral-200 bg-neutral-100"
+              style={{ aspectRatio: "1 / 1" }}>
+              <Photo src={src} className="block w-full h-full" style={{ objectFit: "cover" }} />
+              <TapOnceButton onTap={() => onChange(list.filter((_, k) => k !== i))} aria-label="この写真を外す"
+                className="absolute top-1.5 right-1.5 z-10 w-9 h-9 rounded-full bg-black/55 text-white border-2 border-white/90 flex items-center justify-center ft-tap ft-tap-icon">
+                <X size={17} strokeWidth={2.5} />
+              </TapOnceButton>
+            </div>
+          ))}
+        </div>
       )}
+      <button type="button" onClick={open} disabled={busy || rest === 0}
+        className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px]"}>
+        {busy ? <Spinner size={15} /> : <Plus size={15} />}
+        {busy ? "読み込み中" : rest === 0 ? `写真は ${MAX_IMAGES} 枚まで` : `写真を追加（あと${rest}枚）`}
+      </button>
     </div>
   );
 }
@@ -5899,13 +5892,14 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
           ))}
         </div>
 
-        {/* 写真。**本文のあと、タグや箇所より前に置くこと**（入力画面と同じ並び） */}
+        {/* 写真。**本文のあと、タグや箇所より前に置くこと**（入力画面と同じ並び）。
+            枚数にかかわらず2列・正方形（1枚だけ大きくしない。入力画面と同じ） */}
         {(record.images || []).length > 0 && (
-          <div className={"mt-5 grid gap-2 " + ((record.images || []).length === 1 ? "grid-cols-1" : "grid-cols-2")}>
+          <div className="mt-5 grid grid-cols-2 gap-2">
             {(record.images || []).map((src, i) => (
               <button key={i} type="button" onClick={() => setViewer(i)} aria-label={`写真 ${i + 1} を大きく見る`}
                 className="relative rounded-2xl overflow-hidden border border-neutral-200 bg-neutral-100 ft-tap ft-tap-card"
-                style={{ aspectRatio: (record.images || []).length === 1 ? "4 / 3" : "1 / 1" }}>
+                style={{ aspectRatio: "1 / 1" }}>
                 <Photo src={src} className="block w-full h-full" style={{ objectFit: "cover" }} />
               </button>
             ))}
