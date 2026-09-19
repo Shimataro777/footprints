@@ -1495,7 +1495,7 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* アプリの版数。**index.html の window.__FT_VERSION が本物。**
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
-const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.2.0";
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.2.1";
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
@@ -2219,22 +2219,31 @@ function TapButton({ onClick, className = "", children, delay, ...rest }) {
    ここでは指を離した時点（pointerup）で受け止め、あとから来る click は捨てる。
    押さえたまま滑らせて逃げたぶん（12px超）は受けない。
    キーボードの Enter / Space から来る click は、指の押しが直前に無いので、そのまま通す */
+/* 指を離した時点（pointerup）で受けたことを、部品ひとつではなく**アプリ全体で**覚えておく。
+   **この覚えを部品ごとの ref だけにしないこと。**
+   iPhone は指を離したあと0.3秒ほど遅れて click を配る。そのあいだに画面の形が変わると、
+   click は「指を離した場所にいま在るもの」へ届く。つまり、押した部品ではなく別の部品が受け取る。
+   実際に起きていたこと：写真を2枚付けて2枚めの✕を押すと、1枚になった写真が大きく描き直され、
+   残った✕がちょうど指の下へ来て、遅れて来た click を受け、もう1枚も消えていた。
+   部品ごとの覚えでは、押した本人しか見張れないので防げない */
+let lastTapOnceAt = 0;
 function useTapOnce(fn) {
   const fnRef = useRef(fn);
   fnRef.current = fn;
-  const st = useRef({ down: false, x: 0, y: 0, lastUp: 0 });
+  const st = useRef({ down: false, x: 0, y: 0 });
   return {
     onPointerDown: (e) => { st.current.down = true; st.current.x = e.clientX; st.current.y = e.clientY; },
     onPointerUp: (e) => {
       if (!st.current.down) return;
       st.current.down = false;
       if (Math.hypot(e.clientX - st.current.x, e.clientY - st.current.y) > 12) return;
-      st.current.lastUp = Date.now();
+      lastTapOnceAt = Date.now();
       fnRef.current && fnRef.current(e);
     },
     onPointerCancel: () => { st.current.down = false; },
+    /* click を受けるのは、直前に指の押しが無かったとき（キーボードの Enter / Space）だけ */
     onClick: (e) => {
-      if (Date.now() - st.current.lastUp < 700) return;
+      if (Date.now() - lastTapOnceAt < 700) return;
       fnRef.current && fnRef.current(e);
     },
   };
