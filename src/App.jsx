@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
-  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste
+  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste, CalendarDays, Undo2, Redo2, ArrowUpDown
 } from "lucide-react";
 
 /* ============================================================
@@ -619,11 +619,30 @@ async function storageRoom() {
   return null;
 }
 
-/* 画面のてっぺんへ戻す。「動きの演出」を切っているときは、すべらせない */
+/* 画面のてっぺんへ戻す。「動きの演出」を切っているとき（端末の「視差効果を減らす」も）は、すべらせない。
+   すべらせるのは280〜560ms（距離しだい）。指が触れたら止める。
+   画面ごとに window.scrollTo を書かず、ここを通すこと */
+let smoothTopRaf = 0;
 function scrollPageTop() {
   try {
-    const still = document.documentElement.classList.contains("ft-still");
-    window.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
+    const y0 = window.scrollY;
+    cancelAnimationFrame(smoothTopRaf);
+    const still = document.documentElement.classList.contains("ft-still")
+      || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    if (still || y0 < 2) { window.scrollTo(0, 0); return; }
+    const dur = Math.min(560, Math.max(280, y0 * 0.25));
+    const t0 = performance.now();
+    const stop = () => { cancelAnimationFrame(smoothTopRaf); window.removeEventListener("touchstart", stop); window.removeEventListener("wheel", stop); };
+    window.addEventListener("touchstart", stop, { passive: true });
+    window.addEventListener("wheel", stop, { passive: true });
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      window.scrollTo(0, y0 * (1 - e));
+      if (k < 1) smoothTopRaf = requestAnimationFrame(step);
+      else stop();
+    };
+    smoothTopRaf = requestAnimationFrame(step);
   } catch (e) { /* noop */ }
 }
 
@@ -1001,8 +1020,9 @@ function PasteDialog({ title, hint, actionLabel, onCancel, onSubmit }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center px-5"
+    <div data-ft-overlay="" className="fixed inset-0 bg-black/50 flex items-center justify-center px-5"
       style={{ zIndex: 2147483400 }} onClick={onCancel}>
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-md w-full border border-neutral-200 shadow-xl anim-pop"
         onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display text-[17px] text-neutral-900 mb-1.5">{title}</h3>
@@ -1030,11 +1050,12 @@ function PasteDialog({ title, hint, actionLabel, onCancel, onSubmit }) {
    画面ごと移ってしまうと、読んでいた記録に戻るのが面倒なため
    ============================================================ */
 function RecordPeekDialog({ record, onOpen, onClose }) {
-  const [closing, close] = useClosing(onClose, 200);
+  const [closing, close] = useClosing(onClose);
   if (!record) return null;
   return (
-    <div className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+    <div data-ft-overlay="" className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
       style={{ zIndex: 2147482000 }} onClick={close}>
+      <BackgroundLock />
       <div className="absolute inset-0 bg-black/45" />
       <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-box "
         + (closing ? "anim-sheet-out" : "anim-sheet")}
@@ -1080,7 +1101,7 @@ function RecordPeekDialog({ record, onOpen, onClose }) {
 function TagPickDialog({ title, selected, known, onApply, onCancel, onCreate, note }) {
   const [picked, setPicked] = useState(normalizeTags(selected));
   const [draft, setDraft] = useState("");
-  const [closing, close] = useClosing(onCancel, 200);
+  const [closing, close] = useClosing(onCancel);
 
   const q = draft.trim().toLowerCase();
   const list = normalizeTags(known);
@@ -1099,8 +1120,9 @@ function TagPickDialog({ title, selected, known, onApply, onCancel, onCreate, no
   };
 
   return (
-    <div className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+    <div data-ft-overlay="" className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
       style={{ zIndex: 2147483000 }} onClick={close}>
+      <BackgroundLock />
       <div className="absolute inset-0 bg-black/45" />
       <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-box "
         + (closing ? "anim-sheet-out" : "anim-sheet")}
@@ -1172,24 +1194,24 @@ function TagField({ value, onChange, knownTags, onCreateTag }) {
   const [open, setOpen] = useState(false);
   return (
     <div>
+      {/* 押すところが先、選んだ札はその下。記録を書く画面ではいちばん下に置く */}
+      <button type="button" onClick={() => setOpen(true)}
+        className="min-h-[46px] px-4 rounded-full border border-neutral-200 bg-white text-[14.5px] text-neutral-500 inline-flex items-center gap-1.5 ft-tap ft-tap-card">
+        タグを追加 <Plus size={15} />
+      </button>
       {tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
+        <div className="flex flex-wrap gap-1.5 mt-2">
           {tags.map((t) => (
             <span key={t} className="ft-chip inline-flex items-center gap-1 rounded-full bg-th-50 border border-th-200 pl-3 pr-1 py-1">
               <span className="text-[13.5px] font-bold text-th-900">{t}</span>
-              <button type="button" onClick={() => onChange(tags.filter((x) => x !== t))} aria-label={`${t} を外す`}
-                className="w-6 h-6 flex items-center justify-center rounded-full text-th-800/60 hover:text-red-700 ft-tap ft-tap-icon"><X size={14} /></button>
+              <TapOnceButton onTap={() => onChange(tags.filter((x) => x !== t))} aria-label={`${t} を外す`}
+                className="w-6 h-6 flex items-center justify-center rounded-full text-th-800/60 hover:text-red-700 ft-tap ft-tap-icon"><X size={14} /></TapOnceButton>
             </span>
           ))}
         </div>
       )}
-      <button type="button" onClick={() => setOpen(true)}
-        className={BTN_SECONDARY + " " + BTN_H + " px-3.5 text-[14.5px]"}>
-        <Plus size={15} /> {tags.length ? "タグを選び直す" : "タグを選ぶ・作る"}
-      </button>
       {open && (
         <TagPickDialog title="タグを選ぶ" selected={tags} known={knownTags}
-          note="打ち込んでさがせます。まだ無い言葉は「作る」で登録できます。"
           onCreate={onCreateTag}
           onApply={(v) => { onChange(v); setOpen(false); }}
           onCancel={() => setOpen(false)} />
@@ -1238,7 +1260,7 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* アプリの版数。**index.html の window.__FT_VERSION が本物。**
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
-const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "1.1.0";
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.1.1";
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
@@ -1254,7 +1276,11 @@ const BTN_SECONDARY = BTN_BASE + " bg-white border border-neutral-300 text-neutr
 const BTN_DANGER = BTN_BASE + " bg-rose-800 text-white hover:bg-rose-900 shadow-sm";
 const BTN_DANGER_SOFT = BTN_BASE + " bg-white border border-rose-200 text-rose-700 hover:bg-rose-50";
 const BTN_QUIET = BTN_BASE + " text-neutral-500 hover:bg-neutral-100";
-function TextInput(props) { return <input {...props} className={inputCls + " " + (props.className || "")} />; }
+/* bare ＝ 枠なし。RefBox の中で使う（外枠の線と入力中の縁取りを RefBox が受け持つ）。
+   枠を消すのに border-0 を足さないこと。もとの枠の指定と重なってどちらが勝つか分からなくなるので、
+   はじめから付けない形にしてある */
+const bareInputCls = "w-full bg-transparent px-3.5 py-3 ft-input leading-normal text-neutral-900 placeholder-neutral-400 focus:outline-none h-[48px]";
+function TextInput({ bare, ...props }) { return <input {...props} className={(bare ? bareInputCls : inputCls) + " " + (props.className || "")} />; }
 
 /* ============================================================
    ドラム式（ホイール）ピッカー
@@ -1501,8 +1527,9 @@ function WheelColumn({ items, value, onChange, minWidth = 72 }) {
 /* zIndex ＝ 重なり順。ほかの小窓の上にさらに重ねるときは、大きい数を渡すこと */
 function WheelSheet({ title, onClose, onConfirm, children, zIndex = 2147483000 }) {
   return (
-    <div className="ft-sheet-wrap flex items-end justify-center" style={{ zIndex }} onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
+    <div data-ft-overlay="" className="ft-sheet-wrap flex items-end justify-center" style={{ zIndex }} onClick={onClose}>
+      <BackgroundLock />
+      <div className="absolute inset-0 bg-black/40 anim-fade" />
       <div className="relative w-full max-w-lg bg-white rounded-t-2xl border-t border-neutral-200 shadow-xl anim-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200">
           <span className="font-display text-[15.5px] text-neutral-900">{title}</span>
@@ -1516,8 +1543,10 @@ function WheelSheet({ title, onClose, onConfirm, children, zIndex = 2147483000 }
           />
           <div className="relative flex justify-center gap-2">{children}</div>
         </div>
-        <div className="px-4 pt-3" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 14px)" }}>
-          <button type="button" onClick={onConfirm} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"}>決定</button>
+        {/* 足もとは、日付・タグの紙と同じ「キャンセル／決定」の並びにそろえる */}
+        <div className="px-4 pt-3 flex gap-2.5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 14px)" }}>
+          <button type="button" onClick={onClose} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
+          <button type="button" onClick={onConfirm} className={BTN_PRIMARY + " flex-[1.6] " + BTN_H + " text-[14.5px]"}>決定</button>
         </div>
       </div>
     </div>
@@ -1613,7 +1642,7 @@ function jumpYears(shownY, extra = []) {
 const WEEK_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
 const weekColor = (i) => (i === 0 ? "text-rose-600" : i === 6 ? "text-sky-700" : "text-neutral-500");
 
-function DateInput({ className, value, onChange }) {
+function DateInput({ className, value, onChange, row }) {
   const [open, setOpen] = useState(false);
   const today = new Date();
   const parse = (v) => {
@@ -1624,7 +1653,7 @@ function DateInput({ className, value, onChange }) {
   /* いま開いている月と、選んでいる日 */
   const [cursor, setCursor] = useState(() => (p ? { y: p.y, mo: p.mo } : { y: today.getFullYear(), mo: today.getMonth() + 1 }));
   const [picked, setPicked] = useState(() => value || "");
-  const [closing, close] = useClosing(() => setOpen(false), 200);
+  const [closing, close] = useClosing(() => setOpen(false));
   /* 年月をまとめて選ぶ小窓。日付を選ぶ小窓の上に重ねるので、重なり順を大きくする */
   const [jumpOpen, setJumpOpen] = useState(false);
 
@@ -1651,6 +1680,20 @@ function DateInput({ className, value, onChange }) {
 
   return (
     <>
+      {row ? (
+        /* 記録を書く画面の日付。**1行に畳んで見せること。** ふだんは「今日」のままなので、
+           項目としては場所を取らず、すぐ下から本文を書き始められる。押すとカレンダーが開く */
+        <button type="button" onClick={openSheet}
+          className="w-full min-h-[46px] rounded-2xl border border-neutral-200 bg-white px-4 flex items-center gap-2 text-left ft-tap ft-tap-card">
+          <CalendarDays size={16} className="text-neutral-400 shrink-0" />
+          <span className={"flex-1 min-w-0 truncate text-[14.5px] " + (p ? "text-neutral-700" : "text-neutral-400")}>
+            {p
+              ? `${value === ymd(today) ? "今日・" : ""}${p.y}年${p.mo}月${p.d}日（${"日月火水木金土"[new Date(p.y, p.mo - 1, p.d).getDay()]}）`
+              : "日付を選択"}
+          </span>
+          <ChevronDown size={16} className="text-neutral-400 shrink-0" />
+        </button>
+      ) : (
       <button type="button" onClick={openSheet}
         className={"h-[48px] rounded-xl border border-neutral-300 bg-white flex items-center justify-between px-3 text-left ft-tap ft-tap-card " + (className || "w-[170px]")}>
         <span className={"text-[15.5px] truncate " + (p ? "text-neutral-900" : "text-neutral-400")}>
@@ -1658,10 +1701,12 @@ function DateInput({ className, value, onChange }) {
         </span>
         <ChevronDown size={18} className="text-neutral-500 shrink-0 ml-1" />
       </button>
+      )}
 
       {open && (
-        <div className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+        <div data-ft-overlay="" className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
           style={{ zIndex: 2147483000 }} onClick={close}>
+      <BackgroundLock />
           <div className="absolute inset-0 bg-black/45" />
           <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-box "
             + (closing ? "anim-sheet-out" : "anim-sheet")}
@@ -1728,7 +1773,7 @@ function DateInput({ className, value, onChange }) {
   );
 }
 
-function TextArea({ value, onChange, className, minRows, ...rest }) {
+function TextArea({ value, onChange, className, minRows, bare, ...rest }) {
   const ref = useRef(null);
   /* 中身に合わせて高さを測り直す。
      測るときに一度 height を auto に戻すが、そのあいだ欄が縮むため、
@@ -1756,7 +1801,7 @@ function TextArea({ value, onChange, className, minRows, ...rest }) {
      実際の高さは下の resize() が中身に合わせて決めるので、
      rows を1にしても書き足せば普通に伸びる。
      minRows を渡した欄は minHeight のほうが効くので、見た目は変わらない */
-  return <textarea ref={ref} rows={1} value={value} onChange={onChange} onInput={resize} style={style} className={inputCls + " resize-none overflow-hidden " + (className || "")} {...rest} />;
+  return <textarea ref={ref} rows={1} value={value} onChange={onChange} onInput={resize} style={style} className={(bare ? bareInputCls : inputCls) + " resize-none overflow-hidden " + (className || "")} {...rest} />;
 }
 function Select({ value, onChange, children }) {
   return (
@@ -1930,15 +1975,63 @@ function TapButton({ onClick, className = "", children, delay, ...rest }) {
   );
 }
 
+/* 値が変わるだけのボタン（ピン留め・ブックマーク・タグを外す・絞り込みの札・下のタブ）は、
+   TapButton（ひと呼吸おいてから動く）ではなく、こちらで受けること。
+   **TapButton を印の入り切りに使わないこと。** 押したあとの60msのあいだに来た2度目を捨てるので、
+   「ゆっくり押せば入るのに、速く押すと入らない」という不具合に見える。
+   画面が切り替わるボタンなら「二重に開かない」ための正しい守りだが、値の入り切りには向かない。
+   iPhoneは、素早く続けて押すと2回目以降を「ダブルタップの一部」とみなして click を配らないことがある。
+   ここでは指を離した時点（pointerup）で受け止め、あとから来る click は捨てる。
+   押さえたまま滑らせて逃げたぶん（12px超）は受けない。
+   キーボードの Enter / Space から来る click は、指の押しが直前に無いので、そのまま通す */
+function useTapOnce(fn) {
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
+  const st = useRef({ down: false, x: 0, y: 0, lastUp: 0 });
+  return {
+    onPointerDown: (e) => { st.current.down = true; st.current.x = e.clientX; st.current.y = e.clientY; },
+    onPointerUp: (e) => {
+      if (!st.current.down) return;
+      st.current.down = false;
+      if (Math.hypot(e.clientX - st.current.x, e.clientY - st.current.y) > 12) return;
+      st.current.lastUp = Date.now();
+      fnRef.current && fnRef.current(e);
+    },
+    onPointerCancel: () => { st.current.down = false; },
+    onClick: (e) => {
+      if (Date.now() - st.current.lastUp < 700) return;
+      fnRef.current && fnRef.current(e);
+    },
+  };
+}
+function TapOnceButton({ onTap, children, className = "", ...rest }) {
+  const h = useTapOnce(onTap);
+  return <button type="button" {...rest} {...h} className={className}>{children}</button>;
+}
+
+/* iPhoneの設定でおなじみの、入り切りのつまみ。値が変わるだけなので TapOnceButton で受ける */
+function Switch({ on, onChange, label }) {
+  return (
+    <TapOnceButton onTap={() => onChange(!on)} role="switch" aria-checked={!!on} aria-label={label}
+      className="shrink-0 flex items-center justify-end ft-tap" style={{ minHeight: 44, minWidth: 60 }}>
+      <span className="block rounded-full"
+        style={{ width: 52, height: 32, padding: 3, background: on ? "var(--th-700)" : "#D4D4D4", transition: "background 200ms cubic-bezier(0.16,1,0.3,1)" }}>
+        <span className="block rounded-full bg-white shadow-sm"
+          style={{ width: 26, height: 26, transform: on ? "translateX(20px)" : "none", transition: "transform 200ms cubic-bezier(0.16,1,0.3,1)" }} />
+      </span>
+    </TapOnceButton>
+  );
+}
+
 /* ピン留め／ブックマークの目印ボタン */
 function MarkButton({ on, onClick, label, icon }) {
   return (
-    <button type="button" onClick={onClick} aria-label={label} aria-pressed={on}
+    <TapOnceButton onTap={onClick} aria-label={label} aria-pressed={on}
       className={"w-10 h-10 rounded-xl border-2 flex items-center justify-center shrink-0 ft-tap ft-tap-icon "
         + (on ? "border-th-800 bg-th-800 text-white" : "border-neutral-200 bg-white text-neutral-400")}>
       {/* 付けた瞬間だけ弾ませたいので、key を変えて描き直させている */}
       <span key={on ? "on" : "off"} className={"flex " + (on ? "ft-mark" : "")}>{icon}</span>
-    </button>
+    </TapOnceButton>
   );
 }
 
@@ -1946,7 +2039,7 @@ function MarkButton({ on, onClick, label, icon }) {
    括弧つきの引用（節まであるもの）はまとめて色を付け、
    本文中に出てくる「ヨハネの福音書 3:16」のような書き方にも色を付ける */
 /* 引用（本文＋聖書箇所）と、それ以外の文に切り分ける。
-   引用の範囲は splitByCitations にまかせること（「聖句に追加」と同じ範囲になる）。
+   引用の範囲は splitByCitations にまかせること（閲覧画面の縦線の範囲）。
 
    区切りのところにある空行は、文字として残さず「空ける行数」として持ち回る。
    ブロックの上端・下端に改行を残しても、端末によって表示されたりされなかったりして
@@ -1966,14 +2059,18 @@ function splitByQuote(text) {
     const lead = (b.text.match(/^(?:[ \t]*\n)+/) || [""])[0];
     const trail = (b.text.match(/(?:\n[ \t]*)+$/) || [""])[0];
     const body = b.text.slice(lead.length, b.text.length - trail.length);
-    return { quote: b.quote, body, lead: countNl(lead), trail: countNl(trail) };
+    return { quote: b.quote, body, lead: countNl(lead), trail: countNl(trail), nl: countNl(b.text) };
   });
 
   const out = [];
   let carry = 0;   // 前の区切りから持ち越した改行の数
   parts.forEach((p2) => {
     const before = carry + p2.lead;
-    if (p2.body.trim() === "") { carry = before + p2.trail; return; }  // 空行だけの部分は間隔として次へ回す
+    /* 空行だけの部分は、間隔として次へ回す。
+       **改行の数は、その部分ぜんたいで数えること。** 先頭側（lead）と末尾側（trail）の両方で数えると、
+       同じ改行を2回数えてしまい、引用と引用のあいだが書いた空行の数より広く空く
+       （聖書箇所＋1行あける＋聖書箇所で、1行のはずが3行ぶん空いていた） */
+    if (p2.body.trim() === "") { carry = carry + p2.nl; return; }
     /* 区切りそのもので1行ぶん改まるので、その1つを引いた残りを空ける */
     out.push({ quote: p2.quote, text: p2.body, gapBefore: out.length === 0 ? 0 : Math.max(0, before - 1) });
     carry = p2.trail;
@@ -1995,7 +2092,7 @@ function splitByQuote(text) {
    開いたあとの見せ方（下からせり上がるアプリ内ブラウザ）も端末が受け持つ */
 function InlineLink({ url, children }) {
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer"
+    <a href={url} target="_blank" rel="noopener noreferrer" draggable={false}
       className="ft-link text-sky-700 break-all">{children}</a>
   );
 }
@@ -2017,10 +2114,14 @@ function HighlightedText({ text, className }) {
      渡された指定の文字色だけを差し替えるので、大きさや行間は本文と揃ったまま */
   const quoteClass = (className || "").replace(/text-neutral-\d+/, "text-neutral-600");
 
-  /* かたまりの間隔。書いた空行の数だけ空ける。
-     空行が無いときも、引用と地の文が詰まらないよう最小限の間隔をとる */
+  /* かたまりの間隔。**詰めて置くこと。**
+     引用ブロックは左の縦線で区切りが分かるので、そのうえ行を空けると、聖書箇所が続くところで
+     間延びして読みにくい（依頼により2.1.1で詰めた）。
+     ・空行を書いていないとき … 6px（区切りが分かるだけの、いちばん狭い間隔）
+     ・空行を書いたとき … 1行につき本文0.75行ぶん（書いた空行の多さは伝わるが、そのままの高さは空けない）
+     **空行1つを1行ぶん（1em以上）に戻さないこと。** 聖書箇所を続けて書くと、画面の多くが余白になる */
   const gapStyle = (b, i) => (i === 0 ? undefined
-    : { marginTop: b.gapBefore > 0 ? `${(b.gapBefore * 1.625).toFixed(2)}em` : "0.625rem" });
+    : { marginTop: b.gapBefore > 0 ? `${(b.gapBefore * 0.75).toFixed(2)}em` : "0.375rem" });
 
   return (
     <div>
@@ -2042,16 +2143,37 @@ function HighlightedText({ text, className }) {
 /* highlightRefs（聖書箇所に色を付ける処理）は取りやめた。
    引用は左の縦線で示している */
 
-function RecognizedRefs({ text }) {
+function RecognizedRefs({ text, inline }) {
   const refs = parseBibleRefs(text);
   if (!refs.length) return null;
-  return <div className="flex flex-wrap gap-1.5 mt-2">{refs.map((r, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-th-50 text-th-800 border border-th-300 ft-chip">{formatRef(r)}</span>)}</div>;
+  const chips = refs.map((r, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-th-50 text-th-800 border border-th-300 ft-chip">{formatRef(r)}</span>);
+  /* inline ＝ 枠の中の帯（RefBox）に、挿入ボタンといっしょに並べる */
+  return inline ? <>{chips}</> : <div className="flex flex-wrap gap-1.5 mt-2">{chips}</div>;
 }
+
+/* 「聖書箇所を挿入」つきの入力欄。
+   **入力欄と挿入ボタンを、ひとつの枠にまとめること。** 枠の下に別のリンクとして置いていたときは、
+   ボタンがどの欄に入るのか分かりにくかった。いまは、入力欄の下に薄い帯を敷き、左端に挿入ボタン、
+   そのとなり（入り切らなければ次の行）に、読み取れた聖書箇所の札を並べる。
+   入力欄は bare（枠なし）にして、この外枠の線と入力中の縁取りを使う。
+   ・帯と入力欄のあいだ、札と札のあいだ以外に、余白をはさまないこと */
+function RefBox({ children, inserter, refsText }) {
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden focus-within:border-th-800 focus-within:ring-4 focus-within:ring-th-800/20">
+      {children}
+      <div className="border-t border-neutral-100 bg-neutral-50 px-2.5 py-1.5 flex flex-wrap items-center gap-1.5">
+        {inserter}
+        <RecognizedRefs text={refsText} inline />
+      </div>
+    </div>
+  );
+}
+
 /* テキスト中に含まれる聖句引用ごとに、その部分だけを聖句へ追加できるようにする */
 /* 本文と、そのあとに続く聖書箇所を「ひとつの引用」として切り出す。
-   ここが「聖句に追加」の対象範囲になり、閲覧画面の色付けもこの範囲を使う。
+   閲覧画面の縦線（引用ブロック）は、この範囲を使う。「〇〇を聖句に追加」の機能は、間違えて押しやすいので 2.1.0 で無くした（コードは、縦線の範囲を決める側だけ残してある）。
    **同じ判定を2か所に書かないこと。** 別々に書くと、色が付く範囲と
-   聖句に追加される範囲が食い違う（実際そうなっていた）。
+   縦線の範囲と、色を付ける範囲が食い違う（実際そうなっていた）。
 
    引用と見なす書き方は2つ。
    ① 括弧に入れる … 本文（ヨハネの福音書 3:16）
@@ -2108,79 +2230,148 @@ function splitByCitations(text) {
     while (start < k.from && /\s/.test(text[start])) start++;
     const body = text.slice(start, k.from).trim();
     if (body) {
-      /* 聖句に追加する文は「本文＋書 章:節」の形にし、括弧や訳名は含めない */
+      /* 引用の文は「本文＋書 章:節」の形にし、括弧や訳名は含めない */
       segments.push({ start, end: k.to, text: body + "\n" + formatRef(k.ref), ref: k.ref });
     }
     lastEnd = k.to;
   }
   return segments;
 }
-function MemorizeLink({ text, allRecords, onQuickMemorize }) {
-  const memName = useTypeName().memorization || "聖句";
-  const segments = useMemo(() => splitByCitations(text), [text]);
-  if (!segments.length) return null;
-  return (
-    <div className="flex flex-col items-start gap-1.5 mt-2">
-      {segments.map((seg, i) => {
-        const already = (allRecords || []).some((m) => m.type === "memorization" && sameRef(primaryRef(m.text), seg.ref));
-        return already ? (
-          <span key={i} className="inline-flex items-center gap-1 text-[12.5px] font-bold text-emerald-700"><Check size={13} strokeWidth={3} /> {formatRef(seg.ref)} を{memName}に追加済み</span>
-        ) : (
-          <button key={i} type="button" onClick={() => onQuickMemorize(seg.text)} className="inline-flex items-center gap-1 text-[12.5px] font-bold text-amber-700 hover:text-amber-900"><Star size={13} /> {formatRef(seg.ref)} を{memName}に追加</button>
-        );
-      })}
-    </div>
-  );
-}
-
 /* 閉じるときの動きを見せてから、実際に閉じる。
    ボタンを押した瞬間に消えると素っ気ないため、少しだけ待つ */
-function useClosing(onClose, ms = 230) {
-  const [closing, setClosing] = useState(false);
-  const timer = useRef(null);
-  useEffect(() => () => clearTimeout(timer.current), []);
+function useClosing(onClose) {
+  /* **閉じるときに待たないこと。** 以前は、退場の動きのために0.2秒ほど待ってから閉じていた。
+     待つあいだ画面が止まって見え、「キャンセル」「×」「戻る」「暗がりを押す」だけがもたついた。
+     いまは押したその場で閉じる（姉妹アプリ My手帳 と同じ）。
+     守るのは、同じひと押しから二重に届いたぶんだけ。
+     第1引数の返す「closing」は、呼び出し側のクラス切り替えのために形だけ残してあり、いつも false。
+     退場の動き（anim-*-out）を戻すなら、動きの長さと待ち時間を必ず同じにすること */
+  const last = useRef(0);
   const startClose = useCallback((...args) => {
-    setClosing((c) => {
-      if (c) return c;
-      timer.current = setTimeout(() => {
-        onClose && onClose(...args);
-        /* **閉じ終わったら「閉じ中」を必ず解くこと。**
-           解かないと、次に開いたときも閉じる動きのまま描かれ、
-           見えないのに覆いだけが残って、画面のどこを押しても効かなくなる
-           （日付を選ぶ窓でキャンセルしたあと、実際にそうなっていた） */
-        setClosing(false);
-      }, ms);
-      return true;
-    });
-  }, [onClose, ms]);
-  return [closing, startClose];
+    const now = Date.now();
+    if (now - last.current < 250) return;
+    last.current = now;
+    onClose && onClose(...args);
+  }, [onClose]);
+  return [false, startClose];
 }
 
 /* 重なって出る画面が開いているあいだ、うしろの画面（本体）を動かないようにする。
-   iPhoneでは、入力欄に触れてキーボードが出るとき、
-   手前が position:fixed でも、うしろの画面のほうが勝手に動いてしまう。
-   「ちょうど良い位置に合わせて書き始めたのに、位置がずれる」のはこれが原因。
-   何枚か重なることがあるので、枚数を数えて最後の1枚が閉じたときだけ元に戻す */
+   iPhone は body の overflow:hidden だけではページを送ってしまう。紙の中の入力欄に触れて
+   キーボードが出ると、うしろの一覧が送られ、fixed の層ごとずれて、あいた所に一覧がのぞく。
+   そこで、開いた瞬間のページ位置を覚え、送られたら留めた位置へ引き戻す。
+   何枚か重なることがあるので、枚数を数えて最後の1枚が閉じたときだけ元に戻す。
+   **body を position: fixed にしないこと。** body を流れから外すとページが「送れない状態」になり、
+   iPhone が viewport-fit=cover で広げていた画面を測り直す。下端が60px前後切り上がり、
+   fixed の下タブや右下のボタンがまとめて持ち上がる（姉妹アプリ My手帳 で実際に起きた）。
+   **重なって出るものは、すべてこれを通すこと。** hook を直接呼べない場所（open && (...) の中など）では、
+   外わくの最初の子に <BackgroundLock /> を置く。 */
 let overlayCount = 0;
+let overlayLockY = 0;
+let overlayPrevOverflow = "";
+let overlayPin = null;
 function useLockBackground() {
-  useEffect(() => {
+  React.useLayoutEffect(() => {
     if (typeof document === "undefined") return undefined;
     const body = document.body;
     if (overlayCount === 0) {
-      body.dataset.ftPrevOverflow = body.style.overflow || "";
+      overlayLockY = window.scrollY || document.documentElement.scrollTop || 0;
+      overlayPrevOverflow = body.style.overflow || "";
       body.style.overflow = "hidden";
+      /* 1px の遊びを持たせること。ぴったり比べると、慣性の最後のひとこまでも
+         引き戻しが走り、指を離した瞬間に画面が小さく震える */
+      overlayPin = () => {
+        const y = window.scrollY || document.documentElement.scrollTop || 0;
+        if (Math.abs(y - overlayLockY) > 1) window.scrollTo(0, overlayLockY);
+      };
+      window.addEventListener("scroll", overlayPin, { passive: true });
+      /* キーボードの開け閉めでも測り直す（入力欄へ寄せようとしてページが送られる） */
+      if (window.visualViewport) window.visualViewport.addEventListener("resize", overlayPin);
     }
     overlayCount += 1;
     return () => {
       overlayCount -= 1;
       if (overlayCount <= 0) {
         overlayCount = 0;
-        body.style.overflow = body.dataset.ftPrevOverflow || "";
-        delete body.dataset.ftPrevOverflow;
+        body.style.overflow = overlayPrevOverflow;
+        if (overlayPin) {
+          window.removeEventListener("scroll", overlayPin);
+          if (window.visualViewport) window.visualViewport.removeEventListener("resize", overlayPin);
+          overlayPin = null;
+        }
+        /* 留めていたあいだの位置へ戻す。戻さないと一覧がいちばん上へ跳ぶ */
+        window.scrollTo(0, overlayLockY);
       }
     };
   }, []);
 }
+function BackgroundLock() {
+  useLockBackground();
+  return null;
+}
+
+/* キーボードに隠れる高さを --ft-kb に入れておく。
+   重なる画面の中の送り場（.flex-1.overflow-y-auto）は、この高さぶん下に余白を足す（下の CSS）。
+   iPhone はキーボードを出しても fixed の画面の高さを変えないので、送り場の下のほうが
+   キーボードの裏に入ったまま、いちばん下まで送っても出てこない。
+   そこで指がページまで届き、useLockBackground が引き戻すので「送っても戻ってくる」ように見える。
+   ・レイアウトの高さ − 見えている高さ − 見えている上端 ＝ キーボードの高さ
+   ・60px 未満は 0 とみなす（下のバーの出入りなどの小さなずれで余白を揺らさない）
+   **余白は、キーボードが出る「前」に足しておくこと。** 入力欄に指が触れた時点（touchstart / pointerdown）と
+   focusin で、前回のキーボードの高さ（はじめは画面の高さの45%）をすぐに足す。
+   余白は送り場のいちばん下に足すだけなので、足した瞬間に見た目は動かない。
+   キーボードが出たあとで足すと、iPhone が入力欄を見せようとした瞬間に送る余地が無く、
+   ページごと送って引き戻される「画面が下がって、また戻る」動きになる。
+   ・こちらから送り場を送る処理を足さない。iPhone の動きと二重になる
+   ・余白を requestAnimationFrame や setTimeout のあとで足さない。間に合わない */
+(function installKeyboardInset() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const vv = window.visualViewport;
+  if (!vv) return;
+  let raf = 0;
+  let shown = -1;
+  let lastKb = 0;
+  const guessKb = () => lastKb || Math.round(Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0) * 0.45);
+  const setKb = (kb) => {
+    if (kb === shown) return;
+    shown = kb;
+    document.documentElement.style.setProperty("--ft-kb", kb + "px");
+  };
+  const NO_KB = { checkbox: 1, radio: 1, button: 1, submit: 1, reset: 1, range: 1, file: 1, color: 1, image: 1, hidden: 1 };
+  const isTyping = (el) => {
+    if (!el || !el.closest || !el.closest("[data-ft-overlay]")) return false;
+    if (el.isContentEditable) return true;
+    const tag = el.tagName;
+    if (tag === "TEXTAREA") return !el.readOnly && !el.disabled;
+    if (tag === "INPUT") return !el.readOnly && !el.disabled && !NO_KB[(el.type || "text").toLowerCase()];
+    return false;
+  };
+  const reserve = (e) => {
+    const t = e.target;
+    const el = t && t.closest ? t.closest("input, textarea, [contenteditable]") : null;
+    if (!isTyping(el)) return;
+    if (shown < guessKb()) setKb(guessKb());
+  };
+  const measure = () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      const layoutH = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+      let kb = Math.round(layoutH - vv.height - vv.offsetTop);
+      if (!(kb >= 60)) kb = 0;
+      if (kb > 0) { lastKb = kb; setKb(kb); return; }
+      /* キーボードが出てくる途中（まだ測れない）あいだは、先に足した余白を消さない */
+      if (isTyping(document.activeElement)) return;
+      setKb(0);
+    });
+  };
+  document.addEventListener("touchstart", reserve, { passive: true, capture: true });
+  document.addEventListener("pointerdown", reserve, { passive: true, capture: true });
+  document.addEventListener("focusin", reserve, true);
+  document.addEventListener("focusout", measure, true);
+  vv.addEventListener("resize", measure);
+  window.addEventListener("orientationchange", measure);
+  measure();
+})();
 
 /* 重なって出る画面の入れ物。出るときと戻るときの動きを受け持つ */
 function OverlayScreen({ from = "right", closing, children, zIndex = 50 }) {
@@ -2188,8 +2379,10 @@ function OverlayScreen({ from = "right", closing, children, zIndex = 50 }) {
   const inCls = from === "bottom" ? "anim-up" : "anim-right";
   const outCls = from === "bottom" ? "anim-down-out" : "anim-right-out";
   return (
-    <div className="fixed inset-0" style={{ zIndex }}>
-      <div className={"absolute inset-0 bg-black/25 " + (closing ? "anim-fade-out" : "anim-fade")} />
+    /* data-ft-overlay ＝ 重なる画面の外わく（送り場の余白・はみ出し止めの目印）。
+       data-ft-scrim ＝ 地の暗がり。左端から払って戻るとき、払った量に合わせて薄くする。外さないこと */
+    <div className="fixed inset-0" data-ft-overlay="" style={{ zIndex }}>
+      <div data-ft-scrim="" className={"absolute inset-0 bg-black/25 " + (closing ? "anim-fade-out" : "anim-fade")} />
       <div className={"absolute inset-0 " + (closing ? outCls : inCls)}>{children}</div>
     </div>
   );
@@ -2209,7 +2402,8 @@ function Spinner({ size = 22, className = "" }) {
    画面全体を薄く覆って、真ん中で大きく回す */
 function LoadingOverlay({ label = "読み込んでいます" }) {
   return (
-    <div className="ft-sheet-wrap flex items-center justify-center anim-fade" style={{ zIndex: 2147481000 }}>
+    <div data-ft-overlay="" className="ft-sheet-wrap flex items-center justify-center anim-fade" style={{ zIndex: 2147481000 }}>
+      <BackgroundLock />
       <div className="absolute inset-0 bg-neutral-50/75" />
       <div className="relative flex flex-col items-center text-th-800">
         <Spinner size={56} />
@@ -2294,14 +2488,17 @@ function RefInserter({ onInsert, onPickRange, label }) {
 
   return (
     <>
-      {/* **この印は、対象の欄にぴたりと寄せること。**
-          欄と印のふたつで、ひとつの項目。間を空けると別のものに見える。
-          認識した箇所の並びを間にはさむのも同じ理由で不可 */}
-      <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-th-800 mt-1 min-h-[28px] ft-tap">
-        <BookOpen size={13} /> {label || "聖書箇所を挿入"}
+      {/* **この印は、対象の欄の「枠の中」に置くこと**（RefBox）。
+          欄の外に置くと、どの欄に入るのか分かりにくかった。
+          章・節の選び方は、ドラムを順に開く形が選びやすいので、この窓のままにしてある
+          （下から出る1枚の紙にまとめたものは取りやめた） */}
+      <button type="button" onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1.5 px-3 min-h-[32px] rounded-full border border-th-200 bg-white text-[12.5px] font-bold text-th-800 ft-tap shrink-0">
+        <BookOpen size={14} /> {label || "聖書箇所を挿入"}
       </button>
       {open && (
-        <div className="fixed inset-0 flex items-center justify-center px-5" style={{ zIndex: 2147483100 }} onClick={close}>
+        <div data-ft-overlay="" className="fixed inset-0 flex items-center justify-center px-5" style={{ zIndex: 2147483100 }} onClick={close}>
+      <BackgroundLock />
           <div className="absolute inset-0 bg-black/45" />
           <div className="relative w-full max-w-sm bg-white rounded-2xl border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}>
@@ -2374,7 +2571,8 @@ function RefInserter({ onInsert, onPickRange, label }) {
 /* 今月・今年の聖句が、ほかの記録にすでに付いているときの確認 */
 function HighlightTakeoverDialog({ what, existing, onConfirm, onCancel }) {
   return (
-    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
+    <div data-ft-overlay="" className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">{what}には、すでに別の聖句があります</h3>
         <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 mb-3">
@@ -2394,7 +2592,8 @@ function HighlightTakeoverDialog({ what, existing, onConfirm, onCancel }) {
 
 function ConfirmItemDeleteDialog({ label, onConfirm, onCancel }) {
   return (
-    <div className="fixed inset-0 flex items-center justify-center px-6" style={{ zIndex: 2147483100 }}>
+    <div data-ft-overlay="" className="fixed inset-0 flex items-center justify-center px-6" style={{ zIndex: 2147483100 }}>
+      <BackgroundLock />
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
       <div className="relative bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">{label}を削除します</h3>
@@ -2443,15 +2642,26 @@ function useEdgeSwipeBack(onBack, canClose) {
     let pointerId = null;
 
     let clearTimer = null;
+    /* 地の暗がりも、画面といっしょに動かす。画面だけ払い出して暗がりを残すと、
+       払い終えて閉じ終わるまでのあいだ、うしろの画面が暗いまま見える */
+    const root = screen.closest("[data-ft-overlay]");
+    const scrim = root ? root.querySelector("[data-ft-scrim]") : null;
     const setTransform = (x, animate, easing, duration) => {
       clearTimeout(clearTimer);
       screen.style.transition = animate ? `transform ${duration}ms ${easing}` : "none";
       screen.style.transform = x === 0 ? "translateX(0px)" : `translateX(${x}px)`;
+      if (scrim) {
+        scrim.style.transition = animate ? `opacity ${duration}ms ${easing}` : "none";
+        scrim.style.opacity = String(Math.max(0, 1 - x / (width || 1)));
+      }
       if (x === 0) {
         // 元の位置に戻り切ったら inline style を消す
         // （transform が残っていると、上に重ねるシート類の基準位置がずれてしまうため）
         const wait = animate ? duration + 30 : 0;
-        clearTimer = setTimeout(() => { screen.style.transition = ""; screen.style.transform = ""; }, wait);
+        clearTimer = setTimeout(() => {
+          screen.style.transition = ""; screen.style.transform = "";
+          if (scrim) { scrim.style.transition = ""; scrim.style.opacity = ""; }
+        }, wait);
       }
     };
 
@@ -3097,6 +3307,48 @@ function MenuButton({ size = MENU_BTN }) {
   );
 }
 
+/* 画面の上に留める見出しと帯（下の4タブの画面だけで使う）。
+   **画面ぜんたいを送る場所で、見出しや帯を position: sticky にしないこと。**
+   iPhone（WebKit）は sticky の部品を「流れの中の本来の場所」で見えているか判断し、
+   本来の場所が画面から大きく離れると絵を捨てる。下へ送ると見出しが先に、
+   少し下の帯があとから透けて消え、うしろの記録が見えてしまう（姉妹アプリ My手帳 で実機確認ずみ）。
+   Mac や Android（Chromium）では起きないので、そちらで確かめて「直った」と判断しないこと。
+   ここでは、見出しと帯を画面に固定（position: fixed）し、流れの中には同じ高さの場所取りを置く。
+   高さは測って追いかける。**数字で決め打ちにしないこと**（文字を大きくすると中身が見出しの下にもぐる） */
+function TopChrome({ children }) {
+  const boxRef = useRef(null);
+  const [h, setH] = useState(0);
+  /* 描く前に測る。useEffect にしないこと。一瞬、中身が見出しの下にもぐって見える */
+  React.useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el) return undefined;
+    const put = () => {
+      const v = el.getBoundingClientRect().height;
+      setH((p) => (Math.abs(p - v) < 0.1 ? p : v));
+    };
+    put();
+    /* 画面を回したときは、見張りだけに任せず、少しあとにも測り直す */
+    const later = () => { put(); requestAnimationFrame(put); setTimeout(put, 160); setTimeout(put, 420); };
+    window.addEventListener("resize", later);
+    window.addEventListener("orientationchange", later);
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") { ro = new ResizeObserver(put); ro.observe(el); }
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener("resize", later);
+      window.removeEventListener("orientationchange", later);
+    };
+  }, []);
+  return (
+    <>
+      <div aria-hidden="true" style={{ height: h }} />
+      <div ref={boxRef} className="ft-topchrome ft-page">
+        <div className="max-w-lg lg:max-w-5xl mx-auto">{children}</div>
+      </div>
+    </>
+  );
+}
+
 /* 画面の説明文は置かない。使い方はメニューの「ヘルプ」と「？」にまとめてある。
    説明が無くなったぶん、画面名は大きくしてある */
 function ScreenHeader({ title, right }) {
@@ -3118,7 +3370,7 @@ function ScreenHeader({ title, right }) {
     return () => ro.disconnect();
   }, []);
   return (
-    <div ref={headRef} className="ft-hdr px-5 pb-2.5 sticky top-0 ft-page z-10 border-b border-th-200" style={SAFE_TOP(18)}>
+    <div ref={headRef} className="ft-hdr px-5 pb-2.5 ft-page border-b border-th-200" style={SAFE_TOP(18)}>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0"><h1 className="font-display text-[27px] text-neutral-900 tracking-wide truncate">{title}</h1></div>
         <div className="flex items-center gap-1 shrink-0">
@@ -3191,7 +3443,8 @@ function SideMenu({ open, onClose, items, footer, instant }) {
 
   if (!mounted) return null;
   return (
-    <div className="fixed inset-0" style={{ zIndex: 2147483200 }}>
+    <div data-ft-overlay="" className="fixed inset-0" style={{ zIndex: 2147483200 }}>
+      <BackgroundLock />
       <div
         onClick={onClose}
         className="absolute inset-0 bg-black/40"
@@ -3264,7 +3517,8 @@ function emptyRecord(type) {
    ============================================================ */
 function ConfirmDeleteDialog({ onConfirm, onCancel }) {
   return (
-    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+    <div data-ft-overlay="" className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">この記録を削除しますか？</h3>
         <p className="text-[13.5px] text-neutral-600 mb-5">記録そのものが消えます。この操作は取り消せません。</p>
@@ -3279,7 +3533,8 @@ function ConfirmDeleteDialog({ onConfirm, onCancel }) {
 
 function ExitConfirmDialog({ onSave, onDiscard, onStay }) {
   return (
-    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+    <div data-ft-overlay="" className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">保存されていない内容があります</h3>
         <p className="text-[13.5px] text-neutral-600 mb-5">この記録を保存しますか？保存しない場合、入力した内容は失われます。</p>
@@ -3324,7 +3579,7 @@ function PastNotesPanel({ notes }) {
 /* ============================================================
    記録フォーム
    ============================================================ */
-function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, onQuickMemorize, captions, onAutoDraft, typeLocked, knownTags, onCreateTag }) {
+function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, captions, onAutoDraft, typeLocked, knownTags, onCreateTag }) {
   const startRecord = () => (initial ? migrateRecord(initial) : (draft || emptyRecord(initial?.type || "reading")));
   const [type, setType] = useState(initial?.type || draft?.type || "reading");
   const [record, setRecord] = useState(startRecord);
@@ -3351,45 +3606,69 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
     preparedForRef.current = type;
     if (!initial) {
       const fresh = emptyRecord(type);
+      undoStack.current = []; redoStack.current = [];
       setRecord(fresh);
       setBaseline(JSON.stringify(fresh));
     }
   }, [type]); // eslint-disable-line
-  const set = (patch) => setRecord((r) => ({ ...r, ...patch }));
-  const save = () => onSave({ ...record, type, updatedAt: new Date().toISOString() }, { steal });
-
-  /* 途中保存。画面を閉じずにその時点の内容を残す。
-     押した手ごたえが伝わるよう、ボタン自身がしばらく「保存しました」に変わる。
-     2回目以降も毎回変わるので、押せたことが必ず分かる */
-  const [savedAt, setSavedAt] = useState(null);
-  const [justSaved, setJustSaved] = useState(false);
-  const justSavedTimer = useRef(null);
-  useEffect(() => () => clearTimeout(justSavedTimer.current), []);
-  const saveAndStay = () => {
-    const rec = { ...record, type, updatedAt: new Date().toISOString() };
-    onSave(rec, { keepOpen: true, steal });
-    setBaseline(JSON.stringify(record));
-    const d = new Date();
-    setSavedAt(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
-    setJustSaved(true);
-    clearTimeout(justSavedTimer.current);
-    justSavedTimer.current = setTimeout(() => setJustSaved(false), 1800);
+  /* 元に戻す・やり直す。直前の書きかえを、記録ぜんたいのまま覚えておく（項目ごとの差分にしない。
+     あとで食い違うおそれがある）。**同じ欄への続けた入力は、ひとまとめ**（1.2秒以内）にする。
+     1文字ずつ戻ると、書いた文を消すのに何十回も押すことになるため */
+  const recRef = useRef(null);
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const lastEdit = useRef({ key: null, t: 0 });
+  const set = (patch) => {
+    const cur = recRef.current;
+    const keys = Object.keys(patch);
+    const key = keys.length === 1 ? keys[0] : null;
+    const now = Date.now();
+    const merge = key && lastEdit.current.key === key && now - lastEdit.current.t < 1200;
+    if (!merge && cur) undoStack.current = [...undoStack.current, cur].slice(-100);
+    redoStack.current = [];
+    lastEdit.current = { key, t: now };
+    setRecord((r) => ({ ...r, ...patch }));
   };
+  const undo = () => {
+    if (!undoStack.current.length) return;
+    const prev = undoStack.current[undoStack.current.length - 1];
+    undoStack.current = undoStack.current.slice(0, -1);
+    redoStack.current = [...redoStack.current, recRef.current];
+    lastEdit.current = { key: null, t: 0 };
+    setRecord(prev);
+  };
+  const redo = () => {
+    if (!redoStack.current.length) return;
+    const next = redoStack.current[redoStack.current.length - 1];
+    redoStack.current = redoStack.current.slice(0, -1);
+    undoStack.current = [...undoStack.current, recRef.current];
+    lastEdit.current = { key: null, t: 0 };
+    setRecord(next);
+  };
+  const canUndo = undoStack.current.length > 0;
+  const canRedo = redoStack.current.length > 0;
+  const save = () => { doneRef.current = true; onSave({ ...record, type, updatedAt: new Date().toISOString() }, { steal }); };
 
+  /* **「途中保存」のボタンは置かない。** 入力が止まって0.8秒後に自動下書きが残る（下）ので、
+     書いているあいだの取りこぼしは無い。ボタンと「最終保存 ○時」の文字があると、
+     ヘッダーが混み、押す・確かめるという余計な手間が増えていた（姉妹アプリ My手帳 に合わせた） */
   /* 自動下書き。入力が止まって少ししたら、そっと控えを取る。
      アプリが背面に回ったときや閉じられるときは、その場ですぐ控える */
-  const recRef = useRef(record);
   recRef.current = record;
   const typeRef = useRef(type);
   typeRef.current = type;
+  /* **保存・削除・「保存せずに閉じる」のあとは、書きかけを書かないこと（doneRef）。**
+     消したはずの記録が、あとから「書きかけの記録があります」に戻ってくるのを防ぐ。
+     記録を消す・閉じる新しい道を足したら、その前に doneRef を立てること */
+  const doneRef = useRef(false);
   useEffect(() => {
     if (!onAutoDraft) return;
-    const t = setTimeout(() => onAutoDraft({ ...record, type }), 800);
+    const t = setTimeout(() => { if (!doneRef.current) onAutoDraft({ ...record, type }); }, 800);
     return () => clearTimeout(t);
   }, [record, type]); // eslint-disable-line
   useEffect(() => {
     if (!onAutoDraft) return;
-    const flush = () => onAutoDraft({ ...recRef.current, type: typeRef.current });
+    const flush = () => { if (!doneRef.current) onAutoDraft({ ...recRef.current, type: typeRef.current }); };
     const onHide = () => { if (document.visibilityState === "hidden") flush(); };
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("pagehide", flush);
@@ -3404,17 +3683,20 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
     if (isDirty()) { setShowExitConfirm(true); return false; }
     return true;
   };
-  const [closing, close] = useClosing(onCancel);
+  const cancelForm = () => { doneRef.current = true; onCancel(); };
+  const [closing, close] = useClosing(cancelForm);
   const [savingClose, setSavingClose] = useState(false);
   const saveTimer = useRef(null);
   useEffect(() => () => clearTimeout(saveTimer.current), []);
   const handleCloseAttempt = () => { if (guardClose()) close(); };
-  /* 保存したら、記録の画面が下へ消えてから実際に保存される */
+  /* 保存は押したその場で行う（退場の動きを待たない） */
   const saveWithExit = () => {
     if (savingClose) return;
     setSavingClose(true);
-    saveTimer.current = setTimeout(() => save(), 230);
+    save();
   };
+  /* 中身が空のままでは保存できない（空の記録が増えるのを防ぐ） */
+  const canSave = hasContent({ ...record, type });
 
   /* いま扱っている聖書箇所に、過去の記録があれば拾い上げる */
   /* いま扱っている箇所に、過去の記録があれば拾い上げる。
@@ -3472,81 +3754,69 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
       apply: () => { setSteal((p) => ({ ...p, year: other.id })); set({ themeYear: y }); } });
   };
 
-  const { stripRef, screenRef } = useEdgeSwipeBack(onCancel, guardClose);
+  const { stripRef, screenRef } = useEdgeSwipeBack(cancelForm, guardClose);
 
   return (
     /* 閲覧画面（60）より手前に出す。閲覧から編集を開くため */
     <OverlayScreen from="bottom" closing={closing || savingClose} zIndex={70}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
-      <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
-        <h2 className="font-display text-[20px] text-neutral-900 flex-1 min-w-0 truncate pl-1 tracking-wide">{formTitle}</h2>
-        {savedAt && (
-          <span className={"text-[11.5px] font-bold shrink-0 tabular-nums " + (isDirty() ? "text-neutral-400" : "text-th-800/80")}>最終保存 {savedAt}</span>
-        )}
-        <button onClick={saveAndStay} aria-label={justSaved ? "保存しました" : "途中保存する"}
-          disabled={!isDirty() && !justSaved}
-          /* ft-onbg-keep … 背景に絵を敷いたとき、この下地と字はそのまま残す */
-          className={"relative w-11 h-11 rounded-xl border-2 flex items-center justify-center shrink-0 ft-tap ft-tap-icon ft-onbg-keep "
-            + (justSaved ? "border-th-800 bg-th-800 text-white"
-               : isDirty() ? "border-th-700/40 bg-th-50 text-th-900"
-               : "border-neutral-200 bg-neutral-100 text-neutral-400")}>
-          {/* 保存できた合図。輪がひと粒だけ広がって消える */}
-          {justSaved && <span aria-hidden="true" className="absolute inset-0 rounded-xl border-2 border-th-800 ft-ring" />}
-          {/* 2つのアイコンを重ねて置き、入れ替わるように見せる */}
-          <span className={"absolute inset-0 flex items-center justify-center transition-all duration-200 "
-            + (justSaved ? "opacity-0 scale-75 translate-y-1" : "opacity-100 scale-100 translate-y-0")}>
-            <SaveArrowIcon size={22} />
-          </span>
-          <span className={"absolute inset-0 flex items-center justify-center transition-all duration-200 "
-            + (justSaved ? "opacity-100 scale-100" : "opacity-0 scale-50")}>
-            <SaveCheckIcon size={22} />
-          </span>
-        </button>
-        <button onClick={handleCloseAttempt} aria-label="閉じる" className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-neutral-600 hover:bg-neutral-100 shrink-0"><X size={22} /></button>
+      {/* ヘッダー：左に「×」、まんなかに種類（しるしと名前）、右に「元に戻す・やり直す・ピン・ブックマーク」。
+          まんなかを本当にまんなかにするため、3つの区画（1fr / 自分の幅 / 1fr）に分けている */}
+      <div className="ft-hdr grid grid-cols-[1fr_auto_1fr] items-center gap-1 px-3 pb-2.5 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
+        <div className="flex justify-start">
+          <button type="button" onClick={handleCloseAttempt} aria-label="閉じる"
+            className="min-w-[48px] min-h-[46px] flex items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={26} /></button>
+        </div>
+        <span className="flex items-center justify-center gap-1.5 min-w-0">
+          <span className="text-th-800 flex shrink-0">{(TYPE_GUIDE.find((t) => t.key === type) || {}).icon}</span>
+          <span className="font-display text-[15.5px] text-neutral-900 truncate">{typeNames[type] || TYPE_LABELS[type]}</span>
+        </span>
+        <div className="flex items-center justify-end">
+          {/* 無効のときは色を変えず、薄くするだけ（背景に絵を敷いたとき、字が白くなっても区別できるように） */}
+          <TapOnceButton onTap={undo} disabled={!canUndo} aria-label="元に戻す"
+            className="w-9 h-10 flex items-center justify-center rounded-full text-neutral-600 disabled:opacity-30 ft-tap ft-tap-icon"><Undo2 size={20} /></TapOnceButton>
+          <TapOnceButton onTap={redo} disabled={!canRedo} aria-label="やり直す"
+            className="w-9 h-10 flex items-center justify-center rounded-full text-neutral-600 disabled:opacity-30 ft-tap ft-tap-icon"><Redo2 size={20} /></TapOnceButton>
+          <TapOnceButton onTap={() => set({ pinned: !record.pinned })} aria-label="ピン留め" aria-pressed={!!record.pinned}
+            className="w-9 h-10 flex items-center justify-center rounded-full text-th-800 ft-tap ft-tap-icon">
+            <span key={record.pinned ? "on" : "off"} className={"flex " + (record.pinned ? "ft-mark" : "")}><Pin size={20} fill={record.pinned ? "currentColor" : "none"} /></span>
+          </TapOnceButton>
+          <TapOnceButton onTap={() => set({ bookmarked: !record.bookmarked })} aria-label="ブックマーク" aria-pressed={!!record.bookmarked}
+            className="w-9 h-10 flex items-center justify-center rounded-full text-th-800 ft-tap ft-tap-icon">
+            <span key={record.bookmarked ? "on" : "off"} className={"flex " + (record.bookmarked ? "ft-mark" : "")}><Bookmark size={20} fill={record.bookmarked ? "currentColor" : "none"} /></span>
+          </TapOnceButton>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
-        {!initial && (
-          /* **項目名は出さないこと。** 部品を見れば何を選ぶ場所か分かる。
-             余白はほかの項目と同じ16px（mb-4）にそろえる */
-          <div className="flex flex-wrap gap-2 mb-4">
-            {/* ＋から種類を選んで入った場合は、種類の選び直し欄は出さない */}
-            {!typeLocked && (
-              <div className="w-[120px] shrink-0">
-                <Select value={type} onChange={(e) => setType(e.target.value)}>
-                  {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </Select>
-              </div>
-            )}
-            <div className="shrink-0">
-              <DateInput className="w-[160px]" value={record.date} onChange={(e) => set({ date: e.target.value })} />
-            </div>
+        {/* **書き始めるまでの距離を短くすること。** 日付はふだん「今日」のままなので、1行に畳んで
+            いちばん上に置く（押すとカレンダー）。すぐ下から本文が始まる。タグは、いちばん下。
+            項目名は出さないこと。部品を見れば何を選ぶ場所か分かる */}
+        {!initial && !typeLocked && (
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {Object.entries(TYPE_LABELS).map(([k, v]) => (
+              <FilterPill key={k} on={type === k} onClick={() => setType(k)}>{typeNames[k] || v}</FilterPill>
+            ))}
           </div>
         )}
-
-        {/* タグはどの種類にも共通なので、種類ごとの分岐の外に置いている */}
-        {initial && (
-          <Field><DateInput value={record.date} onChange={(e) => set({ date: e.target.value })} /></Field>
-        )}
-        <Field>
-          <TagField value={record.tags} onChange={(v) => set({ tags: v })} knownTags={knownTags} onCreateTag={onCreateTag} />
-        </Field>
+        <div className="mb-4">
+          <DateInput row value={record.date} onChange={(e) => set({ date: e.target.value })} />
+        </div>
 
         {type === "reading" && (
           <>
             <Field>
-              <TextInput value={record.passageText || ""} onChange={(e) => set({ passageText: e.target.value })} placeholder="読んだ箇所（例：ヨハネの福音書 3章）" />
-              <RefInserter
-                onPickRange={({ book, chapters, passageText }) => set({ book, chapters, passageText: appendRef(record.passageText, passageText) })} />
-              <RecognizedRefs text={record.passageText} />
+              <RefBox refsText={record.passageText}
+                inserter={<RefInserter onPickRange={({ book, chapters, passageText }) => set({ book, chapters, passageText: appendRef(record.passageText, passageText) })} />}>
+                <TextInput bare value={record.passageText || ""} onChange={(e) => set({ passageText: e.target.value })} placeholder="読んだ箇所（例：ヨハネの福音書 3章）" />
+              </RefBox>
             </Field>
             <PastNotesPanel notes={pastNotes} />
             <Field>
-              <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={3} placeholder="気づいたこと、感じたこと" />
-              <RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />
-              <MemorizeLink text={record.notes} allRecords={allRecords} onQuickMemorize={onQuickMemorize} />
-              <RecognizedRefs text={record.notes} />
+              <RefBox refsText={record.notes} inserter={<RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
+                <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={3} placeholder="気づいたこと、感じたこと" />
+              </RefBox>
             </Field>
           </>
         )}
@@ -3559,22 +3829,20 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
               <TextInput value={record.theme || ""} onChange={(e) => set({ theme: e.target.value })} placeholder="テーマ" />
             </Field>
             <Field>
-              <TextInput value={record.passageText} onChange={(e) => set({ passageText: e.target.value })} placeholder="聖書箇所" />
-              <RefInserter onInsert={(ref) => set({ passageText: appendRef(record.passageText, ref) })} />
-              <RecognizedRefs text={record.passageText} />
+              <RefBox refsText={record.passageText} inserter={<RefInserter onInsert={(ref) => set({ passageText: appendRef(record.passageText, ref) })} />}>
+                <TextInput bare value={record.passageText} onChange={(e) => set({ passageText: e.target.value })} placeholder="聖書箇所" />
+              </RefBox>
             </Field>
             <PastNotesPanel notes={pastNotes} />
             <Field>
-              <TextArea value={record.mainVerseText} onChange={(e) => set({ mainVerseText: e.target.value })} minRows={2} placeholder="主題聖句" />
-              <RefInserter onInsert={(ref) => set({ mainVerseText: appendRef(record.mainVerseText, ref) })} />
-              <MemorizeLink text={record.mainVerseText} allRecords={allRecords} onQuickMemorize={onQuickMemorize} />
-              <RecognizedRefs text={record.mainVerseText} />
+              <RefBox refsText={record.mainVerseText} inserter={<RefInserter onInsert={(ref) => set({ mainVerseText: appendRef(record.mainVerseText, ref) })} />}>
+                <TextArea bare value={record.mainVerseText} onChange={(e) => set({ mainVerseText: e.target.value })} minRows={2} placeholder="主題聖句" />
+              </RefBox>
             </Field>
             <Field>
-              <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="聞いたこと、心に残ったこと" />
-              <RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />
-              <MemorizeLink text={record.notes} allRecords={allRecords} onQuickMemorize={onQuickMemorize} />
-              <RecognizedRefs text={record.notes} />
+              <RefBox refsText={record.notes} inserter={<RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
+                <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="聞いたこと、心に残ったこと" />
+              </RefBox>
             </Field>
           </>
         )}
@@ -3583,49 +3851,48 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
           <>
             <Field>
               {/* 学びの「主題聖句」と同じ高さ（2行ぶん）にそろえている */}
-              <TextArea value={record.text} onChange={(e) => set({ text: e.target.value })} minRows={2} placeholder="覚えたい聖書のことば（末尾に箇所を書くと、同じ箇所の記録とつながります）" />
-              <RefInserter onInsert={(ref) => set({ text: appendRef(record.text, ref) })} />
-              <RecognizedRefs text={record.text} />
+              <RefBox refsText={record.text} inserter={<RefInserter onInsert={(ref) => set({ text: appendRef(record.text, ref) })} />}>
+                <TextArea bare value={record.text} onChange={(e) => set({ text: e.target.value })} minRows={2} placeholder="覚えたい聖書のことば" />
+              </RefBox>
             </Field>
             <Field>
-              <TextArea value={record.note} onChange={(e) => set({ note: e.target.value })} minRows={2} placeholder="メモ" />
-              <RefInserter onInsert={(ref) => set({ note: appendRef(record.note, ref) })} />
+              <RefBox refsText={record.note} inserter={<RefInserter onInsert={(ref) => set({ note: appendRef(record.note, ref) })} />}>
+                <TextArea bare value={record.note} onChange={(e) => set({ note: e.target.value })} minRows={2} placeholder="メモ" />
+              </RefBox>
             </Field>
-            {/* 高さは決め打ちにしない。上下の余白だけを指定して、
-                中の文字の大きさに合わせて自然に伸び縮みするようにしている。
-                「？」も横に並べて、全部が上下の真ん中でそろう */}
-            <div className="rounded-xl border border-neutral-300 bg-white px-3.5 py-2 mb-4">
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2.5 cursor-pointer select-none flex-1 min-w-0 py-1.5">
-                  <input type="checkbox" checked={!!record.monthYear}
-                    onChange={(e) => e.target.checked ? wantMonth(curYear(), curMonth()) : (setSteal((p) => ({ ...p, month: null })), set({ monthYear: null, monthMonth: null }))}
-                    className="w-5 h-5 accent-th-700 shrink-0" />
-                  <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><Star size={15} className="text-th-800 shrink-0" /> 今月の聖句にする</span>
-                </label>
-                <HelpTip label="今月の聖句" text="選んだ月のあいだ、ホーム画面に表示されます。" />
-              </div>
-              {record.monthYear && (
-                <div className="flex gap-2 mt-2">
-                  <div className="flex-1"><DrumSelect value={record.monthYear} onChange={(v) => wantMonth(v, record.monthMonth)} placeholder="年" title="年を選択" options={yearOptions.map((y) => ({ value: y, label: `${y}年` }))} /></div>
-                  <div className="flex-1"><DrumSelect value={record.monthMonth} onChange={(v) => wantMonth(record.monthYear, v)} placeholder="月" title="月を選択" options={Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1}月` }))} /></div>
+            {/* 「今月／今年の聖句にする」は、入り切りのスイッチの2行を白いカード1枚にまとめる。
+                ONにした行のすぐ下に、年・月を選ぶ欄が出る。高さは決め打ちにしない
+                （中の文字の大きさに合わせて伸び縮みする） */}
+            <div className="rounded-2xl border border-neutral-200 bg-white overflow-hidden mb-4">
+              <div className="px-4 py-2 min-h-[58px] flex flex-col justify-center">
+                <div className="flex items-center gap-2">
+                  <span className="text-[15.5px] text-neutral-900 flex items-center gap-1.5 min-w-0"><Star size={15} className="text-th-800 shrink-0" /> 今月の聖句</span>
+                  <HelpTip label="今月の聖句" text="選んだ月のあいだ、ホーム画面に表示されます。" />
+                  <span className="flex-1" />
+                  <Switch on={!!record.monthYear} label="今月の聖句にする"
+                    onChange={(v) => v ? wantMonth(curYear(), curMonth()) : (setSteal((p) => ({ ...p, month: null })), set({ monthYear: null, monthMonth: null }))} />
                 </div>
-              )}
-            </div>
-            <div className="rounded-xl border border-th-700/30 bg-th-50/40 px-3.5 py-2">
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2.5 cursor-pointer select-none flex-1 min-w-0 py-1.5">
-                  <input type="checkbox" checked={!!record.themeYear}
-                    onChange={(e) => e.target.checked ? wantYear(curYear()) : (setSteal((p) => ({ ...p, year: null })), set({ themeYear: null }))}
-                    className="w-5 h-5 accent-th-700 shrink-0" />
-                  <span className="text-[14.5px] font-bold text-neutral-800 flex items-center gap-1.5"><Star size={15} className="text-th-800 shrink-0" /> 今年の聖句にする</span>
-                </label>
-                <HelpTip label="今年の聖句" text="1年のあいだ、ホーム画面に表示されます。" />
+                {record.monthYear && (
+                  <div className="flex gap-2 pb-2">
+                    <div className="flex-1"><DrumSelect value={record.monthYear} onChange={(v) => wantMonth(v, record.monthMonth)} placeholder="年" title="年を選択" options={yearOptions.map((y) => ({ value: y, label: `${y}年` }))} /></div>
+                    <div className="flex-1"><DrumSelect value={record.monthMonth} onChange={(v) => wantMonth(record.monthYear, v)} placeholder="月" title="月を選択" options={Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1}月` }))} /></div>
+                  </div>
+                )}
               </div>
-              {record.themeYear && (
-                <div className="mt-2">
-                  <DrumSelect value={record.themeYear} onChange={(v) => wantYear(v)} placeholder="年" title="年を選択" options={yearOptions.map((y) => ({ value: y, label: `${y}年` }))} />
+              <div className="border-t border-neutral-200 px-4 py-2 min-h-[58px] flex flex-col justify-center">
+                <div className="flex items-center gap-2">
+                  <span className="text-[15.5px] text-neutral-900 flex items-center gap-1.5 min-w-0"><Star size={15} className="text-th-800 shrink-0" /> 今年の聖句</span>
+                  <HelpTip label="今年の聖句" text="1年のあいだ、ホーム画面に表示されます。" />
+                  <span className="flex-1" />
+                  <Switch on={!!record.themeYear} label="今年の聖句にする"
+                    onChange={(v) => v ? wantYear(curYear()) : (setSteal((p) => ({ ...p, year: null })), set({ themeYear: null }))} />
                 </div>
-              )}
+                {record.themeYear && (
+                  <div className="pb-2">
+                    <DrumSelect value={record.themeYear} onChange={(v) => wantYear(v)} placeholder="年" title="年を選択" options={yearOptions.map((y) => ({ value: y, label: `${y}年` }))} />
+                  </div>
+                )}
+              </div>
             </div>
           </>
         )}
@@ -3633,12 +3900,16 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
         {type === "memo" && (
           <>
             <Field>
-              <TextArea value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="書きとめておきたいこと" />
-              <RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />
-              <RecognizedRefs text={record.notes} />
+              <RefBox refsText={record.notes} inserter={<RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
+                <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="書きとめておきたいこと" />
+              </RefBox>
             </Field>
           </>
         )}
+
+        <Field>
+          <TagField value={record.tags} onChange={(v) => set({ tags: v })} knownTags={knownTags} onCreateTag={onCreateTag} />
+        </Field>
 
         <div className="flex flex-col items-center pt-3 pb-1">
           <div className="opacity-70"><Mascot seed={"form-" + type} size={104} /></div>
@@ -3652,7 +3923,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
       <div className="shrink-0 flex gap-2.5 px-5 py-4 border-t border-neutral-200 bg-white max-w-2xl mx-auto w-full" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 16px)" }}>
         {initial && <button onClick={() => setConfirmDelete(true)} className={BTN_DANGER_SOFT + " flex-1 " + BTN_H + " text-[14.5px]"}><Trash2 size={16} /> 削除</button>}
         <TapButton onClick={handleCloseAttempt} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</TapButton>
-        <TapButton onClick={saveWithExit} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>保存</TapButton>
+        <TapButton onClick={saveWithExit} disabled={!canSave} style={{ flex: 1.4 }} className={BTN_PRIMARY + " " + BTN_H + " text-[14.5px]"}><Check size={17} /> 保存</TapButton>
       </div>
       </div>
 
@@ -3661,11 +3932,11 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
           onConfirm={() => { takeover.apply(); setTakeover(null); }}
           onCancel={() => setTakeover(null)} />
       )}
-      {confirmDelete && <ConfirmDeleteDialog onConfirm={() => onDelete(record.id)} onCancel={() => setConfirmDelete(false)} />}
+      {confirmDelete && <ConfirmDeleteDialog onConfirm={() => { doneRef.current = true; onDelete(record.id); }} onCancel={() => setConfirmDelete(false)} />}
       {showExitConfirm && (
         <ExitConfirmDialog
           onSave={() => { setShowExitConfirm(false); save(); }}
-          onDiscard={() => { setShowExitConfirm(false); onCancel(); }}
+          onDiscard={() => { setShowExitConfirm(false); cancelForm(); }}
           onStay={() => setShowExitConfirm(false)}
         />
       )}
@@ -3678,7 +3949,8 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, on
    ============================================================ */
 function DuplicateDialog({ existing, onRegister, onViewExisting, onCancel }) {
   return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center px-6">
+    <div data-ft-overlay="" className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center px-6">
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-3">同じ聖句が登録済みです</h3>
         <div className="rounded-xl bg-neutral-50 border border-neutral-200 p-3 mb-4">
@@ -3754,21 +4026,85 @@ function clampText(text, lines, maxChars = 220) {
 function recordFullDisplay(r) {
   return recordSections(r).map((sc) => (sc.label ? sc.label + "\n" : "") + sc.text).join("\n\n");
 }
-function RecordCard({ r, onClick }) {
+/* 言葉で探したとき、当たった語を色で塗る。検索は記録ぜんたいに共通の操作なので、
+   記録ごとの色ではなくテーマ色（.ft-hit）を使う */
+function HitText({ text, word }) {
+  if (!word || !text) return text;
+  const lower = text.toLowerCase();
+  const w = word.toLowerCase();
+  const out = [];
+  let pos = 0, i;
+  while ((i = lower.indexOf(w, pos)) !== -1) {
+    if (i > pos) out.push(text.slice(pos, i));
+    out.push(<mark key={i} className="ft-hit">{text.slice(i, i + w.length)}</mark>);
+    pos = i + w.length;
+  }
+  if (pos < text.length) out.push(text.slice(pos));
+  return out;
+}
+/* 当たった語のまわりの短い抜き出し（最大3か所）。札に見えている文にはないところを見せるために使う */
+function hitSnippets(r, word) {
+  const all = recordAllText(r);
+  const lower = all.toLowerCase();
+  const w = word.toLowerCase();
+  const out = [];
+  let pos = 0, i;
+  while (out.length < 3 && (i = lower.indexOf(w, pos)) !== -1) {
+    const from = Math.max(0, i - 14);
+    const to = Math.min(all.length, i + w.length + 26);
+    out.push({ pre: (from > 0 ? "…" : "") + all.slice(from, i).replace(/\n/g, " "), hit: all.slice(i, i + w.length), post: all.slice(i + w.length, to).replace(/\n/g, " ") + (to < all.length ? "…" : "") });
+    pos = to;
+  }
+  return out;
+}
+
+/* 記録の札。
+   hit ＝ 言葉で探したときの語（当たった語を塗り、札に見えていない場所に当たったときは抜き出しを出す）。
+   selectMode / selected / onLongPress ＝ 長押しで選ぶモード（探す画面の結果で、まとめて消すときに使う） */
+function RecordCard({ r, onClick, hit, selectMode, selected, onLongPress }) {
   const [pressed, go] = useTapThen(onClick);
   const chips = chipRefs(recordRefs(r));
+  const title = recordTitle(r);
+  const snippet = recordSnippet(r) ? clampText(recordSnippet(r), 3) : "";
+  const lp = useRef({ t: null, fired: false, x: 0, y: 0 });
+  useEffect(() => () => clearTimeout(lp.current.t), []);
+  const clear = () => clearTimeout(lp.current.t);
+  const seen = hit ? (title + "\n" + snippet).toLowerCase().includes(hit.toLowerCase()) : true;
+  const extra = hit && !seen ? hitSnippets(r, hit) : [];
   return (
-    <button onClick={go}
-      className={(pressed ? "brightness-90 opacity-80 " : "") + "w-full text-left border border-neutral-200 bg-white rounded-2xl px-4 py-3.5 flex flex-col gap-1.5 relative ft-tap ft-tap-card hover:bg-neutral-50/70"}>
+    <button
+      onClick={() => { if (lp.current.fired) { lp.current.fired = false; return; } go(); }}
+      onPointerDown={onLongPress ? (e) => {
+        lp.current.fired = false; lp.current.x = e.clientX; lp.current.y = e.clientY;
+        clear();
+        lp.current.t = setTimeout(() => { lp.current.fired = true; onLongPress(); }, 500);
+      } : undefined}
+      onPointerMove={onLongPress ? (e) => { if (Math.hypot(e.clientX - lp.current.x, e.clientY - lp.current.y) > 10) clear(); } : undefined}
+      onPointerUp={onLongPress ? clear : undefined}
+      onPointerCancel={onLongPress ? clear : undefined}
+      onContextMenu={onLongPress ? (e) => e.preventDefault() : undefined}
+      style={{ ...(onLongPress ? { WebkitTouchCallout: "none" } : null), ...(selectMode ? { paddingLeft: 48 } : null) }}
+      className={(pressed ? "ft-tap-pressed " : "") + "w-full text-left border bg-white rounded-2xl px-4 py-3.5 flex flex-col gap-1.5 relative ft-tap ft-tap-card hover:bg-neutral-50/70 "
+        + (selected ? "border-th-800 bg-th-50/40" : "border-neutral-200")}>
+      {selectMode && (
+        <span aria-hidden="true" className={"absolute left-3.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full border-2 flex items-center justify-center " + (selected ? "border-th-800 bg-th-800 text-white" : "border-neutral-300 bg-white")}>
+          {selected && <Check size={14} strokeWidth={3} />}
+        </span>
+      )}
       <div className="flex items-center gap-2 flex-wrap">
         <TypeBadge type={r.type} />
         {r.date && <span className="text-[12.5px] font-bold text-neutral-500 ml-auto">{r.date}</span>}
         {r.pinned && <Pin size={15} className="text-th-800 shrink-0" fill="currentColor" strokeWidth={1.5} />}
         {r.bookmarked && <Bookmark size={15} className="text-th-800 shrink-0" fill="currentColor" strokeWidth={1.5} />}
       </div>
-      <div className="text-[15.5px] text-neutral-900 font-bold">{recordTitle(r)}</div>
-      {recordSnippet(r) && <div className="text-[13.5px] text-neutral-600 whitespace-pre-line">{clampText(recordSnippet(r), 3)}</div>}
+      <div className="text-[15.5px] text-neutral-900 font-bold"><HitText text={title} word={hit} /></div>
+      {snippet && <div className="text-[13.5px] text-neutral-600 whitespace-pre-line"><HitText text={snippet} word={hit} /></div>}
       {chips.length > 0 && <div className="flex flex-wrap gap-1.5 mt-0.5">{chips.map((c, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">{c.book}{c.chapter ? ` ${c.chapter}` : ""}</span>)}</div>}
+      {extra.length > 0 && (
+        <div className="mt-0.5 rounded-lg bg-th-50/60 border border-th-100 px-2.5 py-1.5 space-y-0.5">
+          {extra.map((x, i) => <div key={i} className="text-[12.5px] text-neutral-600">{x.pre}<mark className="ft-hit">{x.hit}</mark>{x.post}</div>)}
+        </div>
+      )}
     </button>
   );
 }
@@ -4078,7 +4414,8 @@ function BackupReminder({ records, prefs, onOpenBackup }) {
 function FruitPickDialog({ title, note, current, onPick, onCancel }) {
   const [sel, setSel] = useState(current || FRUITS[0].key);
   return (
-    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+    <div data-ft-overlay="" className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-1.5">{title}</h3>
         {note && <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-3">{note}</p>}
@@ -4112,7 +4449,8 @@ function FruitPickDialog({ title, note, current, onPick, onCancel }) {
 /* 育てる実を変えるときの注意喚起 */
 function ConfirmReplantDialog({ fruit, onConfirm, onCancel }) {
   return (
-    <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center px-6">
+    <div data-ft-overlay="" className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center px-6">
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">木を植え直します</h3>
         <p className="text-[13.5px] text-neutral-700 leading-relaxed mb-2">
@@ -4135,7 +4473,8 @@ function ConfirmReplantDialog({ fruit, onConfirm, onCancel }) {
 function HarvestDialog({ fruit, onReplant, onLater }) {
   const f = fruitByKey(fruit);
   return (
-    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+    <div data-ft-overlay="" className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop text-center">
         <div className="flex justify-center mb-1 ft-grow">
           <FruitTree stage={10} fruit={fruit} size={160} />
@@ -4213,23 +4552,22 @@ function TypeRow({ t, names, descs, onPick }) {
   const [pressed, go] = useTapThen(() => onPick(t.key));
   return (
     <button type="button" onClick={go}
-      className={"w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left ft-tap ft-tap-card "
+      className={"w-full flex items-center gap-3 px-3 py-3 min-h-[64px] rounded-xl text-left ft-tap ft-tap-card "
         + (pressed ? "bg-neutral-200 ft-tap-pressed" : "hover:bg-neutral-50")}>
+      {/* **説明の文は置かないこと。** 名前としるしで分かる。開いた瞬間から選べるほうがよい */}
       <span className="w-11 h-11 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center text-th-800 shrink-0">{t.icon}</span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-[15.5px] font-bold text-neutral-900">{(names && names[t.key]) || TYPE_LABELS[t.key]}</span>
-        <span className="block text-[12.5px] text-neutral-500 mt-0.5">{(descs && descs[t.key]) || t.desc}</span>
-      </span>
+      <span className="flex-1 min-w-0 text-[15.5px] font-bold text-neutral-900">{(names && names[t.key]) || TYPE_LABELS[t.key]}</span>
       <ChevronRight size={18} className="text-neutral-400 shrink-0" />
     </button>
   );
 }
 
 function TypePickSheet({ onPick, onCancel, descs, names, onImportFile, onPasteImport }) {
-  const [closing, close] = useClosing(onCancel, 240);
+  const [closing, close] = useClosing(onCancel);
   const fileRef = useRef(null);
   return (
-    <div className="ft-sheet-wrap flex items-end justify-center" style={{ zIndex: 2147483000 }} onClick={close}>
+    <div data-ft-overlay="" className="ft-sheet-wrap flex items-end justify-center" style={{ zIndex: 2147483000 }} onClick={close}>
+      <BackgroundLock />
       <div className={"absolute inset-0 bg-black/40 " + (closing ? "anim-fade-out" : "anim-fade")} />
       <div className={"relative w-full max-w-lg bg-white rounded-t-2xl border-t border-neutral-200 shadow-xl "
           + (closing ? "anim-sheet-out" : "anim-sheet")}
@@ -4270,26 +4608,20 @@ function TypePickSheet({ onPick, onCancel, descs, names, onImportFile, onPasteIm
               {/* 上の種類の行（TypeRow）と、絵と字の位置がぴったりそろうようにする。
                   枠の大きさ・すきま・字の大きさは TypeRow と同じ数にすること */}
               <button type="button" onClick={() => fileRef.current && fileRef.current.click()}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-neutral-50 ft-tap ft-tap-card">
+                className="w-full flex items-center gap-3 px-3 py-3 min-h-[64px] rounded-xl text-left hover:bg-neutral-50 ft-tap ft-tap-card">
                 <span className="w-11 h-11 rounded-xl bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-600 shrink-0">
                   <Download size={22} />
                 </span>
-                <span className="flex-1 min-w-0">
-                  <span className="block text-[15.5px] font-bold text-neutral-900">ファイルから取り込む</span>
-                  <span className="block text-[12.5px] text-neutral-500 mt-0.5">ほかの人から受け取った記録など</span>
-                </span>
+                <span className="flex-1 min-w-0 text-[15.5px] font-bold text-neutral-900">ファイルから取り込む</span>
                 <ChevronRight size={18} className="text-neutral-400 shrink-0" />
               </button>
               {/* ファイルの行方が分かりにくい端末のために、文字から取り込む道すじも用意する */}
               <button type="button" onClick={onPasteImport}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-neutral-50 ft-tap ft-tap-card">
+                className="w-full flex items-center gap-3 px-3 py-3 min-h-[64px] rounded-xl text-left hover:bg-neutral-50 ft-tap ft-tap-card">
                 <span className="w-11 h-11 rounded-xl bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-600 shrink-0">
                   <ClipboardPaste size={22} />
                 </span>
-                <span className="flex-1 min-w-0">
-                  <span className="block text-[15.5px] font-bold text-neutral-900">文字から取り込む</span>
-                  <span className="block text-[12.5px] text-neutral-500 mt-0.5">メモやチャットに貼られた記録から</span>
-                </span>
+                <span className="flex-1 min-w-0 text-[15.5px] font-bold text-neutral-900">文字から取り込む</span>
                 <ChevronRight size={18} className="text-neutral-400 shrink-0" />
               </button>
             </>
@@ -4309,7 +4641,8 @@ function DraftDialog({ draft, onResume, onDiscard, names }) {
     ? `${when.getMonth() + 1}月${when.getDate()}日 ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`
     : null;
   return (
-    <div className="fixed inset-0 z-[75] bg-black/50 flex items-center justify-center px-6">
+    <div data-ft-overlay="" className="fixed inset-0 z-[75] bg-black/50 flex items-center justify-center px-6">
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
       <div className="flex items-start gap-3">
         <span className="w-11 h-11 rounded-xl bg-white border border-amber-200 flex items-center justify-center shrink-0">
@@ -4335,7 +4668,7 @@ function HomeScreen({ records, prefs, onOpenBackup, garden, onStartCycle, onHarv
        ft-pad-nav が「帯の厚み＋切り欠き＋少しの余裕」を1か所で決めている。
        ここを広げすぎると、木と段階の聖句がある画面が縦に収まらなくなる */
     <div className="ft-pad-nav">
-      <ScreenHeader title="ホーム" />
+      <TopChrome><ScreenHeader title="ホーム" /></TopChrome>
       {/* ヘッダは動かさず、中身だけがそっと立ち上がる（ヘッダは sticky なので動かすとぶれる） */}
       <div className="px-5 pt-4 ft-rise">
         <HighlightBanner records={records} />
@@ -4358,7 +4691,7 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
     .slice(0, 10), [records]);
   return (
     <div className="ft-pad-fab">
-      <ScreenHeader title="記録" />
+      <TopChrome><ScreenHeader title="記録" /></TopChrome>
       <div className="px-5 pt-4 ft-rise">
         {/* 通読のつづきは、記録画面のいちばん上に置く */}
         <ContinueCard records={records} onStart={onStartReading} />
@@ -4391,19 +4724,34 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
 /* ============================================================
    ③ 検索画面
    ============================================================ */
+/* 並べ替えの切り替え。**端末まかせの選択画面（<select>）は使わないこと。**
+   ふだんは目に入らず、探したいときにだけ気づけばよいので、小さな文字のボタンにしてある。
+   押すたびに 目次順 → 新しい順 → 古い順 と入れ替わる（値が変わるだけなので TapOnceButton） */
+function SortToggle({ value, onChange }) {
+  const i = Math.max(0, SORT_MODES.findIndex((m) => m.key === value));
+  const cur = SORT_MODES[i];
+  const next = SORT_MODES[(i + 1) % SORT_MODES.length];
+  return (
+    <TapOnceButton onTap={() => onChange(next.key)} aria-label={`並べ替え：いま${cur.label}。押すと${next.label}`}
+      className="ml-auto h-9 pl-2.5 pr-3 flex items-center gap-1 rounded-full text-[12.5px] font-bold text-neutral-500 hover:bg-neutral-100 shrink-0 ft-tap ft-tap-icon">
+      <ArrowUpDown size={14} /> {cur.label}
+    </TapOnceButton>
+  );
+}
+
 /* 絞り込みのボタン。記録の種類など、押して切り替えるものは
    すべてこれを使う。見た目と押し心地をばらけさせないため */
 function FilterPill({ on, onClick, children }) {
   return (
-    <button type="button" aria-pressed={on} onClick={onClick}
+    <TapOnceButton aria-pressed={on} onTap={onClick}
       className={"text-[12.5px] font-bold px-3 py-1 rounded-full border-2 ft-tap "
         + (on ? "border-th-800 bg-th-800 text-white" : "border-neutral-200 bg-white text-neutral-600")}>
       {children}
-    </button>
+    </TapOnceButton>
   );
 }
 
-function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSort }) {
+function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSort, resetSig = 0 }) {
   const typeNames = useTypeName();
   const [keyword, setKeyword] = useState("");
   const [filterBook, setFilterBook] = useState("");
@@ -4426,9 +4774,27 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
   const [searched, setSearched] = useState(false); // 一度でも検索したか
   const [searching, setSearching] = useState(false);
   const [resultKey, setResultKey] = useState(0);
+
+  /* 下の「探す」をもう一度押されたとき（2回め）は、条件も結果も消して、はじめの状態に戻す。
+     1回めは、いま見ている表示のまま、いちばん上へ戻すだけ（AppMain の pressTab） */
+  /* 長押しで選ぶモード。まとめて消すときに使う。
+     選ぶのは、いま画面に出ている結果の中だけ（条件を変えたら選びなおしになるよう、検索のたびに解く） */
+  const [selecting, setSelecting] = useState(false);
+  const [selIds, setSelIds] = useState([]);
+  const [confirmMany, setConfirmMany] = useState(false);
+  const stopSelect = () => { setSelecting(false); setSelIds([]); setConfirmMany(false); };
+  const toggleSel = (id) => setSelIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  useEffect(() => {
+    if (!resetSig) return;
+    stopSelect();
+    setKeyword(""); setFilterBook(""); setFilterTags([]); setFilterTypes([]); setFilterFrom(""); setFilterTo("");
+    setApplied({ keyword: "", book: "", tags: [], types: [], from: "", to: "" });
+    setSearched(false); setFiltersOpen(true);
+  }, [resetSig]);
   const searchTimer = useRef(null);
   useEffect(() => () => clearTimeout(searchTimer.current), []);
   const runSearch = () => {
+    stopSelect();
     setSearching(true);
     clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
@@ -4491,14 +4857,12 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
   return (
     /* 下の帯（タブ）に隠れない分だけの余白。＋ボタンが無い画面なので ft-pad-fab は要らない */
     <div className="ft-pad-nav">
+      <TopChrome>
       <ScreenHeader title="探す" />
-      {/* **検索の欄と絞り込みの帯は、見出しの下に貼りつけること。**
-          下まで見ていった先で探し直したくなったとき、
-          いちいち上まで戻らずに済む。
-          貼りつく位置は --ft-head-h（見出しの実際の高さ）から決める。
-          数を書き写すと、文字の大きさを変えたときに見出しへ食い込む */}
-      <div className="px-5 pt-4 pb-3 space-y-2.5 sticky ft-page z-20 ft-rise"
-        style={{ top: "var(--ft-head-h, 68px)" }}>
+      {/* **検索の欄と絞り込みの帯は、見出しと同じ TopChrome に入れること。**
+          下まで見ていった先で探し直したくなったとき、いちいち上まで戻らずに済む。
+          ここを sticky にしないこと（TopChrome の説明を参照）。高さは TopChrome が測る */}
+      <div className="px-5 pt-4 pb-3 space-y-2.5 ft-page ft-rise">
         <div className="flex gap-2">
           <div className="flex-1 min-w-0">
             <TextInput value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="ことばで探す"
@@ -4520,6 +4884,7 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
           <ChevronDown size={18} className={"text-neutral-500 ft-chev " + (filtersOpen ? "ft-chev-on" : "")} />
         </button>
       </div>
+      </TopChrome>
 
       {/* 絞り込みの中身は貼りつけない。開くと背が高く、
           貼りつけると結果を見せる場所がほとんど無くなる */}
@@ -4528,64 +4893,51 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
           /* iPhoneで開いたとき、はじめの状態がスクロールなしで収まるように、
              余白と行数をきつめに詰めている。ここを広げるときは実機の高さに注意 */
           <div className="space-y-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 ft-open">
-            <div>
-              <span className="flex items-center gap-1 text-[12.5px] font-bold text-neutral-600 mb-1">
-                記録の種類
-                <HelpTip label="記録の種類" text="選ばないときは、すべての種類が対象です。" />
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {SEARCH_TYPES.map((t) => (
-                  <FilterPill key={t} on={filterTypes.includes(t)}
-                    onClick={() => setFilterTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t])}>
-                    {typeNames[t] || TYPE_LABELS[t]}
-                  </FilterPill>
-                ))}
-              </div>
+            {/* **項目名と「？」は置かないこと。** 部品を見れば何を選ぶ欄か分かる
+                （種類は札、タグは「タグを選ぶ」、書は「書を選択」）。名前を付けるのは「期間」だけ。
+                選ばないときは、すべての種類が対象。タグを複数選ぶと、そのすべてが付いた記録だけが残る */}
+            <div className="flex flex-wrap gap-1.5">
+              {SEARCH_TYPES.map((t) => (
+                <FilterPill key={t} on={filterTypes.includes(t)}
+                  onClick={() => setFilterTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t])}>
+                  {typeNames[t] || TYPE_LABELS[t]}
+                </FilterPill>
+              ))}
             </div>
 
             <div>
-              <span className="flex items-center gap-1 text-[12.5px] font-bold text-neutral-600 mb-1">
-                タグ
-                <HelpTip label="タグ" text="複数選ぶと、そのすべてが付いた記録だけが残ります。" />
-              </span>
               {/* 一覧は出しっぱなしにしない。タグが増えるほど画面を圧迫するため。
-                  形は記録画面の「タグを選ぶ・作る」とそろえている */}
-              {/* 並びは記録画面のタグ欄と同じ（選んだ札が上、ボタンが下） */}
-              {filterTags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-1.5">
-                  {filterTags.map((t) => (
-                    <span key={t} className="ft-chip inline-flex items-center gap-0.5 rounded-full bg-th-50 border border-th-200 pl-2.5 pr-0.5 py-0.5">
-                      <span className="text-[12.5px] font-bold text-th-900">{t}</span>
-                      <button type="button" onClick={() => setFilterTags((prev) => prev.filter((x) => x !== t))} aria-label={`${t} を外す`}
-                        className="w-5 h-5 flex items-center justify-center rounded-full text-th-800/60 hover:text-red-700 ft-tap ft-tap-icon"><X size={12} /></button>
-                    </span>
-                  ))}
-                </div>
-              )}
+                  形は記録画面の「タグを追加」とそろえている（押すところが先、選んだ札はその下） */}
               <button type="button" onClick={() => setTagDialog(true)}
                 className={BTN_SECONDARY + " " + BTN_H + " px-3.5 text-[14.5px]"}>
                 <Plus size={15} /> {filterTags.length ? "タグを選び直す" : "タグを選ぶ"}
               </button>
+              {filterTags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {filterTags.map((t) => (
+                    <span key={t} className="ft-chip inline-flex items-center gap-0.5 rounded-full bg-th-50 border border-th-200 pl-2.5 pr-0.5 py-0.5">
+                      <span className="text-[12.5px] font-bold text-th-900">{t}</span>
+                      <TapOnceButton onTap={() => setFilterTags((prev) => prev.filter((x) => x !== t))} aria-label={`${t} を外す`}
+                        className="w-5 h-5 flex items-center justify-center rounded-full text-th-800/60 hover:text-red-700 ft-tap ft-tap-icon"><X size={12} /></TapOnceButton>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div>
-              <span className="block text-[12.5px] font-bold text-neutral-600 mb-1">書</span>
-              <BookSelect compact value={filterBook} onChange={(v) => setFilterBook(v)} />
-            </div>
+            <BookSelect compact value={filterBook} onChange={(v) => setFilterBook(v)} />
 
-            <div>
-              <span className="block text-[12.5px] font-bold text-neutral-600 mb-1">期間</span>
-              <div className="flex items-center gap-1">
-                <DateInput className="flex-1 min-w-0" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} />
-                {/* 日付を選ぶ画面には取り消しが無いので、外す手だてをここに置いておく。
-                    入っているときだけ出るので、はじめの高さは増えない */}
-                {filterFrom && <button type="button" onClick={() => setFilterFrom("")} aria-label="開始日を外す"
-                  className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-neutral-500 hover:bg-red-50 hover:text-red-700 ft-tap ft-tap-icon"><X size={15} /></button>}
-                <span className="text-neutral-400 font-bold shrink-0">〜</span>
-                <DateInput className="flex-1 min-w-0" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
-                {filterTo && <button type="button" onClick={() => setFilterTo("")} aria-label="終了日を外す"
-                  className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-neutral-500 hover:bg-red-50 hover:text-red-700 ft-tap ft-tap-icon"><X size={15} /></button>}
-              </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[12.5px] font-bold text-neutral-600 shrink-0 w-9">期間</span>
+              <DateInput className="flex-1 min-w-0" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} />
+              {/* 日付を選ぶ画面には取り消しが無いので、外す手だてをここに置いておく。
+                  入っているときだけ出るので、はじめの高さは増えない */}
+              {filterFrom && <button type="button" onClick={() => setFilterFrom("")} aria-label="開始日を外す"
+                className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-neutral-500 hover:bg-red-50 hover:text-red-700 ft-tap ft-tap-icon"><X size={15} /></button>}
+              <span className="text-neutral-400 font-bold shrink-0">〜</span>
+              <DateInput className="flex-1 min-w-0" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
+              {filterTo && <button type="button" onClick={() => setFilterTo("")} aria-label="終了日を外す"
+                className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-neutral-500 hover:bg-red-50 hover:text-red-700 ft-tap ft-tap-icon"><X size={15} /></button>}
             </div>
 
             {activeFilterCount > 0 && (
@@ -4607,16 +4959,11 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
             <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase">
               {sortedRecords.length}件
             </h3>
-            <div className="w-[150px] shrink-0">
-              <Select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
-                {SORT_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-              </Select>
-            </div>
+            <SortToggle value={sortMode} onChange={setSortMode} />
           </div>
         )}
         {tagDialog && (
           <TagPickDialog title="タグで絞り込む" selected={filterTags} known={knownTags}
-            note="複数選ぶと、そのすべてが付いた記録だけが残ります。"
             onApply={(v) => { setFilterTags(v); setTagDialog(false); }}
             onCancel={() => setTagDialog(false)} />
         )}
@@ -4631,11 +4978,45 @@ function SearchScreen({ records, setRecords, openDetail, allKnownTags, defaultSo
             </div>
           )}
           {sortedRecords.map((r) => (
-            <RecordCard key={r.id} r={r} onClick={() => openDetail(r)} />
+            <RecordCard key={r.id} r={r} hit={applied.keyword.trim()}
+              selectMode={selecting} selected={selIds.includes(r.id)}
+              onLongPress={selecting ? undefined : () => { setSelecting(true); setSelIds([r.id]); }}
+              onClick={() => (selecting ? toggleSel(r.id) : openDetail(r))} />
           ))}
         </div>
         )}
       </div>
+
+      {/* 選ぶモードの帯。下の帯（タブ）の上に重ねて、そのあいだだけタブを隠す */}
+      {selecting && (
+        <div className="fixed left-0 right-0 bottom-0 z-40 bg-white border-t border-neutral-200"
+          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+          <div className="max-w-lg lg:max-w-5xl mx-auto flex items-center gap-2 px-4 py-2.5">
+            <span className="text-[14.5px] font-bold text-neutral-700 flex-1 min-w-0 truncate">{selIds.length}件を選択中</span>
+            <button type="button" onClick={() => setSelIds(selIds.length === sortedRecords.length ? [] : sortedRecords.map((r) => r.id))}
+              className={BTN_SECONDARY + " px-3 " + BTN_H + " text-[13.5px] shrink-0"}>
+              {selIds.length === sortedRecords.length ? "すべて外す" : "すべて選ぶ"}
+            </button>
+            <button type="button" disabled={selIds.length === 0} onClick={() => setConfirmMany(true)}
+              className={BTN_DANGER + " px-3.5 " + BTN_H + " text-[13.5px] shrink-0"}><Trash2 size={15} /> 削除</button>
+            <button type="button" onClick={stopSelect} className={BTN_PRIMARY + " px-3.5 " + BTN_H + " text-[13.5px] shrink-0"}>完了</button>
+          </div>
+        </div>
+      )}
+      {confirmMany && (
+        <div data-ft-overlay="" className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+          <BackgroundLock />
+          <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
+            <h3 className="font-display text-[17px] text-neutral-900 mb-2">{selIds.length}件の記録を削除しますか？</h3>
+            <p className="text-[13.5px] text-neutral-600 mb-5">記録そのものが消えます。この操作は取り消せません。</p>
+            <div className="flex gap-2.5">
+              <button onClick={() => setConfirmMany(false)} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
+              <button onClick={() => { const ids = selIds; setRecords((prev) => prev.filter((r) => !ids.includes(r.id))); stopSelect(); }}
+                className={BTN_DANGER + " flex-1 " + BTN_H + " text-[14.5px]"}>削除する</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4721,7 +5102,7 @@ function ProgressScreen({ records, onOpenDetail, onOpenBook, onOpenDay }) {
 
   return (
     <div className="ft-pad-nav">
-      <ScreenHeader title="実績" />
+      <TopChrome><ScreenHeader title="実績" /></TopChrome>
       <div className="px-5 pt-4 ft-rise">
         <div className="rounded-2xl bg-gradient-to-br from-th-700 to-th-900 text-white p-4 mb-3 flex items-center gap-4">
           <Award size={30} className="shrink-0 opacity-90" />
@@ -4876,11 +5257,7 @@ function BookRecordsScreen({ book, records, onClose, onOpenDetail, defaultSort }
         <ChapterTiles book={book} counts={counts} />
         <div className="flex items-center gap-2 mb-3">
           <p className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase">{list.length}件の記録</p>
-          <div className="ml-auto w-[150px]">
-            <Select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
-              {SORT_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </Select>
-          </div>
+          <SortToggle value={sortMode} onChange={setSortMode} />
         </div>
         <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5">
           {list.length === 0 && (
@@ -5156,7 +5533,8 @@ async function copyToClipboard(text) {
 /* ファイルとして保存できなかったときに出す確認ダイアログ */
 function SaveFallbackDialog({ onCopy, onCancel }) {
   return (
-    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+    <div data-ft-overlay="" className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
+      <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">ファイルとして保存できませんでした</h3>
         <p className="text-[13.5px] text-neutral-600 mb-2 leading-relaxed">
@@ -5628,11 +6006,7 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         <div className="flex items-center gap-2 mb-3">
           <p className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase">{list.length}件</p>
-          <div className="ml-auto w-[150px]">
-            <Select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
-              {SORT_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </Select>
-          </div>
+          <SortToggle value={sortMode} onChange={setSortMode} />
         </div>
         {list.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-neutral-300 p-6 flex flex-col items-center">
@@ -5780,7 +6154,8 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
       </div>
 
       {renaming && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
+        <div data-ft-overlay="" className="fixed inset-0 bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
+      <BackgroundLock />
           <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
             <h3 className="font-display text-[17px] text-neutral-900 mb-3">タグの名前を変える</h3>
             <TextInput value={renaming.to} onChange={(e) => setRenaming({ ...renaming, to: e.target.value })} />
@@ -5797,7 +6172,8 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
       )}
 
       {deleting && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
+        <div data-ft-overlay="" className="fixed inset-0 bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483400 }}>
+      <BackgroundLock />
           <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
             <h3 className="font-display text-[17px] text-neutral-900 mb-2">「{deleting.tag}」を削除しますか</h3>
             <p className="text-[13.5px] text-neutral-600 mb-5 leading-relaxed">
@@ -6404,13 +6780,14 @@ function BottomNav({ active, onChange }) {
         {TABS.map(({ key, label, icon: Icon }) => {
           const isActive = active === key;
           return (
-            <button key={key} onClick={() => onChange(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5 min-h-[56px] relative ft-tap ft-tabbtn">
+            /* **TapOnceButton で受けること。** onClick だと、iPhoneで素早く続けて押したとき配られない */
+            <TapOnceButton key={key} onTap={() => onChange(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5 min-h-[56px] relative ft-tap ft-tabbtn">
               {isActive && <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[3px] bg-th-800 rounded-full ft-tabbar" />}
               {/* 選ばれた瞬間だけ弾ませたいので、key を変えて描き直させている */}
               <Icon key={isActive ? "on" : "off"} size={21}
                 className={(isActive ? "text-th-800 ft-tabpop" : "text-neutral-500")} strokeWidth={isActive ? 2.5 : 2} />
               <span className={"text-[11.5px] tracking-tight whitespace-nowrap " + (isActive ? "text-th-800 font-bold" : "text-neutral-500 font-medium")}>{label}</span>
-            </button>
+            </TapOnceButton>
           );
         })}
       </div>
@@ -6475,6 +6852,20 @@ function AppMain() {
   const [records, setRecordsState] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("home");
+  /* 下のタブをもう一度押したときの戻り方（全タブ共通の決まり）。
+     1回め … いま見ている表示のまま、いちばん上へ戻すだけ。
+     2回め（もう上にいるときは1回めから）… その画面のはじめの状態へ戻す（いまは「探す」だけ）。
+     別のタブへ移ったら数え直す。押した回数の偶数・奇数で決めないこと */
+  const [searchReset, setSearchReset] = useState(0);
+  const topArmed = useRef(null);
+  const pressTab = (k) => {
+    if (k !== tab) { topArmed.current = null; setTab(k); return; }
+    const atTop = window.scrollY < 4;
+    if (!atTop && topArmed.current !== k) { topArmed.current = k; scrollPageTop(); return; }
+    topArmed.current = null;
+    if (k === "search") setSearchReset((n) => n + 1);
+    scrollPageTop();
+  };
   const [editing, setEditing] = useState(null);
   const [isNew, setIsNew] = useState(false);
   const [draftSaved, setDraftSaved] = useState(null); // 書きかけの記録（前回アプリを閉じたときの控え）
@@ -6819,14 +7210,6 @@ function AppMain() {
     setViewing((prev) => (prev && prev.id === id ? null : prev));
   };
 
-  const handleQuickMemorize = (rawText) => {
-    const text = truncateAtCitation(rawText);
-    const ref = primaryRef(text);
-    const dup = ref && records.find((m) => m.type === "memorization" && sameRef(primaryRef(m.text), ref));
-    const pending = { id: uid(), type: "memorization", text, monthYear: null, monthMonth: null, createdAt: new Date().toISOString() };
-    if (dup) { setDupState({ pending, existing: dup, fromForm: false }); return; }
-    commitSaveOrAdd(pending);
-  };
   const handleRestore = async (importedRecords, importedArtworks, importedGarden, importedTags, importedSetting) => {
     /* 読み込んだ記録は、もう書き出し済みのもの。
        そのままだと「まだ書き出していない記録が…」と促してしまい、
@@ -6947,6 +7330,8 @@ function AppMain() {
            黒い膜のほうが、どんな写真でも白い文字が浮いて見える
            （姉妹アプリ My手帳 の写真ヘッダと同じ考えかた）。
            膜は下へ行くほど濃くして、見出しの並ぶあたりを確実に暗く保つ */
+        /* 上に留める見出しと帯（TopChrome）。重なり順は、下の帯（z-30）より下、重なる画面（z-50）より下 */
+        .ft-topchrome { position: fixed; top: 0; left: 0; right: 0; z-index: 20; }
         .ft-hdr { position: relative; }
         .ft-hdr > * { position: relative; z-index: 1; }
         .ft-hasbg .ft-hdr::before {
@@ -7058,14 +7443,28 @@ function AppMain() {
         .ft-tap { transition: transform 0.24s cubic-bezier(0.22,1,0.36,1), filter 0.22s ease-out; }
         .ft-tap:active { transform: scale(0.955); filter: brightness(0.95); transition-duration: 70ms; }
         /* 大きなカードは沈みを控えめに、小さなアイコンは深めにすると同じ強さに感じる */
-        .ft-tap.ft-tap-card:active { transform: scale(0.982); }
+        /* **カードには transform も filter も当てないこと。** 押した瞬間に札と中の写真が別の層に
+           持ち上げられ、iPhone では、その上に置いた指の動きが送る箱に届かず、画面が送れなくなる。
+           手ごたえは ::after の薄い膜だけで返す（濃さを変えるときは opacity のこの1か所だけ）。
+           ::after に mix-blend-mode を付けないこと（同じ理由） */
+        .ft-tap.ft-tap-card:active { transform: none; filter: none; }
+        .ft-tap-card:not(.absolute):not(.fixed):not(.sticky) { position: relative; }
+        .ft-tap-card::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: #000; opacity: 0; pointer-events: none; transition: opacity 0.2s ease-out; }
+        .ft-tap-card:active::after, .ft-tap-card.ft-tap-pressed::after { opacity: 0.045; transition-duration: 60ms; }
+        /* 押せる部品の中の絵や、本文のリンクを「つかめる」ままにしない。
+           iPhoneは、絵やリンクの上で指を少し止めると「つまんで運ぶ」を始め、指の動きを取られて画面が送れなくなる */
+        .ft-root button img, .ft-root a img { pointer-events: none; }
+        .ft-root img { -webkit-user-drag: none; }
+        .ft-link { -webkit-user-drag: none; -webkit-touch-callout: none; }
+        /* 言葉で探したときの、当たった語の塗り。地はテーマ色の淡い一段 */
+        .ft-hit { background: var(--th-200); color: inherit; border-radius: 3px; padding: 0 1px; }
         .ft-tap.ft-tap-icon:active { transform: scale(0.88); }
         .ft-tap:disabled { transform: none; filter: none; }
         /* 押されてから画面が変わるまでの、ひと呼吸のあいだ沈めておく状態。
            ここは素早く暗くする。既定の0.24秒のままだと、
            暗くなりきる前に画面が切り替わってしまい、押した手ごたえが見えない */
         .ft-tap-pressed { transform: scale(0.96); filter: brightness(0.9); transition-duration: 45ms; }
-        .ft-tap-card.ft-tap-pressed { transform: scale(0.982); }
+        .ft-tap-card.ft-tap-pressed { transform: none; filter: none; }
 
         /* --- ぽん、と現れる（チップ・チェックなど小さな部品） --- */
         @keyframes ft-bloom { 0% { opacity: 0; transform: scale(0.7); } 100% { opacity: 1; transform: scale(1); } }
@@ -7208,7 +7607,17 @@ function AppMain() {
            小窓を「縦に間隔をあける入れ物（space-y-*）」の中に置くと、
            位置を決める指定とは別に外側の余白が足され、画面ぶんだけ下へずれる。
            探すの絞り込みで、いちばん下のボタンが隠れる原因になっていた */
-        .ft-sheet-wrap { position: fixed; left: 0; right: 0; top: 0; height: 100vh; margin: 0; }
+        .ft-sheet-wrap { position: fixed; left: 0; right: 0; top: 0; height: 100vh; margin: 0; overflow: hidden; }
+        /* 重なる画面。**overflow: hidden を消さないこと。** 入ってくる途中の画面が外へはみ出し、
+           うしろが横や下へ送れてしまう。box-shadow は外わくの「外がわだけ」を白で埋める念のための備え
+           （内がわは変えない。左端から払って戻るとき、うしろが見えるのはこれまでどおり） */
+        [data-ft-overlay] { overflow: hidden; box-shadow: 0 0 0 100vmax #FFFFFF; }
+        /* キーボードが出ている（出る前に見込んだ）ぶんの余白を、送り場のいちばん最後に足す。
+           ::after にしているのは、画面ごとに違う pb-* / py-* を上書きしないため。
+           **送り場は flex-1 overflow-y-auto（紙の中は .ft-sheet-body）の形にそろえること。** ほかの形だと余白が足されない。
+           **重なって出るものの外わくには data-ft-overlay を付けること。** 付け忘れると、その画面だけ余白が足されない */
+        [data-ft-overlay] .flex-1.overflow-y-auto::after,
+        [data-ft-overlay] .ft-sheet-body::after { content: ""; display: block; height: var(--ft-kb, 0px); }
         .ft-sheet-box  { max-height: 82vh; }
         /* --- 見つからなかったときの現れ方 ---
            ぱっと切り替わると「本当に探したのか」が分かりにくい。
@@ -7332,7 +7741,7 @@ function AppMain() {
         <div key={tab} className="ft-tabswap">
         {tab === "home" && <HomeScreen records={records} prefs={prefs} onOpenBackup={() => setBackupOpen(true)} garden={garden} onStartCycle={() => setPickFruit(true)} onHarvest={harvestFruit} />}
         {tab === "record" && <RecordScreen records={records} onOpenDetail={openDetail} onStartReading={openNewReading} />}
-        {tab === "search" && <SearchScreen records={records} setRecords={setRecords} openDetail={openDetail} allKnownTags={knownTags} defaultSort={prefs.sortMode} />}
+        {tab === "search" && <SearchScreen records={records} setRecords={setRecords} openDetail={openDetail} allKnownTags={knownTags} defaultSort={prefs.sortMode} resetSig={searchReset} />}
         {tab === "progress" && <ProgressScreen records={records} onOpenDetail={openDetail} onOpenBook={openBook} onOpenDay={setViewingDay} />}
         </div>
       </div>
@@ -7352,7 +7761,7 @@ function AppMain() {
           </button>
         )}
 
-        <BottomNav active={tab} onChange={setTab} />
+        <BottomNav active={tab} onChange={pressTab} />
 
         {viewingDay && (
           <DayRecordsScreen date={viewingDay} records={records} onClose={closeDay} onOpenDetail={openDetailFromBook} />
@@ -7401,7 +7810,7 @@ function AppMain() {
         {editing && (
           <RecordForm key={editing.id} initial={isNew ? null : editing} draft={isNew ? editing : null}
             onSave={handleSave} onCancel={closeForm} onDelete={handleDelete}
-            allRecords={records} onQuickMemorize={handleQuickMemorize} captions={captions}
+            allRecords={records} captions={captions}
             onAutoDraft={handleAutoDraft} typeLocked={typeLocked}
             knownTags={knownTags} onCreateTag={addTagToMaster} />
         )}
