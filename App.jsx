@@ -980,6 +980,44 @@ function shrinkImage(file, maxSide = 220) {
     reader.readAsDataURL(file);
   });
 }
+/* 切り抜いて、決まった形の絵にする（My手帳 2.11.21 と同じ仕組み）。
+   **元の絵をそのまま入れないこと。** ヘッダーの帯は横長なので、
+   どこを写すかを自分で決めてもらう（CropSheet から呼ぶ）。
+   source は data URL（文字）でも File でもよい */
+function cropImage(source, { aspect = 1, scale = 1, dx = 0, dy = 0, maxSide = 640 } = {}) {
+  return new Promise((resolve, reject) => {
+    const start = (dataUrl) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("画像として読めませんでした"));
+      img.onload = () => {
+        const outW = maxSide;
+        const outH = Math.max(1, Math.round(maxSide / aspect));
+        const cv = document.createElement("canvas");
+        cv.width = outW; cv.height = outH;
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, outW, outH);
+        /* 窓いっぱいに広がる大きさを基準に、つまんだぶんを足す */
+        const base = Math.max(outW / img.width, outH / img.height);
+        const k = base * scale;
+        const w = img.width * k;
+        const h = img.height * k;
+        /* dx/dy は、出す絵のうえでのずれ（px）。**k を掛けないこと** */
+        ctx.drawImage(img, (outW - w) / 2 + dx, (outH - h) / 2 + dy, w, h);
+        let out = "";
+        try { out = cv.toDataURL("image/webp", 0.8); } catch (e) { out = ""; }
+        if (!out || out.length < 40 || out.indexOf("image/webp") < 0) out = cv.toDataURL("image/jpeg", 0.82);
+        resolve(out);
+      };
+      img.src = dataUrl;
+    };
+    if (typeof source === "string") { start(source); return; }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("読み込めませんでした"));
+    reader.onload = () => start(reader.result);
+    reader.readAsDataURL(source);
+  });
+}
+
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 /* 端末の地域の日付を返す。
    以前は世界標準時で計算していたため、日本では朝9時より前だと「前日」になっていた */
@@ -1495,7 +1533,7 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* アプリの版数。**index.html の window.__FT_VERSION が本物。**
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
-const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.2.3";
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.3.1";
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
@@ -3701,13 +3739,30 @@ function ScreenHeader({ title, right }) {
   useEffect(() => {
     const el = headRef.current;
     if (!el || typeof ResizeObserver === "undefined") return undefined;
+    /* 幅（--ft-head-w）も書いておく。ヘッダーの写真を切り抜くとき、帯と同じ形の窓にするため
+       （headerBandAspect が読む）。広い画面では帯が画面いっぱいではないので、画面の幅では代わりにならない */
     const write = () => {
-      document.documentElement.style.setProperty("--ft-head-h", Math.round(el.getBoundingClientRect().height) + "px");
+      const r = el.getBoundingClientRect();
+      if (r.height > 0) document.documentElement.style.setProperty("--ft-head-h", Math.round(r.height) + "px");
+      if (r.width > 0) document.documentElement.style.setProperty("--ft-head-w", Math.round(r.width) + "px");
     };
     write();
     const ro = new ResizeObserver(write);
     ro.observe(el);
-    return () => ro.disconnect();
+    /* **見張りだけに任せないこと。** 画面を回した直後はまだ並べ替えの途中なので、少しあとにもう一度測る */
+    const later = () => {
+      write();
+      requestAnimationFrame(write);
+      setTimeout(write, 160);
+      setTimeout(write, 420);
+    };
+    window.addEventListener("resize", later);
+    window.addEventListener("orientationchange", later);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", later);
+      window.removeEventListener("orientationchange", later);
+    };
   }, []);
   return (
     <div ref={headRef} className="ft-hdr px-5 pb-2.5 ft-page border-b border-th-200" style={SAFE_TOP(18)}>
@@ -6059,6 +6114,210 @@ function buildBackupText(records) {
 /* ============================================================
    イラスト管理画面
    ============================================================ */
+/* ============================================================
+   ヘッダーの写真の切り抜き（My手帳 2.11.21 の仕組みをそのまま移したもの）
+   ============================================================ */
+/* 見出しの帯の形（よこ÷たて）。**切り抜きの窓と、帯の形をそろえること。**
+   帯は background-size: cover ＋ center で敷いているので、形がそろっていないと
+   決めた範囲がそのまま出ない（たとえば 16/9 で切ると上下が切られ、まん中の細い帯しか出ない）。
+   帯の高さは文字の大きさや端末の上の余白で変わるので、**決め打ちせず** ScreenHeader が書いた
+   --ft-head-h / --ft-head-w を読む。測れないときは 16/5。2〜8 の外には出さない */
+function headerBandAspect() {
+  try {
+    const cs = getComputedStyle(document.documentElement);
+    const h = parseFloat(cs.getPropertyValue("--ft-head-h"));
+    let w = parseFloat(cs.getPropertyValue("--ft-head-w"));
+    if (!(w > 0)) w = (typeof window !== "undefined" && window.innerWidth) || 0;
+    if (w > 0 && h > 20) return Math.max(2, Math.min(8, w / h));
+  } catch (e) { /* 測れない端末は、おおよその形で */ }
+  return 16 / 5;
+}
+function useHeaderAspect() {
+  const [a, setA] = useState(headerBandAspect);
+  useEffect(() => {
+    const put = () => setA((p) => { const v = headerBandAspect(); return Math.abs(p - v) < 0.01 ? p : v; });
+    put();
+    /* 画面を回すと帯の形も変わる。**そのとき測り直すこと**（見出しが測り終えるのを少し待つ） */
+    const later = () => { put(); setTimeout(put, 200); setTimeout(put, 480); };
+    window.addEventListener("resize", later);
+    window.addEventListener("orientationchange", later);
+    return () => {
+      window.removeEventListener("resize", later);
+      window.removeEventListener("orientationchange", later);
+    };
+  }, []);
+  return a;
+}
+
+/* 写真のどこを使うかを決める紙（下から出る）。
+   ・指で動かす／2本指でつまんで大きさを変える（1〜4倍）
+   ・**窓を写真からはみ出させないこと。** 動かせるのは、はみ出しているぶんだけ
+   ・外へ引いたり、1倍より小さく・4倍より大きくしたりすると、少しだけ外へ出て、指を離すと戻る
+   ・**指で引いているあいだは動きを付けないこと。** 絵が指から遅れてついてきて、酔ったような感じになる */
+function CropSheet({ file, aspect = 1, round, title = "位置を決める", onCancel, onDone }) {
+  const [url, setUrl] = useState("");
+  const [nat, setNat] = useState(null); // 元の絵の大きさ
+  const [ng, setNg] = useState(false);
+  const [box, setBox] = useState({ w: 300, h: 300 });
+  const [scale, setScale] = useState(1);
+  const [pos, setPos] = useState({ x: 0, y: 0 }); // 窓のまん中からのずれ（画面のpx）
+  const [busy, setBusy] = useState(false);
+  const boxRef = useRef(null);
+  const pts = useRef(new Map()); // いま触れている指
+  const start = useRef(null);
+  /* **元の写真をそのまま見せないこと。** iPhone の写真は大きすぎて、
+     絵として読めずにまっ黒になることがある。いちど小さくしてから見せる */
+  useEffect(() => {
+    let alive = true;
+    setUrl(""); setNg(false); setNat(null);
+    shrinkPhoto(file, 1600)
+      .then((d) => {
+        if (!alive) return;
+        const im = new Image();
+        im.onload = () => { if (alive) { setNat({ w: im.width, h: im.height }); setUrl(d); } };
+        im.onerror = () => { if (alive) setNg(true); };
+        im.src = d;
+      })
+      .catch(() => { if (alive) setNg(true); });
+    return () => { alive = false; };
+  }, [file]);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const put = () => setBox({ w: el.clientWidth, h: el.clientHeight });
+    put();
+    const ro = new ResizeObserver(put);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [url]);
+  /* 窓いっぱいに広がる大きさ（＝これ以上小さくしない） */
+  const base = nat ? Math.max(box.w / nat.w, box.h / nat.h) : 1;
+  const dispW = nat ? nat.w * base * scale : box.w;
+  const dispH = nat ? nat.h * base * scale : box.h;
+  const limX = Math.max(0, (dispW - box.w) / 2);
+  const limY = Math.max(0, (dispH - box.h) / 2);
+  const clamp = (v, lim) => Math.max(-lim, Math.min(lim, v));
+  /* 指で引いているあいだは、少しだけ外へ出られる（そのあと戻る） */
+  const rubber = (v, lim) => (Math.abs(v) <= lim ? v : (v > 0 ? lim : -lim) + (v - (v > 0 ? lim : -lim)) * 0.22);
+  /* 大きさも同じ手ざわりにする。**つまむ手をぴたりと止めないこと。**
+     止まると「これ以上は無理」が壊れたように感じる */
+  const SC_MIN = 1, SC_MAX = 4;
+  const rubberScale = (v) => {
+    if (v < SC_MIN) return Math.max(0.82, SC_MIN - (SC_MIN - v) * 0.35);
+    if (v > SC_MAX) return Math.min(4.7, SC_MAX + (v - SC_MAX) * 0.25);
+    return v;
+  };
+  const dist = () => {
+    const a = [...pts.current.values()];
+    if (a.length < 2) return 0;
+    return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+  };
+  const down = (e) => {
+    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* 使えない端末は無視 */ }
+    start.current = { pos, scale, d: dist(), c: { x: e.clientX, y: e.clientY } };
+  };
+  const move = (e) => {
+    if (!pts.current.has(e.pointerId)) return;
+    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const st = start.current;
+    if (!st) return;
+    if (pts.current.size >= 2) {
+      /* つまんで大きさを変える */
+      const d = dist();
+      if (st.d > 0 && d > 0) setScale(rubberScale(st.scale * (d / st.d)));
+      return;
+    }
+    setPos({
+      x: rubber(st.pos.x + (e.clientX - st.c.x), limX),
+      y: rubber(st.pos.y + (e.clientY - st.c.y), limY),
+    });
+  };
+  const up = (e) => {
+    pts.current.delete(e.pointerId);
+    if (pts.current.size === 0) {
+      start.current = null;
+      /* はみ出したぶんは、するっと戻す（位置も大きさも） */
+      setScale((v) => Math.max(SC_MIN, Math.min(SC_MAX, v)));
+      setPos((v) => ({ x: clamp(v.x, limX), y: clamp(v.y, limY) }));
+    } else {
+      /* 2本のうち1本を離したら、残った指で続けて動かせるよう起点を取り直す */
+      start.current = { pos, scale, d: dist(), c: { x: e.clientX, y: e.clientY } };
+    }
+  };
+  /* 大きさを変えたあとも、窓が写真の外へ出ないように引き戻す */
+  useEffect(() => {
+    setPos((v) => ({ x: clamp(v.x, limX), y: clamp(v.y, limY) }));
+  }, [scale, box.w, box.h, nat]); // eslint-disable-line react-hooks/exhaustive-deps
+  const done = async () => {
+    setBusy(true);
+    try {
+      const outW = aspect === 1 ? 480 : 1200;
+      /* 画面での動かしぶんを、出す絵の大きさに直す */
+      const k = box.w > 0 ? outW / box.w : 1;
+      const out = await cropImage(url || file, {
+        aspect, scale: Math.max(SC_MIN, Math.min(SC_MAX, scale)),
+        dx: clamp(pos.x, limX) * k, dy: clamp(pos.y, limY) * k, maxSide: outW,
+      });
+      setBusy(false);
+      onDone(out);
+      return;
+    } catch (e) {
+      setBusy(false);
+      onCancel();
+    }
+  };
+  const EASE = "cubic-bezier(.22,1,.36,1)";
+  return (
+    <div data-ft-overlay="" className="ft-sheet-wrap flex items-end justify-center anim-fade" style={{ zIndex: 2147483400 }} onClick={onCancel}>
+      <BackgroundLock />
+      <div className="absolute inset-0 bg-black/60" />
+      <div className="relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col anim-sheet"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1 px-4 py-3 border-b border-neutral-200 shrink-0">
+          <span className="font-display text-[17px] text-neutral-900 tracking-wide flex-1">{title}</span>
+          <button type="button" onClick={onCancel} aria-label="閉じる"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={22} /></button>
+        </div>
+        <div className="px-4 py-4 flex justify-center">
+          <div ref={boxRef} className="relative w-full overflow-hidden bg-neutral-900"
+            data-lim={`${Math.round(limX)},${Math.round(limY)},${Math.round(dispW)},${Math.round(box.w)},${nat ? 1 : 0}`}
+            style={{ aspectRatio: `${aspect}`, maxHeight: "36vh", maxWidth: `calc(36vh * ${aspect})`,
+              borderRadius: round ? "50%" : 16, touchAction: "none" }}
+            onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+            {!url && !ng && (
+              <span className="absolute inset-0 flex items-center justify-center text-white"><Spinner size={26} /></span>
+            )}
+            {ng && (
+              <span className="absolute inset-0 flex items-center justify-center text-[13.5px] text-white px-6 text-center">この写真は読み込めませんでした</span>
+            )}
+            {url && nat && (
+              <img src={url} alt="" draggable={false} style={{
+                position: "absolute",
+                width: dispW, height: dispH,
+                left: (box.w - dispW) / 2 + pos.x,
+                top: (box.h - dispH) / 2 + pos.y,
+                /* **戻るときだけ動かすこと。** */
+                transition: start.current ? "none" : `left .22s ${EASE}, top .22s ${EASE}, width .22s ${EASE}, height .22s ${EASE}`,
+                maxWidth: "none", userSelect: "none", WebkitUserSelect: "none", pointerEvents: "none",
+              }} />
+            )}
+          </div>
+        </div>
+        <p className="text-[12.5px] text-neutral-400 pb-3 text-center">指で動かす／つまんで大きさを変える</p>
+        <div className="shrink-0 flex gap-2.5 px-4 py-3 border-t border-neutral-200"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+          <button type="button" onClick={onCancel} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
+          <button type="button" onClick={done} disabled={busy || !url}
+            className={BTN_PRIMARY + " flex-[1.6] " + BTN_H + " text-[14.5px]"}>
+            <Check size={17} /> {busy ? "作っています" : "決定"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, onSavePrefs, onClose, typeDesc, onSaveTypeDesc, headerBg, onSaveHeaderBg }) {
   const [closing, close] = useClosing(onClose);
   /* 記録の種類の名前・説明は、この画面では変えられなくした（依頼による）。
@@ -6083,6 +6342,8 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
   /* ヘッダの背景に敷く絵。イラストとは別枠なので、入れ物も別にしてある */
   const [hdrDraft, setHdrDraft] = useState(headerBg || null);
   const hdrInputRef = useRef(null);
+  const [hdrFile, setHdrFile] = useState(null); // 切り抜きを待っている写真
+  const headAspect = useHeaderAspect(); // 見出しの帯と同じ形で切り抜く（見本も同じ形にする）
 
   const dirty =
     JSON.stringify(draft.map((a) => [a.id, a.group])) !== JSON.stringify(artworks.map((a) => [a.id, a.group])) ||
@@ -6138,21 +6399,21 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     setMsg({ kind: "err", text: "保存できませんでした：" + (((a && a.message) || (c && c.message) || (h && h.message) || (pr && pr.message)) || "原因不明") });
   };
 
-  /* ヘッダの背景を選ぶ。横長に使うので、イラストより大きめに縮めて取り込む */
-  const pickHeader = async (e) => {
+  /* ヘッダの背景を選ぶ。**そのまま入れないこと。** 帯と同じ形の窓（CropSheet）で、
+     どこを写すかを自分で決めてもらう（My手帳 と同じ流れ）。
+     files は先に取り出してから value を空にすること（先に空にすると受け取れない） */
+  const pickHeader = (e) => {
     const f = (e.target.files || [])[0];
     e.target.value = "";
     if (!f) return;
-    setBusy(true);
-    try {
-      /* **イラスト用の shrinkImage を使わないこと。** 横に広げて敷くので、粗さが目立つ */
-      const src = await shrinkPhoto(f, 1000);
-      setHdrDraft(src);
-      setMsg({ kind: "warn", text: "ヘッダーの背景を選びました。下の「保存」を押すと反映されます。" });
-    } catch (err) {
-      setMsg({ kind: "err", text: "画像を読み込めませんでした。" });
-    }
-    setBusy(false);
+    setHdrFile(f);
+  };
+  /* 切り抜きが決まったら、見本にだけ入れる。置き場へ移すのは「保存」のとき（persistHeaderBg） */
+  const doneHeaderCrop = (src) => {
+    setHdrFile(null);
+    if (!src) { setMsg({ kind: "err", text: "画像を読み込めませんでした。" }); return; }
+    setHdrDraft(src);
+    setMsg({ kind: "warn", text: "ヘッダーの背景を選びました。下の「保存」を押すと反映されます。" });
   };
 
   /* 未保存のまま閉じようとしたら確認する（記録画面と同じ動き） */
@@ -6205,7 +6466,9 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
           </h3>
           <div className="rounded-2xl border border-neutral-200 bg-white p-3 mb-6">
             {/* 実際の見えかたに近づけて、黒い膜をかけた状態で見せる */}
-            <div className="relative h-20 rounded-xl overflow-hidden border border-neutral-200 bg-neutral-100 flex items-center justify-center mb-2.5">
+            {/* **高さを決め打ちしないこと。** 帯と同じ形（headAspect）にしておくと、切り抜いた範囲がそのまま見える */}
+            <div className="relative rounded-xl overflow-hidden border border-neutral-200 bg-neutral-100 flex items-center justify-center mb-2.5"
+              style={{ aspectRatio: `${headAspect}` }}>
               {hdrDraft ? (
                 <>
                   {/* **<img src> に photo:番号 をそのまま渡さないこと**（出ない）。Photo を通す */}
@@ -6219,6 +6482,10 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
               )}
             </div>
             <input ref={hdrInputRef} type="file" accept="image/*" onChange={pickHeader} className="hidden" />
+            {hdrFile && (
+              <CropSheet file={hdrFile} aspect={headAspect} title="帯にする場所を決める"
+                onCancel={() => setHdrFile(null)} onDone={doneHeaderCrop} />
+            )}
             <div className="flex gap-2">
               <button type="button" disabled={busy}
                 onClick={() => hdrInputRef.current && hdrInputRef.current.click()}
@@ -7136,23 +7403,18 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
               )}
               <span className="text-[12.5px] text-neutral-500 ml-auto">{photosReady ? `約${sizeKb}KB` : "写真を読み込み中"}</span>
             </div>
-            {/* 何が入っているかを言葉でも書いておく。
-                「設定は戻るのか」が分からないままだと、機種変更のときに不安になる */}
-            <div className="mt-2">
-              <p className="text-[12.5px] text-neutral-500 leading-relaxed">
-                記録・イラスト・果樹・タグの一覧に加えて、記録に付けた写真、テーマ色や文字の大きさ、
-                ひとこと、ヘッダーの背景などの設定も一緒に保存されます。
-                ファイルは1つだけです。そのまま読める形で、復元にも使えます。
-              </p>
-              {prefs && prefs.lastBackup && (
-                <p className="text-[12.5px] text-neutral-400 mt-1.5">前回 {fmtJpDate(prefs.lastBackup)}</p>
-              )}
-              {room && (
-                <p className="text-[12.5px] text-neutral-400 mt-1.5 tabular-nums">
-                  この端末の置き場は約{fmtBytes(room.quota)}。いま{fmtBytes(room.used)}を使っています
-                </p>
-              )}
-</div>
+            {((prefs && prefs.lastBackup) || room) && (
+              <div className="mt-2">
+                {prefs && prefs.lastBackup && (
+                  <p className="text-[12.5px] text-neutral-400">前回 {fmtJpDate(prefs.lastBackup)}</p>
+                )}
+                {room && (
+                  <p className="text-[12.5px] text-neutral-400 mt-1 tabular-nums">
+                    置き場 約{fmtBytes(room.quota)}中 {fmtBytes(room.used)}使用
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* **控えを取っていない書きかえがあることは、ここで一度だけ知らせること。**
@@ -7162,7 +7424,6 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
               <p className="text-[13.5px] font-bold text-amber-800">
                 {prefs && prefs.lastBackup ? `前回の書き出しのあとに、${unsaved}件の書きかえがあります` : "まだ一度も書き出していません"}
               </p>
-              <p className="text-[12.5px] text-neutral-600 mt-0.5">記録はこの端末の中だけにあります。下から書き出しておけます。</p>
             </div>
           )}
 
@@ -7217,35 +7478,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
             )}
           </div>
 
-          <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 mt-6">
-            {/* **文字の色をそろえること。**
-                以前は濃い茶・薄い茶・灰色が混ざっていて、まだらに見えた。
-                見出しだけ濃く、本文はすべて同じ色にする */}
-            <p className="text-[13.5px] font-bold text-amber-900 mb-2">控えのとり方は2とおり</p>
-            <ul className="text-[13.5px] text-amber-900/85 leading-relaxed space-y-1.5 mb-4">
-              <li>・ <b>ファイルで残す</b>…「データを保存」。1つのファイルが出ます</li>
-              <li>・ <b>文字で残す</b>…「文字でコピー」→ メモ帳などに貼っておく</li>
-            </ul>
-            <p className="text-[13.5px] text-amber-900/85 leading-relaxed mb-4">
-              戻すときは「データ復元」か「文字から復元」。
-              ファイルの行方が分かりにくい端末では、文字のほうが確かです。
-            </p>
-
-            <p className="text-[13.5px] font-bold text-amber-900 mb-2">記録が消えてしまうとき</p>
-            <p className="text-[13.5px] text-amber-900/85 leading-relaxed mb-2">
-              記録はこの端末の中だけにあります。次のときは失われます。
-            </p>
-            <ul className="text-[13.5px] text-amber-900/85 leading-relaxed space-y-1 mb-2">
-              <li>・ ブラウザの履歴やサイトデータを消したとき</li>
-              <li>・ ホーム画面のアプリを削除したとき</li>
-              <li>・ 機種を変えたとき</li>
-              <li>・ 別の端末やブラウザで開いたとき</li>
-            </ul>
-            <p className="text-[13.5px] text-amber-900/85 leading-relaxed">
-              どれも前ぶれなく起こります。時々控えておけば、元に戻せます。
-            </p>
-          </div>
-          {/* いちばん下の逃げ場。無いと注意書きが画面の端すれすれになる */}
+          {/* いちばん下の逃げ場。無いと帯や一覧が画面の端すれすれになる */}
           <div className="h-16" />
         </div>
       </div>
