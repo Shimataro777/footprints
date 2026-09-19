@@ -125,12 +125,18 @@ html, body, #root { height: 100%; }
 html, body { background: #FFFFFF; }
 EOF
 cat > tailwind.config.js <<'EOF'
-module.exports = { content: ["./src/App.jsx", "./index.html"], theme: { extend: {} }, plugins: [] };
+module.exports = { content: ["./src/App.jsx", "./index.html"], theme: { extend: {} }, plugins: [],
+  future: { hoverOnlyWhenSupported: true } };
 EOF
 TW=/home/claude/.npm-global/lib/node_modules/@mermaid-js/mermaid-cli/node_modules/.bin/tailwindcss
 $TW -i tw-input.css -o app.css -c tailwind.config.js --no-autoprefixer --minify
 rm -f tw-input.css tailwind.config.js  # 出来上がった app.css だけ渡す。設定ファイルは渡さない
 ```
+
+**`future: { hoverOnlyWhenSupported: true }` は外さないこと（2.3.2〜）。** これで `hover:〜` のクラスが
+`@media (hover: hover) and (pointer: fine)` の中にだけ書き出され、マウスのある端末でしか効かなくなる。
+外すと、スマホで「1回目のタップが効かない」「押したあとも色が残る」が再発する。
+組み立て後、`grep -o "@media[^{]*" app.css` に `(hover:hover) and (pointer:fine)` が出ることを確かめる。
 
 **組み立てたら、漏れがないか必ず確かめること。** `App.jsx` の `className="..."` から実際に使っている
 クラス名をすべて拾い、`th-`／`ft-`／`anim-` などの自前クラスを除いて、`app.css` に同じ名前が
@@ -198,6 +204,21 @@ Chromium（`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`、playwright 経
    過去に確認せず納品して「かわいくない」と言われた。
 
 ---
+
+### ボタンの押し方のルール（2.3.2〜）
+
+「1回押しても効かない」「押したあとも色や枠が残る」を直したときに決めたこと。新しくボタンを作るときも守る。
+
+- **ボタンの動きは `onClick` だけで受ける。** `onPointerUp` / `onTouchEnd` / `onTouchStart` で動かさない。
+  2つの受け方が重なると、二重に動いたり（遅れて来た click が別の部品に当たる）、どちらにも受けられず取りこぼしたりする。
+  長押し・引っぱり（ドラム・並べ替えの取っ手・写真の切り抜き）のような「指の動きそのもの」を扱う部品だけは pointer を使ってよい。
+- **`hover:` は付けてよいが、効くのはマウスの端末だけ**（Tailwind 側は上の `future` の設定、`th-` の自前クラスと
+  `.ft-hdr` の白い下地は `App.jsx` の `<style>` の中で `@media (hover: hover) and (pointer: fine)` で囲んである）。
+  `<style>` に `:hover` を足すときは、必ずこの囲みの中に書く。
+- **ボタンに `focus:` の色を付けない。** キーボード用の枠は `:focus-visible` で全ボタン共通に出している。
+  指・マウスで押したあとは `installTapBlur` がフォーカスを外す（キーボードで押したときは外さない）。
+- **押した瞬間に `setPointerCapture` しない。** 行や札の click が届かなくなる。捕まえるのは指が実際に動いてから。
+- 全ボタンに `touch-action: manipulation` を付けてある（素早く続けて押しても click が配られるように）。外さないこと。
 
 ## 4. 画面構成
 

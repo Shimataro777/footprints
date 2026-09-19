@@ -1533,7 +1533,7 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* アプリの版数。**index.html の window.__FT_VERSION が本物。**
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
-const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.3.1";
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.3.2";
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
@@ -1571,6 +1571,8 @@ function WheelColumn({ items, value, onChange, minWidth = 72 }) {
   const activeRef = useRef(false);      // ドラッグ or 慣性アニメ中
   const lastYRef = useRef(0);
   const startYRef = useRef(0);
+  const pointerIdRef = useRef(null);
+  const capturedRef = useRef(false);
   const movedRef = useRef(false);
   const lastTRef = useRef(0);
   const velRef = useRef(0);             // px/ms
@@ -1673,7 +1675,12 @@ function WheelColumn({ items, value, onChange, minWidth = 72 }) {
     lastYRef.current = e.clientY;
     lastTRef.current = performance.now();
     velRef.current = 0;
-    try { boxRef.current.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
+    pointerIdRef.current = e.pointerId;
+    capturedRef.current = false;
+    /* **ここで setPointerCapture しないこと。** 押した瞬間に箱が指を捕まえると、
+       指を離したときの相手が「行」ではなく「箱」になり、行の click が届かない
+       （Android の Chrome などで「行をタップしても選べない」ように見えていた）。
+       捕まえるのは、実際に指が動いてから（下の onPointerMove） */
   };
 
   const onPointerMove = (e) => {
@@ -1683,7 +1690,13 @@ function WheelColumn({ items, value, onChange, minWidth = 72 }) {
     const dt = Math.max(1, now - lastTRef.current);
     lastYRef.current = e.clientY;
     lastTRef.current = now;
-    if (Math.abs(e.clientY - startYRef.current) > 4) movedRef.current = true;
+    if (Math.abs(e.clientY - startYRef.current) > 4) {
+      movedRef.current = true;
+      if (!capturedRef.current) {
+        capturedRef.current = true;
+        try { boxRef.current.setPointerCapture(pointerIdRef.current); } catch (err) { /* noop */ }
+      }
+    }
     const instant = -dy / dt;
     velRef.current = velRef.current * 0.7 + instant * 0.3; // なめらかに平均化
     const OVER = WHEEL_ITEM_H * 0.9;
@@ -2231,7 +2244,8 @@ function useTapThen(fn, ms = 60) {
   const run = useCallback((...args) => {
     if (!fn || pressed) return;
     setPressed(true);
-    t.current = setTimeout(() => { fn(...args); setPressed(false); }, ms);
+    /* try/finally：押した先の処理がつまずいても、沈んだまま（＝次から押しても効かない）にしない */
+    t.current = setTimeout(() => { try { fn(...args); } finally { setPressed(false); } }, ms);
   }, [fn, pressed, ms]);
   return [pressed, run];
 }
@@ -2252,38 +2266,21 @@ function TapButton({ onClick, className = "", children, delay, ...rest }) {
    TapButton（ひと呼吸おいてから動く）ではなく、こちらで受けること。
    **TapButton を印の入り切りに使わないこと。** 押したあとの60msのあいだに来た2度目を捨てるので、
    「ゆっくり押せば入るのに、速く押すと入らない」という不具合に見える。
-   画面が切り替わるボタンなら「二重に開かない」ための正しい守りだが、値の入り切りには向かない。
-   iPhoneは、素早く続けて押すと2回目以降を「ダブルタップの一部」とみなして click を配らないことがある。
-   ここでは指を離した時点（pointerup）で受け止め、あとから来る click は捨てる。
-   押さえたまま滑らせて逃げたぶん（12px超）は受けない。
-   キーボードの Enter / Space から来る click は、指の押しが直前に無いので、そのまま通す */
-/* 指を離した時点（pointerup）で受けたことを、部品ひとつではなく**アプリ全体で**覚えておく。
-   **この覚えを部品ごとの ref だけにしないこと。**
-   iPhone は指を離したあと0.3秒ほど遅れて click を配る。そのあいだに画面の形が変わると、
-   click は「指を離した場所にいま在るもの」へ届く。つまり、押した部品ではなく別の部品が受け取る。
-   実際に起きていたこと：写真を2枚付けて2枚めの✕を押すと、1枚になった写真が大きく描き直され、
-   残った✕がちょうど指の下へ来て、遅れて来た click を受け、もう1枚も消えていた。
-   部品ごとの覚えでは、押した本人しか見張れないので防げない */
-let lastTapOnceAt = 0;
+
+   2.3.2 から、**ふつうの click だけで受ける**（指を離した時点＝pointerup で受けるのはやめた）。
+   以前は pointerup で先に動かし、あとから来る click をアプリ全体で0.7秒捨てていたが、
+   ・pointerup で画面の形が変わると、直後の click が「指の下にいま在る別の部品」に届く（写真の✕が2枚消えた事故の原因）
+   ・その0.7秒のあいだに少しずれて押した次のボタン（12px超）は、pointerup でも click でも受けられず「1回では効かない」
+   という、2つの受け方がぶつかることで起きる不具合の元になっていた。
+   click は、指が離れた場所と押した部品が同じときにだけ1回だけ届くので、二重にも取りこぼしにもならない。
+   素早く続けて押したときに iPhone が click を配らない件は、全ボタンに付けた
+   touch-action: manipulation（下の CSS）で「ダブルタップで拡大」を止めて防いでいる。
+   **ボタンに onPointerUp / onTouchEnd で動く処理を足さないこと。** 同じ理由で、また二重・取りこぼしが起きる */
 function useTapOnce(fn) {
   const fnRef = useRef(fn);
   fnRef.current = fn;
-  const st = useRef({ down: false, x: 0, y: 0 });
   return {
-    onPointerDown: (e) => { st.current.down = true; st.current.x = e.clientX; st.current.y = e.clientY; },
-    onPointerUp: (e) => {
-      if (!st.current.down) return;
-      st.current.down = false;
-      if (Math.hypot(e.clientX - st.current.x, e.clientY - st.current.y) > 12) return;
-      lastTapOnceAt = Date.now();
-      fnRef.current && fnRef.current(e);
-    },
-    onPointerCancel: () => { st.current.down = false; },
-    /* click を受けるのは、直前に指の押しが無かったとき（キーボードの Enter / Space）だけ */
-    onClick: (e) => {
-      if (Date.now() - lastTapOnceAt < 700) return;
-      fnRef.current && fnRef.current(e);
-    },
+    onClick: (e) => { fnRef.current && fnRef.current(e); },
   };
 }
 function TapOnceButton({ onTap, children, className = "", ...rest }) {
@@ -2713,6 +2710,31 @@ function BackgroundLock() {
   vv.addEventListener("resize", measure);
   window.addEventListener("orientationchange", measure);
   measure();
+})();
+
+/* 指やマウスで押したボタンから、押し終わったあとにフォーカスを外す（2.3.2）。
+   Android の Chrome などは、押したボタンにフォーカスを残す。残ったままだと、
+   フォーカス用の枠や色が「押したあともずっと付いたまま」に見える。
+   ・外すのは、指・マウスで押したとき（click の detail が1以上）だけ。
+     キーボードの Enter / Space で押したとき（detail が0）は外さない。外すと、キーボードで操作している人が
+     いまどこにいるのか分からなくなる（キーボード用の枠は CSS の :focus-visible で出している）
+   ・押した先の処理が入力欄などへフォーカスを移したときは、そちらを奪わない
+     （フォーカスが「押したボタン自身」に残っているときだけ外す）
+   ・入力欄・チェックボックスなどは対象外。外すとキーボードが閉じたり、選んだ手ごたえが消えたりする
+   ・capture（いちばん先）で受けるのは、部品側で stopPropagation されても取りこぼさないため。
+     外すのは setTimeout で、部品の処理がすべて終わったあと */
+(function installTapBlur() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const SEL = 'button, [role="button"], [role="switch"], [role="tab"], a[href], summary';
+  document.addEventListener("click", (e) => {
+    if (!e.detail) return;
+    const t = e.target;
+    const el = t && t.closest ? t.closest(SEL) : null;
+    if (!el) return;
+    setTimeout(() => {
+      if (document.activeElement === el && typeof el.blur === "function") el.blur();
+    }, 0);
+  }, true);
 })();
 
 /* 重なって出る画面の入れ物。出るときと戻るときの動きを受け持つ */
@@ -7517,7 +7539,7 @@ function BottomNav({ active, onChange }) {
         {TABS.map(({ key, label, icon: Icon }) => {
           const isActive = active === key;
           return (
-            /* **TapOnceButton で受けること。** onClick だと、iPhoneで素早く続けて押したとき配られない */
+            /* **TapOnceButton で受けること。**（値が変わるだけのボタン。中身は click。素早く続けて押しても取りこぼさないよう、touch-action: manipulation と組み合わせている） */
             <TapOnceButton key={key} onTap={() => onChange(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5 min-h-[56px] relative ft-tap ft-tabbtn">
               {isActive && <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[3px] bg-th-800 rounded-full ft-tabbar" />}
               {/* 選ばれた瞬間だけ弾ませたいので、key を変えて描き直させている */}
@@ -8128,7 +8150,10 @@ function AppMain() {
         .ft-hasbg .ft-hdr .ft-onbg-keep svg { filter: none; }
         /* 下の区切り線と、押したときの下地も白側にそろえる */
         .ft-hasbg .ft-hdr { border-color: rgba(255,255,255,.28); }
-        .ft-hasbg .ft-hdr button:not(.ft-onbg-keep):hover { background-color: rgba(255,255,255,.14); }
+        /* :hover はマウスのある端末だけ（タッチ端末では、押したあとも色が残り続けるため） */
+        @media (hover: hover) and (pointer: fine) {
+          .ft-hasbg .ft-hdr button:not(.ft-onbg-keep):hover { background-color: rgba(255,255,255,.14); }
+        }
 
         /* 太字は600まで。見出しも Tailwind の font-bold（700）も、ここでゆるめる。
            重い字が並ぶと、それだけで画面が固く見える */
@@ -8147,9 +8172,18 @@ function AppMain() {
            - 押したときの青い枠や灰色の膜（端末が勝手に出すもの）を消す
            - 押した瞬間に反応するよう、待ち時間をなくす
            - 文字が選択されてしまい、押した感じが濁るのを防ぐ */
-        button, [role="button"], label, a {
+        button, [role="button"], [role="switch"], [role="tab"], summary, label, a {
           -webkit-tap-highlight-color: transparent;
           touch-action: manipulation;
+        }
+        /* フォーカスの枠は「キーボードで動かしているとき」だけ出す（:focus-visible）。
+           指やマウスで押したときに枠や色が残らないよう、:focus だけでは何も出さない。
+           押したあとにフォーカスそのものを外す処理は installTapBlur（JS）にある。
+           **ボタンに focus: の色（Tailwind の focus:bg-… など）を付けないこと。** 付けるなら focus-visible: にする */
+        button:focus, [role="button"]:focus, [role="switch"]:focus, [role="tab"]:focus, summary:focus, a:focus { outline: none; }
+        button:focus-visible, [role="button"]:focus-visible, [role="switch"]:focus-visible,
+        [role="tab"]:focus-visible, summary:focus-visible, a:focus-visible {
+          outline: 2px solid var(--th-700, #0F766E); outline-offset: 2px;
         }
         button { -webkit-user-select: none; user-select: none; }
         /* 押している間は、離した後より速く反応させる（沈むのは速く、戻りはゆっくり） */
@@ -8481,8 +8515,15 @@ function AppMain() {
         .bg-th-600{background-color:var(--th-600)} .bg-th-700{background-color:var(--th-700)}
         .bg-th-800{background-color:var(--th-800)} .bg-th-900{background-color:var(--th-900)}
         .bg-th-50\\/40{background-color:color-mix(in srgb, var(--th-50) 40%, transparent)}
-        .hover\\:bg-th-50:hover{background-color:var(--th-50)} .hover\\:bg-th-100:hover{background-color:var(--th-100)}
-        .hover\\:bg-th-800:hover{background-color:var(--th-800)} .hover\\:bg-th-900:hover{background-color:var(--th-900)}
+        /* hover: はマウスのある端末だけ。Tailwind 側（app.css）も同じ条件で書き出している
+           （tailwind.config.js の future.hoverOnlyWhenSupported）。**ここだけ条件を外さないこと。**
+           タッチ端末で :hover が効くと、1回目のタップが「hoverにするだけ」で終わって2回押しが要ったり、
+           押したあとも色が残り続けたりする */
+        @media (hover: hover) and (pointer: fine) {
+          .hover\\:bg-th-50:hover{background-color:var(--th-50)} .hover\\:bg-th-100:hover{background-color:var(--th-100)}
+          .hover\\:bg-th-800:hover{background-color:var(--th-800)} .hover\\:bg-th-900:hover{background-color:var(--th-900)}
+          .hover\\:text-th-900:hover{color:var(--th-900)}
+        }
         .text-th-700{color:var(--th-700)} .text-th-800{color:var(--th-800)} .text-th-900{color:var(--th-900)}
         .text-th-800\\/70{color:color-mix(in srgb, var(--th-800) 70%, transparent)}
         /* **薄さ付きの色は、使う前にここへ足すこと。**
@@ -8491,7 +8532,6 @@ function AppMain() {
         .text-th-800\\/60{color:color-mix(in srgb, var(--th-800) 60%, transparent)}
         .bg-th-700\\/60{background-color:color-mix(in srgb, var(--th-700) 60%, transparent)}
         .focus\\:ring-th-800\\/20:focus{--tw-ring-color:color-mix(in srgb, var(--th-800) 20%, transparent)}
-        .hover\\:text-th-900:hover{color:var(--th-900)}
         .border-th-200{border-color:var(--th-200)} .border-th-300{border-color:var(--th-300)}
         .border-th-700{border-color:var(--th-700)} .border-th-800{border-color:var(--th-800)} .border-th-900{border-color:var(--th-900)}
         .border-th-700\\/25{border-color:color-mix(in srgb, var(--th-700) 25%, transparent)}
