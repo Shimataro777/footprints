@@ -1533,7 +1533,7 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* アプリの版数。**index.html の window.__FT_VERSION が本物。**
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
-const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.3.3";
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.5.0";
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
@@ -4068,9 +4068,6 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
   const canRedo = redoStack.current.length > 0;
   const save = () => { doneRef.current = true; onSave({ ...record, type, updatedAt: new Date().toISOString() }, { steal }); };
 
-  /* **「途中保存」のボタンは置かない。** 入力が止まって0.8秒後に自動下書きが残る（下）ので、
-     書いているあいだの取りこぼしは無い。ボタンと「最終保存 ○時」の文字があると、
-     ヘッダーが混み、押す・確かめるという余計な手間が増えていた（姉妹アプリ My手帳 に合わせた） */
   /* 自動下書き。入力が止まって少ししたら、そっと控えを取る。
      アプリが背面に回ったときや閉じられるときは、その場ですぐ控える */
   recRef.current = record;
@@ -4116,6 +4113,35 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
   };
   /* 中身が空のままでは保存できない（空の記録が増えるのを防ぐ） */
   const canSave = hasContent({ ...record, type });
+
+  /* 途中保存（ヘッダの下向き矢印）。書きかけのまま、記録だけを残す。
+     下の「保存」と違い、**画面は閉じない**。
+     同じidを上書きするので、何度押しても記録は増えない。
+
+     **ここで setType や record の作り直しを行わないこと。**
+     画面の構造（新規か編集か）が変わると入力欄が作り直され、
+     打っている最中のカーソルが外れる（実際にそうなった）。
+     残すのは記録だけで、画面はそのままにしておく。
+
+     保存した時点の中身を baseline に置き直すので、
+     そのあと何も書き足さずに閉じれば「保存されていません」とは訊かれない。
+     自動下書き（doneRef）はここでは止めない。続きを書いたぶんの控えは、
+     これまでどおり取りたいため */
+  const [justSaved, setJustSaved] = useState(false);
+  const [savedTick, setSavedTick] = useState(0);
+  const keepTimer = useRef(null);
+  useEffect(() => () => clearTimeout(keepTimer.current), []);
+  const saveKeepOpen = () => {
+    if (!canSave || savingClose) return;
+    /* 「今月・今年の聖句」の付け替えも、ここで確定させる（下の「保存」と同じ）。
+       途中保存で実在の記録になる以上、印を2つの記録が持ったままにはできない */
+    onSave({ ...record, type, updatedAt: new Date().toISOString() }, { keepOpen: true, steal });
+    setBaseline(JSON.stringify(record));
+    setJustSaved(true);
+    setSavedTick((n) => n + 1);
+    clearTimeout(keepTimer.current);
+    keepTimer.current = setTimeout(() => setJustSaved(false), 1800);
+  };
 
   /* いま扱っている聖書箇所に、過去の記録があれば拾い上げる */
   /* いま扱っている箇所に、過去の記録があれば拾い上げる。
@@ -4180,7 +4206,8 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
     <OverlayScreen from="bottom" closing={closing || savingClose} zIndex={70}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
-      {/* ヘッダー：左に「×」、まんなかに種類（しるしと名前）、右に「元に戻す・やり直す・ピン・ブックマーク」。
+      {/* ヘッダー：左に「×」、まんなかに種類（しるしと名前）、右に「元に戻す・やり直す・途中保存」。
+          ピン留め・ブックマークは、付け外しできる場所を閲覧画面側に一本化したので、ここには置かない。
           まんなかを本当にまんなかにするため、3つの区画（1fr / 自分の幅 / 1fr）に分けている */}
       <div className="ft-hdr grid grid-cols-[1fr_auto_1fr] items-center gap-1 px-3 pb-2.5 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
         <div className="flex justify-start">
@@ -4197,13 +4224,31 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
             className="w-9 h-10 flex items-center justify-center rounded-full text-neutral-600 disabled:opacity-30 ft-tap ft-tap-icon"><Undo2 size={20} /></TapOnceButton>
           <TapOnceButton onTap={redo} disabled={!canRedo} aria-label="やり直す"
             className="w-9 h-10 flex items-center justify-center rounded-full text-neutral-600 disabled:opacity-30 ft-tap ft-tap-icon"><Redo2 size={20} /></TapOnceButton>
-          <TapOnceButton onTap={() => set({ pinned: !record.pinned })} aria-label="ピン留め" aria-pressed={!!record.pinned}
-            className="w-9 h-10 flex items-center justify-center rounded-full text-th-800 ft-tap ft-tap-icon">
-            <span key={record.pinned ? "on" : "off"} className={"flex " + (record.pinned ? "ft-mark" : "")}><Pin size={20} fill={record.pinned ? "currentColor" : "none"} /></span>
-          </TapOnceButton>
-          <TapOnceButton onTap={() => set({ bookmarked: !record.bookmarked })} aria-label="ブックマーク" aria-pressed={!!record.bookmarked}
-            className="w-9 h-10 flex items-center justify-center rounded-full text-th-800 ft-tap ft-tap-icon">
-            <span key={record.bookmarked ? "on" : "off"} className={"flex " + (record.bookmarked ? "ft-mark" : "")}><Bookmark size={20} fill={record.bookmarked ? "currentColor" : "none"} /></span>
+          {/* 途中保存。押しても画面は閉じない。押せたあいだ（1.8秒）だけチェックに入れ替わり、
+              濃いティールで塗られる。2つのアイコンは重ねて置き、透明度と拡大率で入れ替えて
+              いるので、入れ替わってもボタンの幅は動かない。
+              **塗られているあいだだけ `ft-onbg-keep` を付けること。** ヘッダに絵を敷いたとき、
+              自前の下地（濃いティール）を持つのはこの瞬間だけ。いつも付けると、塗っていない
+              ときの `text-th-800` が白く抜かれなくなり、暗い膜の上で見えなくなる */}
+          <TapOnceButton onTap={saveKeepOpen} disabled={!canSave} aria-label="途中保存"
+            className={"relative ml-1 w-10 h-10 flex items-center justify-center rounded-full disabled:opacity-30 ft-tap ft-tap-icon "
+              + (justSaved ? "bg-th-800 text-white ft-onbg-keep" : "text-th-800")}>
+            {/* 保存できたときの、ひと粒の波紋。押すたびに key を変えて描き直させている
+                （クラスを足すだけでは、すでに置かれている要素は動かない） */}
+            {savedTick > 0 && (
+              <span key={savedTick} aria-hidden="true"
+                className="ft-ring absolute inset-0 rounded-full bg-th-800 pointer-events-none" />
+            )}
+            <span className="relative flex items-center justify-center" style={{ width: 22, height: 22 }}>
+              <span className="absolute inset-0 flex items-center justify-center"
+                style={{ opacity: justSaved ? 0 : 1, transform: justSaved ? "scale(0.55)" : "scale(1)", transition: "opacity 180ms ease-out, transform 180ms ease-out" }}>
+                <SaveArrowIcon size={22} />
+              </span>
+              <span className="absolute inset-0 flex items-center justify-center"
+                style={{ opacity: justSaved ? 1 : 0, transform: justSaved ? "scale(1)" : "scale(0.55)", transition: "opacity 180ms ease-out, transform 180ms ease-out" }}>
+                <SaveCheckIcon size={22} />
+              </span>
+            </span>
           </TapOnceButton>
         </div>
       </div>
@@ -5858,8 +5903,9 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
     /* **末尾は .txt にすること。**
        Androidは、中身の種類（text/plain）と名前の末尾（.json）が
        食い違うファイルを受け取ってくれないことがある。
-       中身はこれまでどおりなので、取り込むときは今までどおり読める */
-    const name = `Footprints-record-${todayStr()}.txt`;
+       中身はこれまでどおりなので、取り込むときは今までどおり読める。
+       **名前に日付は入れない。** 同じ記録を送り直しても、毎回同じ名前になる */
+    const name = "Footprints-record.txt";
     const text = oneRecordJson(record);
     try {
       const file = new File([text], name, { type: "text/plain" });
@@ -7208,12 +7254,14 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
 
   const saveData = async () => {
     /* ファイルの名前だけ見て「Footprintsのデータ」と分かるようにする。
-       日付を後ろに置くと、並べたときに古い順に揃う。
+       **名前に日付は入れない。** 書き出すたびに同じ名前になるので、
+       同じ場所に保存し直すと前のバックアップに上書きされ、何個も増えていかない。
+       いつのバックアップかは、中身の「書き出し日時」の1行目で分かる。
        記号は半角のハイフンだけにすること。空白や日本語を混ぜると、
        共有や送信の途中で文字が化けることがある */
     /* 書き出すのは1つだけ。読める文と復元用データを1つにまとめてある。
        末尾は .txt。どの端末でも受け取れて、そのまま読める */
-    const filename = `Footprints-backup-${todayStr()}.txt`;
+    const filename = "Footprints-backup.txt";
     const fileText = buildBackupFile(readableText, jsonText);
     // 1) 共有シート（iPhoneはここから「ファイルに保存」で任意の場所に保存できる）
     //    ※ await を挟むと iOS が「ユーザー操作による呼び出し」と認識しなくなるため、最初に試す
@@ -7375,7 +7423,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
         const head = String(text || "").trim().slice(0, 40);
         const looksReadable = /^書き出し日時/.test(head);
         setMsg({ kind: "err", text: looksReadable
-          ? "このファイルには復元用のデータが入っていません。古い形のファイルのようです。新しく書き出したファイル（Footprints-backup-…）を選んでください。"
+          ? "このファイルには復元用のデータが入っていません。古い形のファイルのようです。新しく書き出したファイル（Footprints-backup.txt）を選んでください。"
           : "このファイルからは記録が見つかりませんでした。Footprints で書き出したファイルを選んでください。" });
       }
   };
