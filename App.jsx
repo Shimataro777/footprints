@@ -1535,7 +1535,7 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
 /* アプリの版数。**index.html の window.__FT_VERSION が本物。**
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
-const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.6.0";
+const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.6.1";
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
@@ -1550,7 +1550,9 @@ const BTN_PRIMARY = BTN_BASE + " bg-th-900 text-white hover:bg-th-800 shadow-sm"
 const BTN_SECONDARY = BTN_BASE + " bg-white border border-neutral-300 text-neutral-700 hover:bg-neutral-50";
 const BTN_DANGER = BTN_BASE + " bg-rose-800 text-white hover:bg-rose-900 shadow-sm";
 const BTN_DANGER_SOFT = BTN_BASE + " bg-white border border-rose-200 text-rose-700 hover:bg-rose-50";
-const BTN_QUIET = BTN_BASE + " text-neutral-500 hover:bg-neutral-100";
+/* 目立たせたくない「キャンセル」。**枠は必ず付けること（2.6.1〜）。** 枠なしだと、暗がりの上の白い小窓の中で
+   ボタンだと分からず、字だけが浮いて見えた。字の色は控えめのまま、枠と白地でボタンの形を出す */
+const BTN_QUIET = BTN_BASE + " bg-white border border-neutral-300 text-neutral-500 hover:bg-neutral-50";
 /* bare ＝ 枠なし。RefBox の中で使う（外枠の線と入力中の縁取りを RefBox が受け持つ）。
    枠を消すのに border-0 を足さないこと。もとの枠の指定と重なってどちらが勝つか分からなくなるので、
    はじめから付けない形にしてある */
