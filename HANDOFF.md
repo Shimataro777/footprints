@@ -527,6 +527,45 @@ Claudeの埋め込み表示では**ファイルのダウンロードができな
 iPhoneでキーボードが出るとき、手前が position:fixed でも、
 うしろの画面のほうが動いて位置がずれる。開いている枚数を数えて、
 最後の1枚が閉じたときだけ元に戻すこと。**戻し忘れると、以後どの画面も動かせなくなる。**
+引き戻しは `scroll` だけで行う。**`visualViewport` の resize では引き戻さない**（2.6.0〜。キーボードの出入りそのものに
+反応して、ヘッダーが下がって戻る揺れを起こしていた）。
+
+### キーボードと入力欄（`installKeyboardInset`、2.6.0〜）　⚠️ キーボードまわりを触るときは、まずここ
+姉妹アプリ My手帳（2.18.2）の作りを移したもの。**コードの中の説明文も、そちらの引継書の「キーボードと入力欄」の節と同じ内容。**
+- **いちばん大事な決まり**：iPhone は、フォーカスが入った時点の**本物のカーソルの位置**で、画面ぜんたい（ヘッダーごと）を
+  押し上げるかを決める。だから**どの画面のどの入力欄も、タップで iPhone に直接フォーカスさせない。**
+- **流れ**（キーボードで打つ欄をタップしたとき。すでに打っている欄のタップ＝カーソル移動だけは iPhone にまかせる）
+  1. `touchend` で `preventDefault`
+  2. 画面の上のほうに置いた見えない入力欄（`data-ft-kb-proxy`、`body` 直下・`position: fixed`）にフォーカス → キーボードだけが先に出る
+  3. キーボードが出た知らせ（`visualViewport` の resize）を待つ（`KB_WAIT_MS` 150ms 以上、来なくても `KB_FALLBACK_MS` 420ms で始める）。
+     押した欄を**実際に測ったキーボードの高さ**の上まで、`KB_UP_MS`（450ms）でゆっくり持ち上げる
+     - 紙（`.ft-sheet-wrap` 直下の箱）：箱を CSS の transition（transform）
+     - 全画面（`[data-ft-overlay]` の送り場 `flex-1 overflow-y-auto`）：送り場の中身（子）を transform。終わったら `scrollTop` へ置きかえる。見出し・下のボタンの帯は動かさない
+     - ページそのもの（探す）：同じ曲線でページを送る。ページの最後には送れる余地（`body` の `padding-bottom: var(--ft-kb)`）を先に足す
+  4. 持ち上がりきったら本物の入力欄へフォーカスを移す（キーボードは出たまま）。カーソルは文字の最後
+- **下ろすとき**：入力欄から外れたら、紙は `KB_DOWN_MS`（360ms）で下りる。全画面・ページは、キーボードが引っ込みきってから元に戻す。
+- **持ち上げられるのは「紙（`.ft-sheet-wrap` の直下の箱）」「全画面の送り場（`flex-1 overflow-y-auto`）」「ページそのもの」だけ。**
+  入力欄のある小窓は、まん中に出すものも **`ft-sheet-wrap`** にすること（`fixed inset-0` のままだと持ち上げの対象にならず、
+  本物の入力欄にキーボードの裏でフォーカスが入って、押し上げが戻る）
+- **覚えるキーボードの高さ**は「レイアウトの高さ − 見えている高さ」（`offsetTop` を引かない）。端末・向きごとに
+  `localStorage` の `bible-tracker-kb-last`（`{"p":縦,"l":横}`）へ。はじめは画面の高さの50%（**少なめに見込まない**）
+- **キーボードを引っ込める操作**：1行の入力欄の Enter（日本語変換の確定 Enter は無視し、各画面の `onKeyDown` にも届けない）／
+  入力欄の外を軽くタップ（10px 以内・600ms 以内。ボタン・リンク・ほかの入力欄は除く）／紙の暗がりは1回めがキーボードだけ・2回めで紙を閉じる
+- **紙の中の字・余白を指で払っても、紙もうしろも動かさない**（`tgStart` / `tgMove`。紙の中で本当に送れる箱・中を送れるテキスト欄は送らせる）。
+  `passive: false` の `touchmove` は、指が紙の上に降りたあいだだけ付ける（常に付けると全体の送りが重くなる）
+- **CSS**：`.ft-sheet-wrap` と `[data-ft-overlay]` は `overflow: clip`（`@supports`）、外がわは `box-shadow: 0 0 0 100vmax #FFFFFF`。
+  下寄せの紙の箱の真下に `::after` で白を伸ばす（紙の箱に `overflow: hidden` を付けない）。`html[data-ft-kb]` / `data-ft-kbctx` / `data-ft-kbfix`
+  で余地・箱の縮めを切り替える。速さを変えたいときは `KB_WAIT_MS` / `KB_UP_MS` / `KB_DOWN_MS` だけ
+- ❌ どの欄も、タップで iPhone にフォーカスさせない（例外を足さない）／本物の入力欄に、キーボードの裏になる位置で `focus()` しない
+- ❌ `offsetTop` のぶん画面を下へずらす「相殺」を入れない／押し上げに `window.scrollTo` のくり返しで対抗しない
+- ❌ 見えない入力欄を `opacity: 0` / `display: none` / `visibility: hidden` にしない（色を透明にして z-index で奥へ）
+- ❌ `useLockBackground` に visualViewport の resize での引き戻しを戻さない／`visualViewport` の scroll のたびに紙や送り場を合わせ直さない
+- ❌ padding / 位置に transition を付けない。動かすのは transform だけ
+- ❌ 新しい入力画面を、決まった形の外で作らない。入力欄の付く全画面は `OverlayScreen` の中の `absolute inset-0 … flex-col`（`flex-1 overflow-y-auto` の送り場＋あとに `shrink-0` の帯）の形にそろえる
+- **確かめたこと**：Chromium（visualViewport を模擬）で、記録を書く画面の各欄・探す・タグを選ぶ紙・貼りつけ小窓・タグの名前変更で、
+  見えない入力欄→本物の順にフォーカスが移り、ヘッダーは全コマ動かないこと。**iPhone 実機では未確認。**
+  実機の確かめ方：ホーム画面から開いたものを入れ直してから、記録を書く画面の下のほうの欄・「探す」の検索欄・タグを選ぶ紙・
+  貼りつけ小窓に触れ、ヘッダーが上にも下にも動かないこと（1回めだけ、覚えるまで紙が少し動くことがある）
 
 ### 起動中の覆い（スプラッシュ）
 `index.html` の `#splash`。アイコンとくるくるを出し、読み込みが終わると
@@ -1286,9 +1325,9 @@ linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))
 - ❌ **カード（`.ft-tap-card`）に transform / filter / mix-blend-mode を当てない。**
   iPhone が札と中の写真を別の層に持ち上げ、写真つきの札の上から画面が送れなくなる。
   手ごたえは `::after` の薄い膜（opacity .045）だけ。`RecordCard` の押した状態も `ft-tap-pressed` を使う（`brightness-90` は不可）。
-- ❌ **キーボード対策で `window.scrollTo` を足さない。** `installKeyboardInset` が `--ft-kb` に
-  キーボードの高さを入れ、`[data-ft-overlay] .flex-1.overflow-y-auto::after` がその分の余白を足す。
-  余白は**キーボードが出る前**（入力欄に触れた時点）に足す。新しい全画面の送り場は `flex-1 overflow-y-auto` の形にそろえる。
+- ❌ **キーボード対策で `window.scrollTo` を足さない。** 作りは上の「キーボードと入力欄」の節のとおり
+  （`installKeyboardInset` が入力欄を見えない入力欄経由でキーボードの上へ持ち上げる）。
+  新しい全画面の送り場は `flex-1 overflow-y-auto` の形にそろえ、入力欄のある小窓は `ft-sheet-wrap` にする。
   `OverlayScreen` の `data-ft-overlay` / `data-ft-scrim` は外さない（左端から払うとき暗がりも薄くする）。
 
 **入力画面（`RecordForm`）の作り**
@@ -1341,7 +1380,7 @@ linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))
   空行を書いたとき 1行につき本文0.75行ぶん。**空行1つを1行ぶん（1em以上）に戻さないこと。**
   聖書箇所を続けて書いたとき、画面の多くが余白になる。
 - **重なって出るものの外わくに `data-ft-overlay` を付けそろえた**（22か所）。付け忘れると、その画面だけ
-  キーボードぶんの余白が足されない。紙の中の送り場は `.ft-sheet-body` でも余白が足されるようにした。
+  キーボードぶんの余白が足されない。（2.6.0 で余白の作りは変わった。上の「キーボードと入力欄」の節を見ること）
 - 聖句の「メモ」欄にも、読み取れた聖書箇所の札を出すようにした（`RefBox` の `refsText`）。
 
 **実装範囲の確認のしかた**（数え方は `grep -c`）：`<TopChrome>` は4、`sticky top-0` は0、
