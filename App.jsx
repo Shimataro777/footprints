@@ -8794,6 +8794,9 @@ function AppMain() {
         const rec = migrateRecord({ ...raw, id: uid() });
         delete rec.pinned; delete rec.bookmarked;
         rec.createdAt = rec.createdAt || new Date().toISOString();
+        /* 更新日時は「取り込んだ時点」にする。これにより、最近の記録の並びで
+           取り込んだ記録が一番上に来る（並び替えは updatedAt||createdAt を見ている） */
+        rec.updatedAt = new Date().toISOString();
         /* 中身がそっくり同じものは足さない。同じファイルを二度取り込んだときのため */
         if (known.has(sameKey(rec))) { skipped += 1; return; }
         known.add(sameKey(rec));
