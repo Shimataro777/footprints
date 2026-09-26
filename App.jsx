@@ -2775,23 +2775,74 @@ function splitByCitations(text) {
   }
   return segments;
 }
-/* 閉じるときの動きを見せてから、実際に閉じる。
-   ボタンを押した瞬間に消えると素っ気ないため、少しだけ待つ */
-function useClosing(onClose) {
-  /* **閉じるときに待たないこと。** 以前は、退場の動きのために0.2秒ほど待ってから閉じていた。
-     待つあいだ画面が止まって見え、「キャンセル」「×」「戻る」「暗がりを押す」だけがもたついた。
-     いまは押したその場で閉じる（姉妹アプリ My手帳 と同じ）。
-     守るのは、同じひと押しから二重に届いたぶんだけ。
-     第1引数の返す「closing」は、呼び出し側のクラス切り替えのために形だけ残してあり、いつも false。
-     退場の動き（anim-*-out）を戻すなら、動きの長さと待ち時間を必ず同じにすること */
+/* 閉じる。**ms を渡さないかぎり、待たずにその場で閉じること。**
+   ・ms を渡さないとき：押したその場で閉じる（2.9.1 までと同じ）。「closing」はいつも false。
+     守るのは、同じひと押しから二重に届いたぶんだけ（250ms）。
+   ・ms を渡したとき（2.10.0〜。姉妹アプリ My手帳 2.20.6 と同じ作り）：closing を true にして
+     退場のクラス（anim-right-out など）へ切り替え、その動きの長さぶん待ってから onClose を呼ぶ。
+     待っているあいだに二重に押されても弾く。onClose を呼んだあとは closing を戻す
+     （画面が消えるならまとめて消え、消えないなら元の位置へ戻る）。
+     **ms は、動きの長さ（FT_EXIT_RIGHT_MS ＝ .anim-right-out の長さ）と必ず同じにすること。**
+     片方だけ変えると、消えたあと待つか、消える前に閉じるかのどちらかになる。
+   ・「画面の動き」を切っている／端末の「視差効果を減らす」のときは、待たずにすぐ閉じる（motionIsOff）。
+   ・**左端から払って戻る（useEdgeSwipeBack）には、ms を渡した方を渡さないこと。**
+     指について動く分ですでに退場の動きができているので、ms なしの別の useClosing を渡す
+     （渡すと、退場のクラスが指の動きの上から translate を奪い、位置が跳ねて見える）。
+   ・**「戻る」「保存」「保存しない」など、閉じる道はぜんぶ同じ close を通すこと。**
+     片方だけ動かすと、押すボタンによって消え方が変わり、ちぐはぐに見える */
+function motionIsOff() {
+  try {
+    return !!document.querySelector(".ft-still")
+      || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  } catch (e) { return false; }
+}
+function useClosing(onClose, ms = 0) {
+  const cb = useRef(onClose);
+  cb.current = onClose;
   const last = useRef(0);
+  const busy = useRef(false);
+  const [closing, setClosing] = useState(false);
+  const timerRef = useRef(null);
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
   const startClose = useCallback((...args) => {
+    if (ms > 0 && !motionIsOff()) {
+      if (busy.current) return;
+      busy.current = true;
+      setClosing(true);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        const done = () => { busy.current = false; setClosing(false); };
+        const r = cb.current && cb.current(...args);
+        if (r && typeof r.then === "function") r.then(done, done);
+        else done();
+      }, ms);
+      return;
+    }
     const now = Date.now();
     if (now - last.current < 250) return;
     last.current = now;
-    onClose && onClose(...args);
-  }, [onClose]);
-  return [false, startClose];
+    cb.current && cb.current(...args);
+  }, [ms]);
+  return [closing, startClose];
+}
+/* 右から入った画面が、右へ戻っていく長さ（2.10.0〜）。
+   **GLOBAL の .anim-right / .anim-right-out / .anim-scrim-out-push の長さ（0.3s）と必ず同じにすること** */
+const FT_EXIT_RIGHT_MS = 300;
+
+/* 画面が右から入りきったら、その箱に data-ft-entered を付ける（2.10.0〜）。
+   メニューから画面へ移るとき（AppMain の goFromMenu）、入りきったかをこれで見る。
+   **時間を決め打ちで待たないこと。** iPhone が重いと動きの始まりが遅れ、
+   入りきる前に下の画面が消えて、ひとつ下の画面（ホームなど）がのぞく。
+   **クラスを外す形にしないこと。** React が描き直しで className を付け直すと、動きがもう一度流れる */
+function markEntered(e) {
+  const name = e && e.animationName;
+  if (name !== "ft-right-in" && name !== "ft-up-in") return;
+  const el = e.target;
+  if (el && el.setAttribute) el.setAttribute("data-ft-entered", "");
+}
+if (typeof document !== "undefined" && document.addEventListener) {
+  document.addEventListener("animationend", markEntered, true);
+  document.addEventListener("animationcancel", markEntered, true);
 }
 
 /* 重なって出る画面が開いているあいだ、うしろの画面（本体）を動かないようにする。
@@ -3791,11 +3842,15 @@ function OverlayScreen({ from = "right", closing, children, zIndex = 50 }) {
   useLockBackground();
   const inCls = from === "bottom" ? "anim-up" : "anim-right";
   const outCls = from === "bottom" ? "anim-down-out" : "anim-right-out";
+  /* 暗がりの退場は、画面の退場と同じ長さで薄れさせる（2.10.0〜）。
+     **共用の anim-fade-out（0.2秒）にしないこと。** 画面が右へ出きる前に暗がりだけ先に消える */
+  const scrimOutCls = from === "bottom" ? "anim-fade-out" : "anim-scrim-out-push";
   return (
     /* data-ft-overlay ＝ 重なる画面の外わく（送り場の余白・はみ出し止めの目印）。
-       data-ft-scrim ＝ 地の暗がり。左端から払って戻るとき、払った量に合わせて薄くする。外さないこと */
-    <div className="fixed inset-0" data-ft-overlay="" style={{ zIndex }}>
-      <div data-ft-scrim="" className={"absolute inset-0 bg-black/25 " + (closing ? "anim-fade-out" : "anim-fade")} />
+       data-ft-scrim ＝ 地の暗がり。左端から払って戻るとき、払った量に合わせて薄くする。外さないこと。
+       data-ft-lift ＝ メニューから移ってくる途中の画面（goFromMenu が入りきったかを見る） */
+    <div className="fixed inset-0" data-ft-overlay="" data-ft-lift={zIndex === MENU_LIFT_Z ? "" : undefined} style={{ zIndex }}>
+      <div data-ft-scrim="" className={"absolute inset-0 bg-black/25 " + (closing ? scrimOutCls : "anim-fade")} />
       <div className={"absolute inset-0 " + (closing ? outCls : inCls)}>{children}</div>
     </div>
   );
@@ -4743,12 +4798,14 @@ function MenuIconWithBadge({ size, unsaved, ringClass }) {
    別々の数にしていたため、画面を移ると三本線の大きさが変わって見えた */
 const MENU_BTN = 56;
 const MENU_ICON = 32;
-function MenuButton({ size = MENU_BTN }) {
+/* guard：開く前に確かめたいことがある画面（画面のカスタマイズの「保存していない変更」）だけ渡す。
+   guard(open) の形で呼ぶので、確かめ終わったら open() を呼ぶこと（2.10.0〜） */
+function MenuButton({ size = MENU_BTN, guard }) {
   const openMenu = React.useContext(MenuContext);
   const unsaved = React.useContext(UnsavedContext);
   if (!openMenu) return null;
   return (
-    <button onClick={openMenu} aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
+    <button onClick={guard ? () => guard(openMenu) : openMenu} aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
       className="relative flex items-center justify-center rounded-xl text-neutral-800 hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0"
       style={{ minWidth: size, minHeight: size }}>
       <MenuIconWithBadge size={MENU_ICON} unsaved={unsaved} ringClass="border-white" />
@@ -4872,7 +4929,16 @@ function MenuRow({ it }) {
   );
 }
 
-function SideMenu({ open, onClose, items, footer, instant }) {
+/* 移った先の画面の下へ、板を沈める（2.10.0〜。姉妹アプリ My手帳 2.20.6 と同じ）。
+   メニューの行を押したら、板は**その場に残したまま**この高さへ下げ、
+   右から入ってくる画面（MENU_LIFT_Z）に上からかぶせてもらう。
+   ・MENU_UNDER_Z は、メニューを開ける画面のうちいちばん上のもの（記録の閲覧の 60）より上、
+     移った先の画面より下。**60 以下にしないこと。** 記録の閲覧から開いたとき、板がその下へもぐってパッと消える
+   ・**板を右へ滑らせないこと**（入ってくる画面とすれ違う）。**その場で消さないこと**（パッと消えて見える）
+   ・かぶせ終わったら（AppMain の goFromMenu）、見えないところで外す */
+const MENU_UNDER_Z = 65;
+const MENU_LIFT_Z = 66;
+function SideMenu({ open, onClose, items, footer, instant, under }) {
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(false);
   const [shield, setShield] = useState(false);
@@ -4883,6 +4949,14 @@ function SideMenu({ open, onClose, items, footer, instant }) {
       setMounted(true);
       t = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)));
       return () => cancelAnimationFrame(t);
+    }
+    /* 移った先の画面の下に沈めていたとき（under）は、もう画面に隠れている。
+       **ここで滑らせたり薄れさせたりしないこと。** すぐ外す */
+    if (under) {
+      setShown(false);
+      setShield(false);
+      setMounted(false);
+      return undefined;
     }
     /* 画面へ移るときは、メニューが左へ滑って消える動きを見せない。
        元の画面はそのままで、新しい画面だけが右から来るようにするため */
@@ -4909,10 +4983,10 @@ function SideMenu({ open, onClose, items, footer, instant }) {
 
   if (!mounted) return null;
   return (
-    <div data-ft-overlay="" className="fixed inset-0" style={{ zIndex: 2147483200 }}>
+    <div data-ft-overlay="" className="fixed inset-0" style={{ zIndex: under ? MENU_UNDER_Z : 2147483200 }}>
       <BackgroundLock />
       <div
-        onClick={onClose}
+        onClick={under ? undefined : onClose}
         className="absolute inset-0 bg-black/40"
         style={{ opacity: shown ? 1 : 0, transition: "opacity 240ms cubic-bezier(0.16,1,0.3,1)" }}
       />
@@ -7639,8 +7713,9 @@ function CropSheet({ file, aspect = 1, round, title = "位置を決める", onCa
   );
 }
 
-function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, onSavePrefs, onClose, typeDesc, onSaveTypeDesc, headerBg, onSaveHeaderBg }) {
-  const [closing, close] = useClosing(onClose);
+function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, onSavePrefs, onClose, typeDesc, onSaveTypeDesc, headerBg, onSaveHeaderBg , zIndex}) {
+  const [closing, close] = useClosing(onClose, FT_EXIT_RIGHT_MS);
+  /* 左端から払って戻るときは待たない（指について動く分で、もう退場している） */
   /* 記録の種類の名前・説明は、この画面では変えられなくした（依頼による）。
      ただし保存されている値はそのまま持ち回り、保存のときも書き戻す。
      捨ててしまうと、以前に名前を変えていた人の設定が消えてしまうため。
@@ -7707,7 +7782,9 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
       + "下の「保存」で反映されます。" });
   };
 
-  const save = async () => {
+  /* then ＝ 保存できたあとにやること。ふだんは閉じる（右へ滑って戻る）。
+     三本線から「保存してメニューを開く」ときは、閉じずにメニューを開く */
+  const save = async (then) => {
     setSaving(true);
     const a = await onChange(draft);
     const c = await onSaveCaptions(capDraft);
@@ -7716,7 +7793,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     const pr = await onSavePrefs(prefDraft);
     setSaving(false);
     const ok = (!a || a.ok) && (!c || c.ok) && (!pr || pr.ok) && (!h || h.ok);
-    if (ok) { onClose(); return; }
+    if (ok) { if (typeof then === "function") then(); else close(); return; }
     setMsg({ kind: "err", text: "保存できませんでした：" + (((a && a.message) || (c && c.message) || (h && h.message) || (pr && pr.message)) || "原因不明") });
   };
 
@@ -7742,7 +7819,15 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     if (dirty) { setShowExitConfirm(true); return false; }
     return true;
   };
-  const handleCloseAttempt = () => { if (guardClose()) onClose(); };
+  const handleCloseAttempt = () => { if (guardClose()) close(); };
+  /* 三本線（2.10.0〜）。**保存していない変更があるまま、メニューを開かせないこと。**
+     メニューから別の画面へ移ると、この画面は閉じられて、変えた内容が黙って消える。
+     「戻る」と同じく確かめてから開く。「保存しない」を選んだら、変えた内容は元に戻してから開く */
+  const [askMenu, setAskMenu] = useState(null); // 開くときに呼ぶもの
+  const menuGuard = (open) => { if (dirty) setAskMenu(() => open); else open(); };
+  const revertDrafts = () => {
+    setDraft(artworks); setCapDraft(captions); setPrefDraft(prefs); setHdrDraft(headerBg || null);
+  };
   guardCloseRef.current = guardClose;
 
   const msgStyle = msg
@@ -7753,13 +7838,13 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
 
   return (
-    <OverlayScreen from="right" closing={closing}>
+    <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
         <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
           <button onClick={handleCloseAttempt} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</button>
           <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">画面のカスタマイズ</h2>
-          <MenuButton />
+          <MenuButton guard={menuGuard} />
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -8012,7 +8097,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
         <div className="shrink-0 flex gap-2.5 border-t border-neutral-200 bg-white px-5 py-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 16px)" }}>
           <TapButton onClick={handleCloseAttempt} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</TapButton>
-          <button onClick={save} disabled={saving} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
+          <button onClick={() => save()} disabled={saving} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
             {saving ? "保存中…" : "保存"}
           </button>
         </div>
@@ -8020,8 +8105,15 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
       {showExitConfirm && (
         <ExitConfirmDialog
           onSave={() => { setShowExitConfirm(false); save(); }}
-          onDiscard={() => { setShowExitConfirm(false); onClose(); }}
+          onDiscard={() => { setShowExitConfirm(false); close(); }}
           onStay={() => setShowExitConfirm(false)}
+        />
+      )}
+      {askMenu && (
+        <ExitConfirmDialog
+          onSave={() => { const open = askMenu; setAskMenu(null); save(open); }}
+          onDiscard={() => { const open = askMenu; setAskMenu(null); revertDrafts(); setMsg(null); open(); }}
+          onStay={() => setAskMenu(null)}
         />
       )}
       {pendingId && (
@@ -8037,9 +8129,11 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
    バックアップ画面
    ============================================================ */
 /* ブックマークした記録の一覧。三本線メニューから開く */
-function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
-  const [closing, close] = useClosing(onClose);
-  const { stripRef, screenRef } = useEdgeSwipeBack(close);
+function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort , zIndex}) {
+  const [closing, close] = useClosing(onClose, FT_EXIT_RIGHT_MS);
+  /* 左端から払って戻るときは待たない（指について動く分で、もう退場している） */
+  const [, closeInstant] = useClosing(onClose);
+  const { stripRef, screenRef } = useEdgeSwipeBack(closeInstant);
   /* はじめの並び順は、カスタマイズで決めたもの。指定が無ければ目次順 */
   const [sortMode, setSortMode] = useState(() => defaultSort || "book");
   const list = useMemo(() => {
@@ -8052,7 +8146,7 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
   }, [records, sortMode]);
 
   return (
-    <OverlayScreen from="right" closing={closing}>
+    <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
     <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
@@ -8129,9 +8223,11 @@ function useReorder(ids, onChange) {
   return { dragId, setRow, handleProps };
 }
 
-function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, onClose }) {
-  const [closing, close] = useClosing(onClose);
-  const { stripRef, screenRef } = useEdgeSwipeBack(close);
+function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, onClose , zIndex}) {
+  const [closing, close] = useClosing(onClose, FT_EXIT_RIGHT_MS);
+  /* 左端から払って戻るときは待たない（指について動く分で、もう退場している） */
+  const [, closeInstant] = useClosing(onClose);
+  const { stripRef, screenRef } = useEdgeSwipeBack(closeInstant);
   const [draft, setDraft] = useState("");
   const [renaming, setRenaming] = useState(null);   // { from, to }
   const [deleting, setDeleting] = useState(null);
@@ -8154,7 +8250,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
     && !list.some((t) => t.toLowerCase() === renaming.to.trim().toLowerCase());
 
   return (
-    <OverlayScreen from="right" closing={closing}>
+    <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
     <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
@@ -8312,13 +8408,15 @@ const HELP_SECTIONS = [
   },
 ];
 
-function HelpScreen({ onClose }) {
-  const [closing, close] = useClosing(onClose);
-  const { stripRef, screenRef } = useEdgeSwipeBack(close);
+function HelpScreen({ onClose , zIndex}) {
+  const [closing, close] = useClosing(onClose, FT_EXIT_RIGHT_MS);
+  /* 左端から払って戻るときは待たない（指について動く分で、もう退場している） */
+  const [, closeInstant] = useClosing(onClose);
+  const { stripRef, screenRef } = useEdgeSwipeBack(closeInstant);
   const [open, setOpen] = useState(HELP_SECTIONS[0].title);
 
   return (
-    <OverlayScreen from="right" closing={closing}>
+    <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
     <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
@@ -8362,9 +8460,11 @@ function HelpScreen({ onClose }) {
   );
 }
 
-function GardenScreen({ garden, records, onClose, onChangeFruit }) {
-  const [closing, close] = useClosing(onClose);
-  const { stripRef, screenRef } = useEdgeSwipeBack(close);
+function GardenScreen({ garden, records, onClose, onChangeFruit , zIndex}) {
+  const [closing, close] = useClosing(onClose, FT_EXIT_RIGHT_MS);
+  /* 左端から払って戻るときは待たない（指について動く分で、もう退場している） */
+  const [, closeInstant] = useClosing(onClose);
+  const { stripRef, screenRef } = useEdgeSwipeBack(closeInstant);
   const [pick, setPick] = useState(false);
   const [pending, setPending] = useState(null); // 植え直しの確認待ち
   const harvests = [...(garden.harvests || [])].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -8374,7 +8474,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
   const cur = cc ? stageOf(cc.days, cc.count) : null;
 
   return (
-    <OverlayScreen from="right" closing={closing}>
+    <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
     <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
@@ -8456,8 +8556,10 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
 /* ============================================================
    バックアップ画面
    ============================================================ */
-function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, onClose, onRestore, onBackedUp, onImportOne }) {
-  const [closing, close] = useClosing(onClose);
+function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, onClose, onRestore, onBackedUp, onImportOne , zIndex}) {
+  const [closing, close] = useClosing(onClose, FT_EXIT_RIGHT_MS);
+  /* 左端から払って戻るときは待たない（指について動く分で、もう退場している） */
+  const [, closeInstant] = useClosing(onClose);
   const readableText = useMemo(() => buildBackupText(records), [records]);
   /* 写真の中身は置き場（IndexedDB）にあり、記録には「photo:番号」しか入っていない。
      **書き出すときは、絵の中身も一緒に入れること。** 入れないと、機種を変えたときに写真だけが失われる。
@@ -8615,7 +8717,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
   };
 
   /* 画面の左端から払って戻る仕組み。切り出しの折に落とさないこと */
-  const { stripRef, screenRef } = useEdgeSwipeBack(close);
+  const { stripRef, screenRef } = useEdgeSwipeBack(closeInstant);
 
   /* 読み込みの中身。ファイルからでも、貼りつけた文字からでも同じ道すじを通す。
      **2つに分けて書かないこと。** 片方だけ直すと食い違う */
@@ -8692,7 +8794,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
   const unsaved = React.useContext(UnsavedContext);
 
   return (
-    <OverlayScreen from="right" closing={closing}>
+    <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
       <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
         <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
@@ -9611,31 +9713,13 @@ function AppMain() {
   const [harvestOf, setHarvestOf] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuInstant, setMenuInstant] = useState(false);
-  /* メニューから別の画面へ移るとき。
-     いま開いている画面を必ず閉じてから、次を開くこと。
-     閉じずに開くと2枚が重なったままになり、あとに書いてあるほう
-     （＝「収穫した実」）だけが手前に出続けてしまう。
-     重なって出る画面はどれも同じ高さ（z-index 50）なので、
-     並び順がそのまま前後関係になる点に注意 */
-  /* メニューから画面へ移るとき。
-     **いま重なって出ている画面を、ひとつ残らず閉じること。**
-     閉じ忘れると、その画面が下に残ったままになり、
-     戻ったときに前の画面が出てくる（記録の閲覧・書ごと・日ごとが抜けていた） */
-  const goFromMenu = (fn) => {
-    setMenuInstant(true);
-    setBackupOpen(false);
-    setArtOpen(false);
-    setBookmarkOpen(false);
-    setGardenOpen(false);
-    setHelpOpen(false);
-    setTagsOpen(false);
-    setViewing(null);
-    setViewingBook(null);
-    setViewingDay(null);
-    setOpenFolderId(null);
-    fn();
-    setMenuOpen(false);
-  };
+  /* メニューから画面へ移るあいだ（2.10.0〜。姉妹アプリ My手帳 2.20.6 と同じ）。
+     menuUnder＝板を移った先の画面の下へ沈めている。
+     menuLift＝右から入ってくる画面（"art" など）。入りきるまで、ほかの全画面より上（MENU_LIFT_Z）に出す */
+  const [menuUnder, setMenuUnder] = useState(false);
+  const [menuLift, setMenuLift] = useState(null);
+  const menuGoTimer = useRef(null);
+  useEffect(() => () => clearTimeout(menuGoTimer.current), []);
   const [artworks, setArtworks] = useState([]);
   const [headerBg, setHeaderBg] = useState(null); // ヘッダの背景に敷く絵（1枚だけ。「photo:番号」）
   /* 片づけ（sweepPhotos）は、記録を消した流れの中から呼ぶ。そのときの headerBg を
@@ -10087,12 +10171,79 @@ function AppMain() {
     return <div className="min-h-screen" style={{ background: "#F2FAFE" }} />;
   }
 
+  /* メニューから画面へ移る（2.10.0〜。姉妹アプリ My手帳 2.20.6 と同じ動き）。
+     1. 板はその場に残し、移った先の画面の下へ沈める（menuUnder）
+     2. 移った先の画面を、ほかの全画面より上（menuLift）に、右から入れる。板と、いま出ている画面にかぶさっていく
+     3. 入りきったら（data-ft-entered が付いたら）、隠れた板と、下に残った画面を閉じる
+     **いま出ている画面を先に閉じないこと。** 入ってくる途中の左側に、ひとつ下の画面（ホームなど）がのぞく。
+     **板をその場で消さないこと**（2.9.1 まで）。板がパッと消えてから画面が入ってきて、ぎこちない。
+     **板を右へ滑らせないこと。** 入ってくる画面と逆向きにすれ違う。
+     **画面を増やしたら、MENU_SCREENS と finish の閉じる行の両方に足し、
+     その画面の OverlayScreen に zIndex を渡すこと**（zIndex={menuLift === "…" ? MENU_LIFT_Z : undefined}）。
+     閉じ忘れると、その画面が下に残ったままになり、戻ったときに前の画面が出てくる */
+  const MENU_SCREENS = {
+    art: { isOpen: artOpen, open: () => setArtOpen(true) },
+    bookmark: { isOpen: bookmarkOpen, open: () => setBookmarkOpen(true) },
+    garden: { isOpen: gardenOpen, open: () => setGardenOpen(true) },
+    tags: { isOpen: tagsOpen, open: () => setTagsOpen(true) },
+    backup: { isOpen: backupOpen, open: () => setBackupOpen(true) },
+    help: { isOpen: helpOpen, open: () => setHelpOpen(true) },
+  };
+  const goFromMenu = (key) => {
+    /* 移っている途中に、もう一度押されたぶんは受けない */
+    if (menuGoTimer.current) return;
+    const target = MENU_SCREENS[key];
+    /* いま見ている画面を選んだ → 移らない。板をふつうに閉じる（右へ滑る） */
+    if (target.isOpen && !viewing) {
+      setMenuInstant(false);
+      setMenuOpen(false);
+      return;
+    }
+    setMenuUnder(true);
+    setMenuLift(key);
+    target.open();
+    /* **時間を決め打ちで待たないこと。** iPhone が重いと動きの始まりが遅れ、
+       入りきる前に下の板と画面が消えて、ホームがのぞく。
+       入りきった印（data-ft-entered）が付くまで待つ。付かない端末のために上限（1.5秒）も置く */
+    const started = Date.now();
+    const entered = () => !!document.querySelector("[data-ft-lift] > .anim-right[data-ft-entered]");
+    const finish = () => {
+      menuGoTimer.current = null;
+      setMenuOpen(false);
+      if (key !== "art") setArtOpen(false);
+      if (key !== "bookmark") setBookmarkOpen(false);
+      if (key !== "garden") setGardenOpen(false);
+      if (key !== "tags") setTagsOpen(false);
+      if (key !== "backup") setBackupOpen(false);
+      if (key !== "help") setHelpOpen(false);
+      setViewing(null);
+      setViewingBook(null);
+      setViewingDay(null);
+      setOpenFolderId(null);
+      setMenuLift(null);
+    };
+    const wait = () => {
+      if (motionIsOff() || entered() || Date.now() - started > 1500) { finish(); return; }
+      menuGoTimer.current = setTimeout(wait, 50);
+    };
+    menuGoTimer.current = setTimeout(wait, motionIsOff() ? 0 : FT_EXIT_RIGHT_MS);
+  };
+  /* 三本線を押したとき。**instant と under を戻すのは、ここ（次に開くとき）。移る途中で戻さないこと。**
+     戻すと、板が一瞬いちばん上に戻って、移った先の画面の上にちらつく */
+  const openMenu = () => {
+    /* 画面へ移っている途中は開かない（すぐ閉じられてしまう） */
+    if (menuGoTimer.current) return;
+    setMenuInstant(false);
+    setMenuUnder(false);
+    setMenuOpen(true);
+  };
+
   return (
     <ArtworkContext.Provider value={artworks}>
     <PrefsContext.Provider value={prefs}>
     <UnsavedContext.Provider value={unsavedNow}>
     <TypeNameContext.Provider value={typeDesc.name}>
-    <MenuContext.Provider value={() => setMenuOpen(true)}>
+    <MenuContext.Provider value={openMenu}>
     {/* ft-root ＝ 動きの効き先。「動きの演出」を切ると ft-still が付いて、すべて止まる */}
     <div className={"ft-shell ft-page font-sans text-neutral-900 ft-root "
       + (headerBgUrl ? "ft-hasbg " : "")
@@ -10265,8 +10416,12 @@ function AppMain() {
 
         /* fill-mode は backwards にすること。both だと終わったあとも transform が残り、
            中にある position:fixed の要素（ダイアログなど）の位置の基準がずれてしまう */
-        .anim-right     { animation: ft-right-in 0.26s cubic-bezier(0.22,1,0.36,1) backwards; }
-        .anim-right-out { animation: ft-right-out 0.22s cubic-bezier(0.55,0,0.68,0.53) forwards; }
+        /* 右から入る画面と、右へ戻る画面（2.10.0〜。姉妹アプリ My手帳 と同じ長さ・ゆるめ方）。
+           **退場は登場と対にすること。** 長さは FT_EXIT_RIGHT_MS（300）と必ず同じにする。
+           暗がり（anim-scrim-out-push）も同じ長さで薄れさせる。短いと、画面が出きる前に暗がりだけ消える */
+        .anim-right     { animation: ft-right-in 0.3s cubic-bezier(0.22,1,0.36,1) backwards; }
+        .anim-right-out { animation: ft-right-out 0.3s cubic-bezier(0.55,0,0.68,0.53) forwards; }
+        .anim-scrim-out-push { animation: ft-fade-out 0.3s cubic-bezier(0.55,0,0.68,0.53) forwards; }
         .anim-up        { animation: ft-up-in 0.28s cubic-bezier(0.22,1,0.36,1) backwards; }
         .anim-down-out  { animation: ft-down-out 0.24s cubic-bezier(0.55,0,0.68,0.53) forwards; }
         .anim-sheet     { animation: ft-sheet-up 0.36s cubic-bezier(0.33,1,0.5,1) backwards; }
@@ -10751,19 +10906,19 @@ function AppMain() {
             onCancel={() => setDupState(null)} />
         )}
 
-        {backupOpen && <BackupScreen records={records} folders={folders} artworks={artworks} garden={garden} tagMaster={tagMaster}
+        {backupOpen && <BackupScreen zIndex={menuLift === "backup" ? MENU_LIFT_Z : undefined} records={records} folders={folders} artworks={artworks} garden={garden} tagMaster={tagMaster}
           prefs={prefs} captions={captions} typeDesc={typeDesc} headerBg={headerBg} onClose={() => setBackupOpen(false)} onRestore={handleRestore} onBackedUp={markBackedUp}
           onImportOne={importOneFile} />}
 
-        {artOpen && <ArtworkScreen artworks={artworks} onChange={saveArtworks} captions={captions} onSaveCaptions={saveCaptions} prefs={prefs} onSavePrefs={savePrefs} onClose={() => setArtOpen(false)} typeDesc={typeDesc} onSaveTypeDesc={saveTypeDesc} headerBg={headerBg} onSaveHeaderBg={saveHeaderBg} />}
+        {artOpen && <ArtworkScreen zIndex={menuLift === "art" ? MENU_LIFT_Z : undefined} artworks={artworks} onChange={saveArtworks} captions={captions} onSaveCaptions={saveCaptions} prefs={prefs} onSavePrefs={savePrefs} onClose={() => setArtOpen(false)} typeDesc={typeDesc} onSaveTypeDesc={saveTypeDesc} headerBg={headerBg} onSaveHeaderBg={saveHeaderBg} />}
 
-        {bookmarkOpen && <BookmarkScreen records={records} onClose={() => setBookmarkOpen(false)} onOpenDetail={openDetail} defaultSort={prefs.sortMode} />}
+        {bookmarkOpen && <BookmarkScreen zIndex={menuLift === "bookmark" ? MENU_LIFT_Z : undefined} records={records} onClose={() => setBookmarkOpen(false)} onOpenDetail={openDetail} defaultSort={prefs.sortMode} />}
 
-        {tagsOpen && <TagManageScreen tags={knownTags} records={records}
+        {tagsOpen && <TagManageScreen zIndex={menuLift === "tags" ? MENU_LIFT_Z : undefined} tags={knownTags} records={records}
         onAdd={addTagToMaster} onRename={renameTag} onDelete={deleteTag} onReorder={reorderTags}
         onClose={() => setTagsOpen(false)} />}
-      {helpOpen && <HelpScreen onClose={() => setHelpOpen(false)} />}
-      {gardenOpen && <GardenScreen garden={garden} records={records} onClose={() => setGardenOpen(false)} onChangeFruit={plantFruit} />}
+      {helpOpen && <HelpScreen zIndex={menuLift === "help" ? MENU_LIFT_Z : undefined} onClose={() => setHelpOpen(false)} />}
+      {gardenOpen && <GardenScreen zIndex={menuLift === "garden" ? MENU_LIFT_Z : undefined} garden={garden} records={records} onClose={() => setGardenOpen(false)} onChangeFruit={plantFruit} />}
 
         {pickFruit && (
           <FruitPickDialog
@@ -10787,19 +10942,20 @@ function AppMain() {
         <SideMenu
           open={menuOpen}
           instant={menuInstant}
+          under={menuUnder}
           onClose={() => { setMenuInstant(false); setMenuOpen(false); }}
           items={[
             {
               label: "画面のカスタマイズ",
               desc: "カラー・イラスト・ひとこと",
               icon: <ImagePlus size={20} />,
-              onClick: () => goFromMenu(() => setArtOpen(true)),
+              onClick: () => goFromMenu("art"),
             },
             {
               label: "ブックマーク",
               desc: `${records.filter((r) => r.bookmarked).length}件の記録`,
               icon: <Bookmark size={20} />,
-              onClick: () => goFromMenu(() => setBookmarkOpen(true)),
+              onClick: () => goFromMenu("bookmark"),
             },
             {
               label: "収穫した実",
@@ -10807,13 +10963,13 @@ function AppMain() {
                 ? `${fruitByKey(garden.cycle.fruit).label}を育てています・収穫${(garden.harvests || []).length}個`
                 : "記録を重ねて実を育てる",
               icon: <Sparkles size={20} />,
-              onClick: () => goFromMenu(() => setGardenOpen(true)),
+              onClick: () => goFromMenu("garden"),
             },
             {
               label: "タグの整理",
               desc: (knownTags.length ? `${knownTags.length}個のタグ` : "追加・名前の変更・削除"),
               icon: <Tag size={20} />,
-              onClick: () => goFromMenu(() => setTagsOpen(true)),
+              onClick: () => goFromMenu("tags"),
             },
             {
               label: "バックアップ",
@@ -10824,13 +10980,13 @@ function AppMain() {
                 : (prefs.lastBackup ? `${fmtJpDate(prefs.lastBackup)} に書き出しました` : "書き出しと復元"),
               icon: <Download size={20} />,
               badge: unsavedNow,
-              onClick: () => goFromMenu(() => setBackupOpen(true)),
+              onClick: () => goFromMenu("backup"),
             },
           ]}
           footer={
             /* さりげなく置きつつ、押す場所は行いっぱいに広げてある。
                気づいたときに指がどこに当たっても開けるように */
-            <TapButton onClick={() => goFromMenu(() => setHelpOpen(true))}
+            <TapButton onClick={() => goFromMenu("help")}
               className="w-full flex items-center gap-3 -my-1 py-2 rounded-xl text-left hover:bg-neutral-50 ft-tap-card">
               {/* **ここだけは大きくしないこと。**
                   この段の高さは下の帯（--ft-nav-h＝57px）にそろえてある。
