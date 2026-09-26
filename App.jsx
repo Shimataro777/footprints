@@ -5807,7 +5807,7 @@ function HighlightBanner({ records }) {
       <div className="rounded-2xl border border-dashed border-neutral-300 p-3 mb-3 flex items-center gap-3">
         <Mascot seed="home-banner" size={64} className="shrink-0" />
         <p className="text-[12.5px] text-neutral-500 flex-1">
-          聖句の記録で「今年の聖句にする」「今月の聖句にする」を選ぶと、ここに出ます。
+          今年・今月の聖句は、まだありません。
         </p>
       </div>
     );
@@ -5904,7 +5904,7 @@ function ContinueCard({ records, onStart }) {
       </span>
       <span className="flex-1 min-w-0">
         <span className="block text-[11.5px] font-bold tracking-wider text-th-800/70">
-          {next.first ? "ここから始めましょう" : next.newBook ? `${next.finished} を読み終えました。次は` : "続きから"}
+          {next.first ? "はじめから" : next.newBook ? `${next.finished} を読み終えました。次は` : "続きから"}
         </span>
         <span className="block font-display text-[18px] text-neutral-900 truncate">{next.book} {next.chapter}章</span>
       </span>
@@ -6014,7 +6014,7 @@ function HarvestDialog({ fruit, onReplant, onLater }) {
         </div>
         <h3 className="font-display text-[18px] text-neutral-900 mb-1.5">{f.label}を収穫しました</h3>
         <p className="text-[13.5px] text-neutral-600 leading-relaxed mb-5">
-          ここまで、よく歩まれました。収穫した実は、メニューの「収穫した実」に残ります。
+          収穫した実は、メニューの「収穫した実」に残ります。
         </p>
         <div className="flex gap-2.5">
           <button onClick={onLater} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>このままにする</button>
@@ -6235,8 +6235,7 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
         {recent.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-neutral-300 p-6 text-center flex flex-col items-center">
             <Mascot seed="records-empty" size={168} withNotes />
-            <p className="text-[14.5px] font-bold text-neutral-700 mb-1 mt-2">最初の一歩を記録しませんか</p>
-            <p className="text-[13.5px] text-neutral-500">右下の＋から、今日読んだ箇所や心に残ったことばを残せます。</p>
+            <p className="text-[14.5px] text-neutral-500 mt-2">まだ記録はありません</p>
           </div>
         ) : (
           <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5">
@@ -7381,10 +7380,10 @@ function SaveFallbackDialog({ onCopy, onCancel }) {
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">ファイルとして保存できませんでした</h3>
         <p className="text-[13.5px] text-neutral-600 mb-2 leading-relaxed">
-          この画面ではファイル保存が使えません。データをコピーして、メモアプリなどに貼り付けて保管してください。
+          この画面ではファイルに保存できません。コピーして、メモアプリなどに残してください。
         </p>
         <p className="text-[12.5px] text-neutral-500 mb-5 leading-relaxed">
-          ホーム画面に追加したアプリから開くと、ファイルとして保存できます。
+          ホーム画面に追加したアプリからなら、ファイルで保存できます。
         </p>
         <div className="flex gap-2.5">
           <button onClick={onCancel} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>閉じる</button>
@@ -7625,7 +7624,7 @@ function CropSheet({ file, aspect = 1, round, title = "位置を決める", onCa
             )}
           </div>
         </div>
-        <p className="text-[12.5px] text-neutral-400 pb-3 text-center">指で動かす／つまんで大きさを変える</p>
+        <div className="pb-3" aria-hidden="true" />
         <div className="shrink-0 flex gap-2.5 px-4 py-3 border-t border-neutral-200"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
           <button type="button" onClick={onCancel} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
@@ -7703,8 +7702,8 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     setOpenGroup(targetGroup);
     const gl = mascotGroupLabel(targetGroup, nameDraft);
     setMsg({ kind: "warn", text: `「${gl}」に${added.length}枚を追加しました。`
-      + (over > 0 ? `（${over}枚は出てくる場所がないため受け取っていません）` : "")
-      + "下の「保存」を押すと反映されます。" });
+      + (over > 0 ? `（${over}枚は場所が足りず入りませんでした）` : "")
+      + "下の「保存」で反映されます。" });
   };
 
   const save = async () => {
@@ -7734,7 +7733,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     setHdrFile(null);
     if (!src) { setMsg({ kind: "err", text: "画像を読み込めませんでした。" }); return; }
     setHdrDraft(src);
-    setMsg({ kind: "warn", text: "ヘッダーの背景を選びました。下の「保存」を押すと反映されます。" });
+    setMsg({ kind: "warn", text: "ヘッダーの背景を選びました。下の「保存」で反映されます。" });
   };
 
   /* 未保存のまま閉じようとしたら確認する（記録画面と同じ動き） */
@@ -7814,7 +7813,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
                 <ImagePlus size={16} /> {hdrDraft ? "画像を選び直す" : "画像を選ぶ"}
               </button>
               {hdrDraft && (
-                <button type="button" onClick={() => { setHdrDraft(null); setMsg({ kind: "warn", text: "下の「保存」を押すと反映されます。" }); }}
+                <button type="button" onClick={() => { setHdrDraft(null); setMsg({ kind: "warn", text: "下の「保存」で反映されます。" }); }}
                   className={BTN_DANGER_SOFT + " " + BTN_H + " px-3.5 text-[14.5px]"}>
                   <X size={15} /> 外す
                 </button>
@@ -7861,7 +7860,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
             動きの演出
-            <HelpTip label="動きの演出" text="切ると、画面の切り替わりや押したときの動きが止まります。" />
+            <HelpTip label="動きの演出" text="切ると、画面が切り替わるときの動きが止まります。" />
           </h3>
           <label className="flex items-center gap-2.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 mb-1.5 cursor-pointer select-none">
             <input type="checkbox" checked={prefDraft.motion !== false}
@@ -7878,7 +7877,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
           <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
             イラスト
-            <HelpTip label="イラスト" text={`画面ごとに、好きな絵と「ひとこと」を設定できます。全部で${ART_MAX}枚までです。`} />
+            <HelpTip label="イラスト" text={`画面ごとに絵と「ひとこと」を変えられます（${ART_MAX}枚まで）。`} />
           </h3>
           <label className="flex items-center gap-2.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 mb-3 cursor-pointer select-none">
             <input type="checkbox" checked={prefDraft.showMascots !== false}
@@ -8026,7 +8025,7 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
       )}
       {pendingId && (
         <ConfirmItemDeleteDialog label="イラスト"
-          onConfirm={() => { setDraft(draft.filter((a) => a.id !== pendingId)); setPendingId(null); setMsg({ kind: "warn", text: "下の「保存」を押すと反映されます。" }); }}
+          onConfirm={() => { setDraft(draft.filter((a) => a.id !== pendingId)); setPendingId(null); setMsg({ kind: "warn", text: "下の「保存」で反映されます。" }); }}
           onCancel={() => setPendingId(null)} />
       )}
     </OverlayScreen>
@@ -8068,7 +8067,7 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort }) {
         {list.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-neutral-300 p-6 flex flex-col items-center">
             <Mascot seed="records-empty" size={142} />
-            <p className="text-[13.5px] text-neutral-500 mt-2 text-center">記録を見る画面の右上にある<br />しおりの印を押すと、ここに集まります。</p>
+            <p className="text-[13.5px] text-neutral-500 mt-2 text-center">ブックマークした記録はありません</p>
           </div>
         ) : (
           <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5">
@@ -8257,62 +8256,57 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
    画面に説明文を常に出しておくと、慣れた人には邪魔になるため
    ============================================================ */
 const HELP_SECTIONS = [
+  /* **画面を見れば分かる操作は書かないこと**（「右下の＋から」など）。
+     書くのは、見ただけでは分からない決まりと、知っておくと得なことだけ。1項目1〜2文にとどめる（2.8.6〜） */
   {
     title: "記録をつける",
     items: [
-      ["＋を押して始める", "記録タブの右下にある＋から、種類を選んで書き始めます。種類は「通読」「学び」「聖句」「その他」の4つです。"],
-      ["書きかけでも消えない", "入力の途中でも自動で下書きが残ります。右上のボタンを押すと、その場で保存できます。輪がひとつ広がったら、保存できた合図です。"],
-      ["聖書箇所を挿入", "入力欄のすぐ下にある「聖書箇所を挿入」から選ぶと、正しい書き方で文章に足せます。章をまたぐとき（創世記 2章-5章）も選べます。"],
+      ["種類は4つ", "「通読」「学び」「聖句」「その他」から選んで書き始めます。"],
+      ["書きかけでも消えない", "入力の途中でも下書きが自動で残ります。"],
+      ["聖書箇所を挿入", "正しい書き方で本文に足せます。章をまたぐ範囲も選べます。"],
     ],
   },
   {
     title: "タグ",
     items: [
-      ["どの記録にも付けられる", "種類とは別に、自由なラベルを何個でも付けられます。「祈り」「日曜礼拝」「家族」のように、あとで思い出しやすい言葉を登録できます。"],
-      ["前に使ったタグから選ぶ", "一度登録したタグは一覧に残ります。打ち込んでさがすことも、押して付けることもできます。"],
-      ["探すときの手がかりになる", "「探す」の絞り込みで、タグを選んで横断的に取り出せます。複数選ぶと、そのすべてが付いた記録だけが残ります。"],
+      ["自由なラベル", "どの記録にも何個でも付けられます。「祈り」「家族」など、自由に作れます。"],
+      ["整理する", "メニューの「タグの整理」で、名前の変更・並べ替え・削除ができます。"],
     ],
   },
   {
     title: "探す",
     items: [
-      ["言葉で探す", "上の帯を押して条件の欄を開き、言葉を入れて、欄のいちばん下の「検索する」を押します。空白で区切ると、すべての言葉を含む記録が出ます。本文だけでなく、タグや聖書箇所も探しに含まれます。"],
-      ["絞り込む", "記録の種類・タグ・書・期間で絞り込めます。あとで調べたいことは、タグを付けておくと後から取り出せます。"],
+      ["言葉で探す", "本文・タグ・聖書箇所から探します。空白で区切ると、すべての言葉を含む記録が出ます。"],
+      ["絞り込み", "種類は「どれか」、タグは「すべて」に当てはまる記録が残ります。"],
     ],
   },
   {
     title: "フォルダ",
     items: [
-      ["集めておく入れもの", "フォルダタブの右下のボタン（フォルダの印）から作ります。フォルダに入れても、記録そのものは動きません。フォルダを消しても、記録は消えません。"],
-      ["自動で集める", "種類・タグ・書・期間を決めておくと、当てはまる記録がひとりでに集まります。あとから書いた記録も入ります。"],
-      ["手動で入れる", "フォルダの中の右下の虫めがねから、条件で探して入れたい記録を選びます。手動で入れたぶんは、フォルダの中で長押しすると外せます。"],
-      ["並べ方と固定", "名前順・更新順・件数順を選べます。ピンを押したフォルダは、いつもいちばん上に来ます。長押しすると、名前とアイコンを変えたり、削除したりできます。"],
+      ["自動で集める", "種類・タグ・書・期間を決めると、当てはまる記録がひとりでに集まります。あとから書いた記録も入ります。"],
+      ["手動で入れる", "探して選んだ記録を入れます。フォルダの中で長押しすると外せます。"],
+      ["記録は消えない", "フォルダを消しても、中の記録はそのまま残ります。"],
     ],
   },
   {
     title: "実績と実り",
     items: [
-      ["読んだところが色づく", "実績タブでは、通読の記録から66巻それぞれの読んだ回数が色で分かります。"],
-      ["続けるほど実る", "ホームの木は、記録を重ねるほど育ちます。収穫した実はメニューから振り返れます。"],
+      ["読んだところが色づく", "通読の記録から、66巻それぞれの読んだ回数が色で分かります。"],
+      ["続けるほど実る", "ホームの木は、記録を重ねるほど育ちます。"],
     ],
   },
   {
     title: "バックアップ",
     items: [
-      ["ファイルで残す", "メニューの「バックアップ」→「データを保存」で、ファイルが1つ出ます。そのまま読めて、「データ復元」で元へ戻せます。記録・イラスト・タグ・果樹に加えて、色や文字の大きさなどの設定も一緒に入ります。"],
-      ["文字で残す", "「文字でコピー」を押して、メモ帳やチャットなど、あとで開ける場所に貼っておく方法もあります。戻すときは「文字から復元」に貼りつけます。ファイルの行方が分かりにくい端末では、こちらが確かです。"],
-      ["ときどき控える", "記録はこの端末の中だけにあります。機種を変えるときや、アプリを消したときには失われるので、ときどき控えておくと安心です。しばらく控えていないと、そっとお知らせします。"],
-      ["記録を分け合う", "記録の閲覧画面の右上から、その1件だけを渡せます。ファイルでも、文字でも渡せます。受け取った側は「＋」→「ファイルから取り込む」か「文字から取り込む」で足せます。取り込んでも、その人の記録は消えません。"],
+      ["保存しておく理由", "記録はこの端末の中だけにあります。機種変更やアプリを消したときは、保存したデータから戻せます。"],
+      ["ファイルか文字で", "「データを保存」でファイルに、「文字でコピー」でメモアプリなどに残せます。記録・設定・タグ・写真がまとめて入ります。"],
+      ["1件だけ渡す", "記録を見る画面の右上から、その1件をファイルか文字で渡せます。受け取った側の記録は消えません。"],
     ],
   },
   {
     title: "見た目を変える",
     items: [
-      ["色と文字の大きさ", "メニューの「画面のカスタマイズ」から、テーマの色と文字の大きさ（小・中・大）を選べます。"],
-      ["ヘッダーの背景", "画面のいちばん上の帯に、好きな写真を敷けます。"],
-      ["ひとこと", "記録画面の下に出るひとことも、同じ画面で書き替えられます。"],
-      ["イラスト", "お好きな絵に差し替えられます。出てくる場所ごとに色で対になっているので、どの絵がどこに出るかが分かります。"],
-      ["動きを止める", "押したときの動きが気になるときは、同じ画面で止められます。"],
+      ["カスタマイズ", "メニューの「画面のカスタマイズ」で、色・文字の大きさ・ヘッダーの写真・イラスト・ひとことを変えられます。"],
     ],
   },
 ];
@@ -8418,7 +8412,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
         {harvests.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-neutral-300 p-6 flex flex-col items-center">
             <FruitTree stage={1} fruit="apple" size={120} />
-            <p className="text-[12.5px] text-neutral-500 mt-2 text-center">これまでの実りが、ここに並びます。</p>
+            <p className="text-[12.5px] text-neutral-500 mt-2 text-center">まだ収穫した実はありません</p>
           </div>
         ) : (
           <div className="space-y-2.5">
@@ -8593,7 +8587,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
     setFallbackOpen(false);
     if (ok) {
       onBackedUp && onBackedUp();
-      setMsg({ kind: "warn", text: "データをコピーしました。メモアプリなどに貼り付けて保管してください。" });
+      setMsg({ kind: "warn", text: "コピーしました。メモアプリなどに貼りつけて残してください。" });
     } else {
       setMsg({ kind: "err", text: "コピーできませんでした。もう一度お試しください。" });
     }
@@ -8608,7 +8602,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
     const ok = await copyToClipboard(buildBackupFile(readableText, jsonText));
     if (ok) {
       onBackedUp && onBackedUp();
-      setMsg({ kind: "ok", text: "コピーしました。メモ帳やチャットなど、あとで開ける場所に貼りつけて残してください。" });
+      setMsg({ kind: "ok", text: "コピーしました。メモアプリなどに貼りつけて残してください。" });
     } else {
       setMsg({ kind: "err", text: "コピーできませんでした。もう一度お試しください。" });
     }
@@ -8749,7 +8743,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
 
           <div className="space-y-2.5 mb-4">
             <div className="flex justify-end">
-              <HelpTip label="バックアップ" text="記録と設定をまとめて書き出します。「データ復元」で元に戻せます。" />
+              <HelpTip label="バックアップ" text="記録と設定をまとめて保存します。「データ復元」で元に戻せます。" />
             </div>
             <button onClick={saveData} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"}>
               <Download size={18} /> データを保存
@@ -8786,7 +8780,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
       )}
       {pasteOpen && (
         <PasteDialog title="文字から復元する"
-          hint="コピーしておいたバックアップの文字を貼りつけてください。記録・設定・タグがまとめて戻ります。"
+          hint="コピーしておいたバックアップの文字を貼りつけてください。"
           actionLabel="復元する"
           onCancel={() => setPasteOpen(false)} onSubmit={restoreFromText} />
       )}
@@ -9137,7 +9131,7 @@ function FolderSetupSheet({ folder, records, knownTags, initialTab, onCancel, on
           onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1 px-4 py-3 border-b border-neutral-200 shrink-0">
             <span className="font-display text-[17px] text-neutral-900 tracking-wide flex-1">記録を入れる</span>
-            <HelpTip label="記録を入れる" text={"自動で集めたぶんは、条件を変えるまで外せません。\n手動で入れたぶんは、いつでも外せます。"} />
+            <HelpTip label="記録を入れる" text={"種類・タグは、どれかに合う記録が入ります。書・期間は、その範囲の記録だけになります。\n手動で入れた記録は、フォルダの中で長押しすると外せます。"} />
             <button type="button" onClick={tryClose} aria-label="閉じる"
               className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={24} /></button>
           </div>
@@ -9181,9 +9175,6 @@ function FolderSetupSheet({ folder, records, knownTags, initialTab, onCancel, on
                   <span className="text-[13.5px] text-neutral-600 flex-1">この条件で入る記録</span>
                   <span className="text-[17px] font-bold tabular-nums text-neutral-900">{autoCount}件</span>
                 </div>
-                <p className="text-[12.5px] text-neutral-500 mt-2.5 leading-relaxed">
-                  種類とタグは、選んだどれかに当てはまれば入ります。書と期間を選ぶと、その中の記録だけになります。
-                </p>
               </>
             ) : (
               <>
@@ -9198,9 +9189,7 @@ function FolderSetupSheet({ folder, records, knownTags, initialTab, onCancel, on
                     <SearchActions canClear={hasDraft || !!applied} onClear={clear} canSearch={hasDraft} onSearch={search} />
                   </div>
                 )}
-                {!applied ? (
-                  !fOpen ? null : <p className="text-[12.5px] text-neutral-500 leading-relaxed px-1">条件をえらんで「検索する」を押すと、入れる記録を選べます。</p>
-                ) : results.length === 0 ? (
+                {!applied ? null : results.length === 0 ? (
                   <p className="text-[14.5px] text-neutral-400 py-10 text-center">見つかりません</p>
                 ) : (
                   <>
@@ -9318,14 +9307,13 @@ function FolderDetail({ folder, records, knownTags, defaultSort, onClose, onChan
           {list.length > 0 && !selecting && (
             <div className="flex items-center gap-2 mb-3">
               <p className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase tabular-nums">{list.length}件</p>
-              {pickable.length > 0 && !selecting && <span className="text-[11.5px] text-neutral-400">長押しで手動のぶんを外せます</span>}
               <SortToggle value={sortMode} onChange={setSortMode} />
             </div>
           )}
           {list.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-neutral-300 p-6 flex flex-col items-center ft-noresult">
               <Mascot seed="folder-empty" size={142} />
-              <p className="text-[13.5px] text-neutral-500 mt-2 text-center leading-relaxed">まだ記録が入っていません。<br />上の札か、右下の虫めがねから入れられます。</p>
+              <p className="text-[13.5px] text-neutral-500 mt-2 text-center">まだ記録が入っていません</p>
             </div>
           ) : (
             <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5 lg:items-start ft-seq">
@@ -10752,7 +10740,7 @@ function AppMain() {
         {/* 文字から記録を取り込む */}
         {pasteRecord && (
           <PasteDialog title="文字から取り込む"
-            hint="受け取った記録の文字を貼りつけてください。いまある記録は消えず、新しい記録として足されます。"
+            hint="受け取った記録の文字を貼りつけてください。今ある記録は消えません。"
             actionLabel="取り込む"
             onCancel={() => setPasteRecord(false)}
             onSubmit={async (t) => { setPasteRecord(false); await importOneFile(t); }} />
