@@ -2355,7 +2355,25 @@ function splitByQuote(text) {
        （聖書箇所＋1行あける＋聖書箇所で、1行のはずが3行ぶん空いていた） */
     if (p2.body.trim() === "") { carry = carry + p2.nl; return; }
     /* 区切りそのもので1行ぶん改まるので、その1つを引いた残りを空ける */
-    out.push({ quote: p2.quote, text: p2.body, gapBefore: out.length === 0 ? 0 : Math.max(0, before - 1) });
+    const gap0 = out.length === 0 ? 0 : Math.max(0, before - 1);
+    /* ふつうの文の中の空行も、ここで段落に切り分けて「空ける行数」にする（2.6.2〜）。
+       以前は1つの <p> の中に空行を残して、そのまま1行ぶん空けていた。
+       引用のあとの空行は余白で空けていたため、同じ「1行あけ」でも空きの高さが違って見えた。
+       **空行はすべて gapBefore で空けること。** 片方だけ文字の空行に戻すと、また食い違う */
+    if (!p2.quote) {
+      const re = /\n(?:[ \t\u3000]*\n)+/g;
+      let last = 0, mm, gap = gap0;
+      while ((mm = re.exec(p2.body)) !== null) {
+        const piece = p2.body.slice(last, mm.index);
+        if (piece.trim() !== "") { out.push({ quote: false, text: piece, gapBefore: out.length === 0 ? 0 : gap }); gap = 0; }
+        gap += countNl(mm[0]) - 1;
+        last = mm.index + mm[0].length;
+      }
+      const tail = p2.body.slice(last);
+      if (tail.trim() !== "") out.push({ quote: false, text: tail, gapBefore: out.length === 0 ? 0 : gap });
+    } else {
+      out.push({ quote: p2.quote, text: p2.body, gapBefore: gap0 });
+    }
     carry = p2.trail;
   });
   return out;
@@ -2397,14 +2415,20 @@ function HighlightedText({ text, className }) {
      渡された指定の文字色だけを差し替えるので、大きさや行間は本文と揃ったまま */
   const quoteClass = (className || "").replace(/text-neutral-\d+/, "text-neutral-600");
 
-  /* かたまりの間隔。**詰めて置くこと。**
-     引用ブロックは左の縦線で区切りが分かるので、そのうえ行を空けると、聖書箇所が続くところで
-     間延びして読みにくい（依頼により2.1.1で詰めた）。
-     ・空行を書いていないとき … 6px（区切りが分かるだけの、いちばん狭い間隔）
-     ・空行を書いたとき … 1行につき本文0.75行ぶん（書いた空行の多さは伝わるが、そのままの高さは空けない）
-     **空行1つを1行ぶん（1em以上）に戻さないこと。** 聖書箇所を続けて書くと、画面の多くが余白になる */
+  /* かたまりの間隔。
+     ・空行を書いていないとき … 6px（引用の縦線の区切りが分かるだけの、いちばん狭い間隔）
+     ・空行を書いたとき … 空行1つにつき、本文ちょうど1行ぶん（字の大きさ×行間）
+     **空行の空きは、引用のまわりでも、ふつうの文どうしでも同じ高さにすること（2.6.2〜）。**
+     2.1.1 では引用のまわりだけ0.75行ぶんに詰めていたが、ふつうの文の空行は1行ぶんのままだったので、
+     同じ「1行あけ」なのに引用のあとだけ狭く見えた（依頼により揃えた）。
+     聖書箇所を詰めて並べたいときは、空行を書かずに続ければ6pxで並ぶ。
+     高さは px で出す。引用の外わく（div）は字の大きさの指定を持たないので、em だと本文とずれるため */
+  const fontPx = (() => { const m = (className || "").match(/text-\[(\d+(?:\.\d+)?)px\]/); return m ? parseFloat(m[1]) : 16; })();
+  const lineH = /leading-relaxed/.test(className || "") ? 1.625
+    : /leading-normal/.test(className || "") ? 1.5
+    : /leading-tight/.test(className || "") ? 1.25 : 1.5;
   const gapStyle = (b, i) => (i === 0 ? undefined
-    : { marginTop: b.gapBefore > 0 ? `${(b.gapBefore * 0.75).toFixed(2)}em` : "0.375rem" });
+    : { marginTop: b.gapBefore > 0 ? `${(b.gapBefore * fontPx * lineH).toFixed(2)}px` : "0.375rem" });
 
   return (
     <div>
