@@ -1514,3 +1514,17 @@ linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))
   `RecordFilterFields`（条件の欄）・`CriteriaBar`（上の帯）・`SearchActions`（欄の下の「選択解除」「検索する」）・
   `filterRecordsBy`（絞り込み）・`criteriaSummary`（帯に出す短い文）。**片方だけ直さないこと。**
 - **「検索する」は条件の欄のいちばん下に置くこと。** 上へ戻さない（大きなスマホで親指が届かないため。依頼による）。
+
+
+---
+
+## 字を選べる所・選べない所（2.8.3〜）　⚠️ 長押しで動く部品を足すときは必ず読む
+
+- **画面ぜんたい（`.ft-root`）は字を選べない**（`-webkit-user-select: none` と `-webkit-touch-callout: none`）。
+  長押しの部品だけを選べなくすると、iPhone が外側（画面ぜんたい）を選んで青く反転する（フォルダの札で実際に起きた）。
+- **`-webkit-` 付きを必ず書くこと。** iPhone の Safari は `user-select` だけでは効かない。
+  Tailwind の `select-none` は、組み立てで接頭辞を付けていないため、iPhone では効かない。頼らないこと。
+- 選べるように戻しているのは、入力欄（input / textarea）と `.ft-text` の中だけ。
+  いま `.ft-text` を付けているのは、記録の閲覧画面の本文と、ちょっと見る小窓の本文。
+  **新しく「読ませて写させたい本文」を置いたら `ft-text` を付けること。**
+- 絵（img）は長押しの吹き出し・つまんで運ぶ動きを止めてある。

@@ -1516,7 +1516,7 @@ function RecordPeekDialog({ record, onOpen, onClose }) {
         <div className="ft-sheet-body overflow-y-auto px-4 py-4">
           <p className="font-display text-[16px] text-neutral-900 mb-2 tracking-wide">{recordTitle(record)}</p>
           <TagChips tags={record.tags} className="mb-4" />
-          <div className="space-y-4">
+          <div className="space-y-4 ft-text">
             {recordSections(record).map((sc, i) => (
               <div key={i}>
                 {sc.label && (
@@ -7248,7 +7248,8 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
         </div>
         <TagChips tags={record.tags} className="mb-5" />
 
-        <div className="space-y-5">
+        {/* ft-text ＝ この本文は字を選んで写せる（画面ぜんたいは選べない決まり。.ft-root を参照） */}
+        <div className="space-y-5 ft-text">
           {recordSections(record).map((sc, i) => (
             <div key={i}>
               {sc.label && (
@@ -8514,8 +8515,6 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
     /* 記録に付けた写真と、ヘッダーの絵の中身（version 7 から）。{ 番号: 絵 } の形 */
     photos: photos && Object.keys(photos).length ? photos : undefined,
   }, null, 2), [records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, photos]);
-  const [previewMode, setPreviewMode] = useState("readable"); // readable | json
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [msg, setMsg] = useState(null); // {kind:'ok'|'warn'|'err', text}
   const [fallbackOpen, setFallbackOpen] = useState(false); // 保存に失敗したときのダイアログ
   const fileInputRef = useRef(null);
@@ -8604,9 +8603,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
       onBackedUp && onBackedUp();
       setMsg({ kind: "warn", text: "データをコピーしました。メモアプリなどに貼り付けて保管してください。" });
     } else {
-      setPreviewMode("json");
-      setPreviewOpen(true);
-      setMsg({ kind: "err", text: "コピーできませんでした。下の「内容を確認する」を開き、復元用データを長押しして手動でコピーしてください。" });
+      setMsg({ kind: "err", text: "コピーできませんでした。もう一度お試しください。" });
     }
   };
 
@@ -8621,24 +8618,13 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
       onBackedUp && onBackedUp();
       setMsg({ kind: "ok", text: "コピーしました。メモ帳やチャットなど、あとで開ける場所に貼りつけて残してください。" });
     } else {
-      setPreviewOpen(true);
-      setMsg({ kind: "err", text: "コピーできませんでした。下の「内容を確認する」から、手でコピーしてください。" });
+      setMsg({ kind: "err", text: "コピーできませんでした。もう一度お試しください。" });
     }
   };
   /* 貼りつけた文字から戻す。ファイルを選んだときと同じ道すじを通す */
   const restoreFromText = async (text) => {
     setPasteOpen(false);
     await readBackupText(text);
-  };
-
-  const copyText = async (text, label) => {
-    const ok = await copyToClipboard(text);
-    if (ok) {
-      setMsg({ kind: "ok", text: `${label}をコピーしました。` });
-    } else {
-      setPreviewOpen(true);
-      setMsg({ kind: "err", text: "コピーできませんでした。下のプレビューから手動でコピーしてください。" });
-    }
   };
 
   /* 画面の左端から払って戻る仕組み。切り出しの折に落とさないこと */
@@ -8797,28 +8783,6 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
           {msg && (
             <div className={"rounded-xl border-2 px-3.5 py-3 mb-4 text-[13.5px] font-bold " + msgStyle}>{msg.text}</div>
           )}
-
-          <div className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
-            <button onClick={() => setPreviewOpen((v) => !v)} className="w-full flex items-center gap-2 px-4 py-3 min-h-[52px] text-left ft-tap ft-tap-card">
-              <span className="flex-1 text-[13.5px] font-bold text-neutral-700">内容を確認する</span>
-              <ChevronDown size={18} className={"text-neutral-500 ft-chev " + (previewOpen ? "ft-chev-on" : "")} />
-            </button>
-            {previewOpen && (
-              <div className="px-4 pb-4 border-t-2 border-neutral-100 pt-3 ft-open-y">
-                <div className="flex gap-2 mb-2.5">
-                  <button onClick={() => setPreviewMode("readable")}
-                    className={"flex-1 min-h-[40px] rounded-lg text-[13.5px] font-bold border-2 ft-tap " + (previewMode === "readable" ? "bg-th-50 border-th-800 text-th-900" : "border-neutral-300 text-neutral-600")}>読みやすい形式</button>
-                  <button onClick={() => setPreviewMode("json")}
-                    className={"flex-1 min-h-[40px] rounded-lg text-[13.5px] font-bold border-2 ft-tap " + (previewMode === "json" ? "bg-th-50 border-th-800 text-th-900" : "border-neutral-300 text-neutral-600")}>復元用データ</button>
-                </div>
-                <textarea readOnly value={previewMode === "readable" ? readableText : jsonText}
-                  className="w-full h-56 rounded-xl border border-neutral-300 p-3.5 text-[12.5px] leading-relaxed font-mono text-neutral-800 resize-none bg-neutral-50" />
-                <button
-                  onClick={() => copyText(previewMode === "readable" ? readableText : jsonText, previewMode === "readable" ? "読みやすい形式のテキスト" : "復元用データ")}
-                  className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px] mt-2.5"}>コピー</button>
-              </div>
-            )}
-          </div>
 
           {/* いちばん下の逃げ場。無いと帯や一覧が画面の端すれすれになる */}
           <div className="h-16" />
@@ -10245,6 +10209,23 @@ function AppMain() {
           outline: 2px solid var(--th-700, #0F766E); outline-offset: 2px;
         }
         button { -webkit-user-select: none; user-select: none; }
+        /* **画面ぜんたいで、字を選べないようにしておくこと（2.8.3〜。My手帳 と同じ決まり）。**
+           長押しで動く部品（フォルダの札・探す結果の札など）だけを「選べない」にしても、
+           iPhone は長押しのときに、その外側の選べるところ（＝画面ぜんたい）を選んでしまい、まっ青に反転する。
+           また、押さえたまま字を選び始めると指を取り上げられ（pointercancel）、長押しそのものが届かないことがある。
+           ・-webkit- 付きも必ず書くこと。iPhone の Safari は user-select だけでは効かない
+             （Tailwind の select-none は、組み立てで -webkit- を付けていないので効いていなかった）
+           ・長押しで出る「コピー／調べる」の吹き出し（touch-callout）も止める */
+        .ft-root { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+        /* **書くところと、読ませる本文は、選べるように戻すこと。** 打った字を直せなくなるし、聖句や学びを写せなくなる。
+           本文の入れ物には ft-text を付ける（記録の閲覧画面・ちょっと見る小窓）。新しく「読ませる本文」を置いたら付けること */
+        .ft-root input, .ft-root textarea, .ft-root [contenteditable="true"], .ft-root .ft-text {
+          -webkit-user-select: text; user-select: text; -webkit-touch-callout: default;
+        }
+        /* 本文の中でも、押して動くもの（ボタン）は選べないまま */
+        .ft-root .ft-text button { -webkit-user-select: none; user-select: none; }
+        /* 絵は、つまんで運んだり「写真を保存」の吹き出しを出したりしない（送ろうとして固まるのを防ぐ） */
+        .ft-root img { -webkit-user-drag: none; -webkit-touch-callout: none; }
         /* **入力欄にも既定のタップハイライトを消しておくこと。** 上の一覧に input / textarea が無いと、
            文章の途中にカーソルを動かそうとタップするたびに、iOS 既定の半透明の黒い膜が欄いっぱいに一瞬乗る。
            フォーカスの枠は focus:ring-…（inputCls）で出しているので、消しても見た目は変わらない */
