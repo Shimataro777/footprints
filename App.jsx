@@ -6407,14 +6407,17 @@ function SearchScreen({ records, setRecords, onDeleteMany, openDetail, allKnownT
 
         {/* 件数と並べ替えは、探したあとにだけ出す。
             探す前は並べ替える対象そのものが無いので、置いておくと迷いのもとになる */}
-        {searched && !searching && (
+        {searched && !searching && (selecting ? (
+          <SelectModeHead count={selIds.length} allOn={selIds.length === sortedRecords.length}
+            onToggleAll={() => setSelIds(selIds.length === sortedRecords.length ? [] : sortedRecords.map((r) => r.id))} />
+        ) : (
           <div className="flex items-center justify-between gap-2 pt-1">
             <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase">
               {sortedRecords.length}件
             </h3>
             <SortToggle value={sortMode} onChange={setSortMode} />
           </div>
-        )}
+        ))}
         {tagDialog && (
           <TagPickDialog title="タグで絞り込む" selected={filterTags} known={knownTags}
             onApply={(v) => { setFilterTags(v); setTagDialog(false); }}
@@ -6442,19 +6445,8 @@ function SearchScreen({ records, setRecords, onDeleteMany, openDetail, allKnownT
 
       {/* 選ぶモードの帯。下の帯（タブ）の上に重ねて、そのあいだだけタブを隠す */}
       {selecting && (
-        <div className="fixed left-0 right-0 bottom-0 z-40 bg-white border-t border-neutral-200"
-          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-          <div className="max-w-lg lg:max-w-5xl mx-auto flex items-center gap-2 px-4 py-2.5">
-            <span className="text-[14.5px] font-bold text-neutral-700 flex-1 min-w-0 truncate">{selIds.length}件を選択中</span>
-            <button type="button" onClick={() => setSelIds(selIds.length === sortedRecords.length ? [] : sortedRecords.map((r) => r.id))}
-              className={BTN_SECONDARY + " px-3 " + BTN_H + " text-[13.5px] shrink-0"}>
-              {selIds.length === sortedRecords.length ? "すべて外す" : "すべて選ぶ"}
-            </button>
-            <button type="button" disabled={selIds.length === 0} onClick={() => setConfirmMany(true)}
-              className={BTN_DANGER + " px-3.5 " + BTN_H + " text-[13.5px] shrink-0"}><Trash2 size={15} /> 削除</button>
-            <button type="button" onClick={stopSelect} className={BTN_PRIMARY + " px-3.5 " + BTN_H + " text-[13.5px] shrink-0"}>完了</button>
-          </div>
-        </div>
+        <SelectModeBar dangerLabel="削除" dangerIcon={<Trash2 size={15} />} disabled={selIds.length === 0}
+          onDanger={() => setConfirmMany(true)} onDone={stopSelect} />
       )}
       {confirmMany && (
         <div data-ft-overlay="" className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center px-6">
@@ -8806,6 +8798,38 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
    ボトムナビゲーション
    ============================================================ */
 /* ============================================================
+   長押しで選ぶモード（探す・フォルダの中で共通。2.8.5〜）
+   **下の帯には「消す（外す）」と「完了」の2つだけを置くこと。** My手帳 と同じく、
+   「すべて選ぶ」と選んだ数は、一覧の頭（SelectModeHead）へ移す。
+   **「完了」を広く、「削除」は狭く・左に離して置くこと。** 以前は4つが同じくらいの幅で並び、
+   削除の赤いボタンがいちばん押しやすい位置・大きさにあって、押しまちがえる心配があった（依頼による）
+   ============================================================ */
+function SelectModeHead({ count, allOn, onToggleAll }) {
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <p className="text-[14.5px] font-bold text-neutral-700 tabular-nums flex-1 min-w-0 truncate">{count}件を選択中</p>
+      <TapOnceButton onTap={onToggleAll} className="h-9 px-2 -mr-2 rounded-lg text-[14.5px] font-bold text-th-900 shrink-0 ft-tap">
+        {allOn ? "すべて外す" : "すべて選ぶ"}
+      </TapOnceButton>
+    </div>
+  );
+}
+function SelectModeBar({ dangerLabel, dangerIcon, onDanger, disabled, onDone, absolute }) {
+  return (
+    <div className={(absolute ? "absolute z-30" : "fixed z-40") + " left-0 right-0 bottom-0 bg-white border-t border-neutral-200"}
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+      <div className="max-w-lg lg:max-w-2xl mx-auto flex items-center gap-3 px-4 py-2.5">
+        <button type="button" disabled={disabled} onClick={onDanger}
+          className={BTN_DANGER_SOFT + " px-3.5 " + BTN_H + " text-[13.5px] shrink-0"}>{dangerIcon}{dangerLabel}</button>
+        <button type="button" onClick={onDone} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
+          <Check size={17} /> 完了
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    絞り込みの欄（探す・フォルダで共通）
    **探すとフォルダで別々に書かないこと。** 見た目と中身がずれる。
    q を渡さなければ、ことばの欄は出さない（フォルダの「自動で集める」）
@@ -9285,7 +9309,13 @@ function FolderDetail({ folder, records, knownTags, defaultSort, onClose, onChan
               <span className="block text-[12.5px] text-neutral-500 truncate tabular-nums">{pickedCount ? `${pickedCount}件` : "指定なし"}</span>
             </button>
           </div>
-          {list.length > 0 && (
+          {list.length > 0 && selecting && (
+            <div className="mb-3">
+              <SelectModeHead count={selIds.length} allOn={selIds.length === pickable.length}
+                onToggleAll={() => setSelIds(selIds.length === pickable.length ? [] : pickable.map((r) => r.id))} />
+            </div>
+          )}
+          {list.length > 0 && !selecting && (
             <div className="flex items-center gap-2 mb-3">
               <p className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase tabular-nums">{list.length}件</p>
               {pickable.length > 0 && !selecting && <span className="text-[11.5px] text-neutral-400">長押しで手動のぶんを外せます</span>}
@@ -9322,16 +9352,8 @@ function FolderDetail({ folder, records, knownTags, defaultSort, onClose, onChan
           </button>
         )}
         {selecting && (
-          <div className="absolute left-0 right-0 bottom-0 z-30 bg-white border-t border-neutral-200" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-            <div className="max-w-2xl mx-auto flex items-center gap-2 px-4 py-2.5">
-              <span className="text-[14.5px] font-bold text-neutral-700 flex-1 min-w-0 truncate">{selIds.length}件を選択中</span>
-              <button type="button" onClick={() => setSelIds(selIds.length === pickable.length ? [] : pickable.map((r) => r.id))}
-                className={BTN_SECONDARY + " px-3 " + BTN_H + " text-[13.5px] shrink-0"}>{selIds.length === pickable.length ? "すべて外す" : "すべて選ぶ"}</button>
-              <button type="button" disabled={selIds.length === 0} onClick={removeFromFolder}
-                className={BTN_DANGER + " px-3 " + BTN_H + " text-[13.5px] shrink-0"}>フォルダから外す</button>
-              <button type="button" onClick={stopSelect} className={BTN_PRIMARY + " px-3.5 " + BTN_H + " text-[13.5px] shrink-0"}>完了</button>
-            </div>
-          </div>
+          <SelectModeBar absolute dangerLabel="フォルダから外す" disabled={selIds.length === 0}
+            onDanger={removeFromFolder} onDone={stopSelect} />
         )}
       </div>
       {menuOpen && (
