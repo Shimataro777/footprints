@@ -3,7 +3,7 @@ import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
   Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste, CalendarDays, Image as ImageIcon, Undo2, Redo2, ArrowUpDown,
-  Folder as FolderIc, Filter, Settings
+  Folder as FolderIc, FolderPlus, Filter, Settings
 } from "lucide-react";
 
 /* ============================================================
@@ -6381,7 +6381,7 @@ function SearchScreen({ records, setRecords, onDeleteMany, openDetail, allKnownT
           下まで見ていった先で探し直したくなったとき、いちいち上まで戻らずに済む。
           ここを sticky にしないこと（TopChrome の説明を参照）。高さは TopChrome が測る。
           帯を押すと条件の欄が開け閉めする。探したあとは、いまの条件を短い文で出す（My手帳 と同じ。2.8.0〜） */}
-      <div className="px-5 pt-3 pb-2 ft-page ft-rise">
+      <div className="px-5 pt-4 pb-3 ft-page ft-rise">
         <CriteriaBar open={filtersOpen} active={searched} summary={criteriaSummary(appliedCriteria, typeNames)}
           onToggle={() => { setFiltersOpen((v) => { if (!v) requestAnimationFrame(() => requestAnimationFrame(scrollPageTop)); return !v; }); }} />
       </div>
@@ -6390,7 +6390,9 @@ function SearchScreen({ records, setRecords, onDeleteMany, openDetail, allKnownT
       {/* 条件の欄は貼りつけない。開くと背が高く、貼りつけると結果を見せる場所がほとんど無くなる */}
       <div className="px-5 space-y-3">
         {filtersOpen && (
-          <div className="space-y-2.5 rounded-2xl border border-neutral-200 bg-white p-2.5 ft-open">
+          /* 以前の絞り込みの欄と同じ見た目（rounded-xl・bg-neutral-50・p-2.5・space-y-2.5）。
+             iPhoneで開いたとき、はじめの状態がスクロールなしで収まるように詰めてある */
+          <div className="space-y-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 ft-open">
             <RecordFilterFields q={keyword} onQ={setKeyword} onEnter={() => { if (canSearch) runSearch(); }}
               types={filterTypes} onToggleType={(t) => setFilterTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t])}
               tags={filterTags} onOpenTags={() => setTagDialog(true)} onRemoveTag={(t) => setFilterTags((prev) => prev.filter((x) => x !== t))}
@@ -8288,9 +8290,9 @@ const HELP_SECTIONS = [
   {
     title: "フォルダ",
     items: [
-      ["集めておく入れもの", "フォルダタブの右下の＋から作ります。フォルダに入れても、記録そのものは動きません。フォルダを消しても、記録は消えません。"],
+      ["集めておく入れもの", "フォルダタブの右下のボタン（フォルダの印）から作ります。フォルダに入れても、記録そのものは動きません。フォルダを消しても、記録は消えません。"],
       ["自動で集める", "種類・タグ・書・期間を決めておくと、当てはまる記録がひとりでに集まります。あとから書いた記録も入ります。"],
-      ["手動で入れる", "条件で探して、入れたい記録を選びます。手動で入れたぶんは、フォルダの中で長押しすると外せます。"],
+      ["手動で入れる", "フォルダの中の右下の虫めがねから、条件で探して入れたい記録を選びます。手動で入れたぶんは、フォルダの中で長押しすると外せます。"],
       ["並べ方と固定", "名前順・更新順・件数順を選べます。ピンを押したフォルダは、いつもいちばん上に来ます。長押しすると、名前とアイコンを変えたり、削除したりできます。"],
     ],
   },
@@ -8897,20 +8899,19 @@ function RecordFilterFields({ q, onQ, onEnter, types, onToggleType, tags, onOpen
    **閉じても帯はいつも上に残すこと。** 下まで見ていった先で、検索に戻る道が無くなるのがいちばん困る。
    指で触った時点で開く（click を待たない）。キーボードや読み上げからの click も拾い、二重には動かさない */
 function CriteriaBar({ open, onToggle, active, summary }) {
-  const tapped = useRef(0);
+  /* **onClick だけで受けること**（ボタンの押し方のルール）。pointerdown で開くと、遅れて来る click と二重に動く。
+     形は、以前の「絞り込み」の帯（min-h-[44px]・rounded-xl・border-neutral-300・px-3.5・14.5px）にそろえる */
   return (
-    <button type="button" aria-expanded={open}
-      onPointerDown={() => { tapped.current = Date.now(); onToggle(); }}
-      onClick={(e) => { e.preventDefault(); if (Date.now() - tapped.current < 700) return; onToggle(); }}
-      className={"w-full flex items-center gap-2 rounded-2xl border px-3 min-h-[48px] text-left ft-tap ft-tap-card "
-        + (active ? "bg-th-50 border-th-200" : "bg-white border-neutral-200")}>
-      <Search size={17} className={active ? "text-th-800 shrink-0" : "text-neutral-400 shrink-0"} />
+    <button type="button" aria-expanded={open} onClick={onToggle}
+      className={"w-full flex items-center gap-2 min-h-[44px] rounded-xl border px-3.5 text-left ft-tap ft-tap-card "
+        + (active ? "bg-th-50 border-th-200" : "bg-white border-neutral-300")}>
+      <Search size={16} className={active ? "text-th-800 shrink-0" : "text-neutral-500 shrink-0"} />
       <span className="flex-1 min-w-0">
         {active
           ? <span className="block text-[14.5px] font-bold text-th-900 truncate">{summary || "条件で検索中"}</span>
-          : <span className="block text-[14.5px] text-neutral-400 truncate">{open ? "条件をえらんで検索" : "検索する"}</span>}
+          : <span className="block text-[14.5px] font-bold text-neutral-700 truncate">{open ? "条件をえらんで検索" : "検索する"}</span>}
       </span>
-      <ChevronDown size={18} className={"text-neutral-400 shrink-0 ft-chev " + (open ? "ft-chev-on" : "")} />
+      <ChevronDown size={18} className={"text-neutral-500 shrink-0 ft-chev " + (open ? "ft-chev-on" : "")} />
     </button>
   );
 }
@@ -8925,8 +8926,8 @@ function SearchActions({ canClear, onClear, canSearch, onSearch, busy }) {
         <button type="button" onClick={onClear} className={BTN_SECONDARY + " " + BTN_H + " px-4 text-[14.5px] shrink-0"}>選択解除</button>
       )}
       <button type="button" onClick={onSearch} disabled={busy || !canSearch}
-        className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[15.5px]"}>
-        {busy ? <Spinner size={17} /> : <Search size={17} />} 検索する
+        className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
+        {busy ? <Spinner size={16} /> : <Search size={16} />} 検索する
       </button>
     </div>
   );
@@ -8958,20 +8959,21 @@ function ActionSheet({ title, items, onCancel }) {
       style={{ zIndex: 2147483000 }} onClick={close}>
       <BackgroundLock />
       <div className="absolute inset-0 bg-black/45" />
-      <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col " + (closing ? "anim-sheet-out" : "anim-sheet")}
+      <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-box " + (closing ? "anim-sheet-out" : "anim-sheet")}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 shrink-0">
           <span className="font-display text-[17px] text-neutral-900 tracking-wide truncate">{title}</span>
           <button type="button" onClick={close} aria-label="閉じる"
             className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={24} /></button>
         </div>
-        <div className="px-2 py-2" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+        {/* 行の形は「何を記録しますか」（TypeRow）とそろえる：枠 w-11 h-11・gap-3・px-3 py-3・15.5px */}
+        <div className="ft-sheet-body overflow-y-auto px-2 py-2" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
           {items.map((it) => (
             <button key={it.label} type="button" onClick={() => { onCancel(); it.onClick(); }}
-              className={"w-full flex items-center gap-3 px-3 min-h-[56px] rounded-xl text-left ft-tap ft-tap-card "
-                + (it.danger ? "text-red-700" : "text-neutral-800")}>
-              <span className="w-6 flex justify-center shrink-0">{it.icon}</span>
-              <span className="text-[15.5px] font-bold">{it.label}</span>
+              className="w-full flex items-center gap-3 px-3 py-3 min-h-[64px] rounded-xl text-left hover:bg-neutral-50 ft-tap ft-tap-card">
+              <span className={"w-11 h-11 rounded-xl flex items-center justify-center shrink-0 "
+                + (it.danger ? "bg-red-50 border border-red-200 text-red-700" : "bg-th-50 border border-th-200 text-th-800")}>{it.icon}</span>
+              <span className={"flex-1 min-w-0 text-[15.5px] font-bold " + (it.danger ? "text-red-700" : "text-neutral-900")}>{it.label}</span>
             </button>
           ))}
         </div>
@@ -8983,9 +8985,10 @@ function ActionSheet({ title, items, onCancel }) {
 /* まん中に出す、確かめるだけの小窓 */
 function ConfirmBox({ title, body, confirmLabel = "削除する", danger = true, onConfirm, onCancel }) {
   return (
-    <div data-ft-overlay="" className="fixed inset-0 bg-black/50 flex items-center justify-center px-6 anim-fade" style={{ zIndex: 2147483300 }} onClick={onCancel}>
+    /* 形はほかの確かめる小窓（ConfirmDeleteDialog など）と同じ。暗がりを押しても閉じない */
+    <div data-ft-overlay="" className="fixed inset-0 bg-black/50 flex items-center justify-center px-6" style={{ zIndex: 2147483300 }}>
       <BackgroundLock />
-      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto">
         <h3 className="font-display text-[17px] text-neutral-900 mb-2">{title}</h3>
         {body && <p className="text-[13.5px] text-neutral-600 mb-5 whitespace-pre-line leading-relaxed">{body}</p>}
         <div className="flex gap-2.5">
@@ -9025,7 +9028,7 @@ function FolderNameSheet({ title, initialName = "", initialIcon = "", confirmLab
               <FolderIcon icon={icon} size={28} />
             </span>
             <span className="flex-1 min-w-0">
-              <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="ヨハネの福音書／祈り など"
+              <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="フォルダの名前"
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }} />
             </span>
           </div>
@@ -9142,7 +9145,7 @@ function FolderSetupSheet({ folder, records, knownTags, initialTab, onCancel, on
         style={{ zIndex: 2147482000 }} onClick={tryClose}>
         <BackgroundLock />
         <div className="absolute inset-0 bg-black/45" />
-        <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-tall " + (closing ? "anim-sheet-out" : "anim-sheet")}
+        <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-box ft-sheet-tall " + (closing ? "anim-sheet-out" : "anim-sheet")}
           onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1 px-4 py-3 border-b border-neutral-200 shrink-0">
             <span className="font-display text-[17px] text-neutral-900 tracking-wide flex-1">記録を入れる</span>
@@ -9174,7 +9177,7 @@ function FolderSetupSheet({ folder, records, knownTags, initialTab, onCancel, on
             style={{ touchAction: "pan-y" }} onPointerDown={onDown} onPointerUp={onUp}>
             {tab === "auto" ? (
               <>
-                <div className="rounded-2xl bg-white border border-neutral-200 p-2.5 space-y-2.5 mb-4">
+                <div className="rounded-xl bg-neutral-50 border border-neutral-200 p-2.5 space-y-2.5 mb-4">
                   <RecordFilterFields types={cond.types} onToggleType={toggleCondType}
                     tags={cond.tags} onOpenTags={() => setCondTagOpen(true)} onRemoveTag={(t) => setC({ tags: cond.tags.filter((x) => x !== t) })}
                     book={cond.book} onBook={(v) => setC({ book: v })}
@@ -9197,7 +9200,7 @@ function FolderSetupSheet({ folder, records, knownTags, initialTab, onCancel, on
             ) : (
               <>
                 {fOpen && (
-                  <div className="rounded-2xl bg-white border border-neutral-200 p-2.5 space-y-2.5 mb-4 ft-open">
+                  <div className="rounded-xl bg-neutral-50 border border-neutral-200 p-2.5 space-y-2.5 mb-4 ft-open">
                     <RecordFilterFields q={draft.q} onQ={(v) => setD({ q: v })} onEnter={search}
                       types={draft.types} onToggleType={toggleDType}
                       tags={draft.tags} onOpenTags={() => setFTagOpen(true)} onRemoveTag={(t) => setD({ tags: draft.tags.filter((x) => x !== t) })}
@@ -9297,23 +9300,25 @@ function FolderDetail({ folder, records, knownTags, defaultSort, onClose, onChan
           <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
           <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">{folder.name || "（名前なし）"}</h2>
           <button type="button" onClick={() => setMenuOpen(true)} aria-label="フォルダの設定"
-            className="w-11 h-11 flex items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><Settings size={21} /></button>
+            className="w-11 h-11 flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon shrink-0"><Settings size={21} /></button>
+          {/* 三本線は、ほかの重なる画面と同じく右端に置く（MENU_BTN の大きさ） */}
+          <MenuButton />
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4 max-w-2xl mx-auto w-full" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 112px)" }}>
+        <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 96px)" }}>
           <div className="flex gap-2 mb-4">
             <button type="button" onClick={() => setSetup("auto")}
               className={"flex-1 min-w-0 rounded-2xl px-3 py-2.5 text-left border ft-tap ft-tap-card " + cardStyle(hasCond)}>
               <span className={"flex items-center gap-1.5 mb-0.5 " + (hasCond ? "text-th-900" : "text-neutral-500")}>
                 <Filter size={14} /><span className="text-[12.5px] font-bold">自動で集める</span>
               </span>
-              <span className="block text-[12px] text-neutral-500 truncate">{hasCond ? condText : "条件なし"}</span>
+              <span className="block text-[12.5px] text-neutral-500 truncate">{hasCond ? condText : "条件なし"}</span>
             </button>
             <button type="button" onClick={() => setSetup("manual")}
               className={"flex-1 min-w-0 rounded-2xl px-3 py-2.5 text-left border ft-tap ft-tap-card " + cardStyle(pickedCount > 0)}>
               <span className={"flex items-center gap-1.5 mb-0.5 " + (pickedCount ? "text-th-900" : "text-neutral-500")}>
                 <Search size={14} /><span className="text-[12.5px] font-bold">手動で入れる</span>
               </span>
-              <span className="block text-[12px] text-neutral-500 truncate tabular-nums">{pickedCount ? `${pickedCount}件` : "指定なし"}</span>
+              <span className="block text-[12.5px] text-neutral-500 truncate tabular-nums">{pickedCount ? `${pickedCount}件` : "指定なし"}</span>
             </button>
           </div>
           {list.length > 0 && (
@@ -9325,8 +9330,8 @@ function FolderDetail({ folder, records, knownTags, defaultSort, onClose, onChan
           )}
           {list.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-neutral-300 p-6 flex flex-col items-center ft-noresult">
-              <Mascot seed="folder-empty" size={132} />
-              <p className="text-[13.5px] text-neutral-500 mt-2 text-center leading-relaxed">まだ記録が入っていません。<br />上の札か、右下の＋から入れられます。</p>
+              <Mascot seed="folder-empty" size={142} />
+              <p className="text-[13.5px] text-neutral-500 mt-2 text-center leading-relaxed">まだ記録が入っていません。<br />上の札か、右下の虫めがねから入れられます。</p>
             </div>
           ) : (
             <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5 lg:items-start ft-seq">
@@ -9344,10 +9349,12 @@ function FolderDetail({ folder, records, knownTags, defaultSort, onClose, onChan
           )}
         </div>
         {!selecting && (
+          /* 虫めがね（記録をさがして入れる）。**＋にしないこと。** 新しい記録を書くボタンと取り違える */
+          /* 位置と大きさは、記録の閲覧画面の鉛筆ボタンとそろえる（右5・下は切り欠き＋20px・w-14 h-14） */
           <button type="button" onClick={() => setSetup("manual")} aria-label="記録をさがして入れる"
             className="absolute right-5 z-20 w-14 h-14 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab"
-            style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}>
-            <Plus size={26} />
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 20px)" }}>
+            <Search size={25} strokeWidth={2.4} />
           </button>
         )}
         {selecting && (
@@ -9365,8 +9372,8 @@ function FolderDetail({ folder, records, knownTags, defaultSort, onClose, onChan
       </div>
       {menuOpen && (
         <ActionSheet title="フォルダの設定" onCancel={() => setMenuOpen(false)} items={[
-          { label: "名前とアイコン", icon: <Pencil size={20} />, onClick: () => setEditOpen(true) },
-          { label: "このフォルダを削除", icon: <Trash2 size={20} />, danger: true, onClick: () => setDelOpen(true) },
+          { label: "名前とアイコン", icon: <Pencil size={22} />, onClick: () => setEditOpen(true) },
+          { label: "このフォルダを削除", icon: <Trash2 size={22} />, danger: true, onClick: () => setDelOpen(true) },
         ]} />
       )}
       {setup && (
@@ -9448,12 +9455,10 @@ function FolderScreen({ folders, records, sort, onSort, onOpen, onPin, onChange,
           </TapOnceButton>
         </div>
       </TopChrome>
-      <div className="px-4 pt-1 ft-fgrid ft-seq">
+      <div className="px-5 pt-1 ft-fgrid ft-seq">
         {folders.length === 0 && (
-          <div className="py-8 flex flex-col items-center ft-noresult">
-            <Mascot seed="folder-list-empty" size={142} />
-            <p className="text-[14.5px] text-neutral-500 mt-1 text-center leading-relaxed">まだフォルダはありません。<br />右下の＋から作れます。</p>
-          </div>
+          /* **文だけにすること。** 絵や説明を足さない（依頼により 2.8.1 でこの形にした） */
+          <div className="py-14 text-center ft-noresult"><p className="text-[14.5px] text-neutral-400">まだフォルダはありません</p></div>
         )}
         {folders.length > 0 && shown.length === 0 && (
           <div className="py-14 text-center ft-noresult"><p className="text-[14.5px] text-neutral-400">見つかりません</p></div>
@@ -9478,11 +9483,11 @@ function FolderScreen({ folders, records, sort, onSort, onOpen, onPin, onChange,
                 <span className="ft-fname font-display text-[15.5px] text-neutral-900">{f.name || "（名前なし）"}</span>
                 <span className="ft-fmeta">
                   <span className="text-[12.5px] font-bold text-neutral-500 tabular-nums">{n}件</span>
-                  {auto && <span className="inline-flex items-center gap-1 text-[11px] font-bold rounded-md px-1.5 py-[2px] bg-th-50 text-th-900"><Filter size={10} />自動</span>}
-                  {picked > 0 && <span className="inline-flex items-center gap-1 text-[11px] font-bold rounded-md px-1.5 py-[2px] bg-neutral-100 text-neutral-600"><Check size={10} strokeWidth={3} />手動{picked}</span>}
-                  {!auto && picked === 0 && <span className="text-[12px] text-neutral-400">まだ空です</span>}
+                  {auto && <span className="inline-flex items-center gap-1 text-[11.5px] font-bold rounded-md px-1.5 py-[2px] bg-th-50 text-th-900"><Filter size={10} />自動</span>}
+                  {picked > 0 && <span className="inline-flex items-center gap-1 text-[11.5px] font-bold rounded-md px-1.5 py-[2px] bg-neutral-100 text-neutral-600"><Check size={10} strokeWidth={3} />手動{picked}</span>}
+                  {!auto && picked === 0 && <span className="text-[12.5px] text-neutral-400">まだ空です</span>}
                 </span>
-                {sub && <span className="ft-fsub text-[12px] text-neutral-400">{sub}</span>}
+                {sub && <span className="ft-fsub text-[12.5px] text-neutral-400">{sub}</span>}
               </span>
             </div>
           );
@@ -9490,8 +9495,8 @@ function FolderScreen({ folders, records, sort, onSort, onOpen, onPin, onChange,
       </div>
       {menu && (
         <ActionSheet title={menu.name || "フォルダ"} onCancel={() => setMenu(null)} items={[
-          { label: "名前とアイコン", icon: <Pencil size={20} />, onClick: () => setEdit(menu) },
-          { label: "このフォルダを削除", icon: <Trash2 size={20} />, danger: true, onClick: () => setDel(menu) },
+          { label: "名前とアイコン", icon: <Pencil size={22} />, onClick: () => setEdit(menu) },
+          { label: "このフォルダを削除", icon: <Trash2 size={22} />, danger: true, onClick: () => setDel(menu) },
         ]} />
       )}
       {edit && (
@@ -10522,7 +10527,7 @@ function AppMain() {
         [data-ft-overlay] .overflow-y-auto, .ft-sheet-wrap .overflow-y-auto { overscroll-behavior: contain; }
         .ft-sheet-box  { max-height: 82%; }
         /* フォルダの「記録を入れる」紙。中身が入れ替わっても高さが変わらないよう、決まった高さにする */
-        .ft-sheet-tall { height: 88%; max-height: 88%; }
+        .ft-sheet-tall { height: 82%; } /* 高さは ft-sheet-box の上限（82%）と同じ。ほかの紙より背を高くしない */
         /* --- フォルダの2列カード（My手帳 2.11.25 と同じ形） ---
            **space-y-* を付けないこと。** グリッドの中では子の上に余白が付いて、段がずれる。
            **絵の窓は 1/1 のまま。** フォルダの絵は正方形に切り抜いているので、形を変えると見切れる */
@@ -10688,7 +10693,8 @@ function AppMain() {
           <button onClick={() => setNewFolder(true)} aria-label="新しいフォルダを作る"
             className="fixed right-5 z-40 w-14 h-14 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab"
             style={{ bottom: "calc(env(safe-area-inset-bottom) + 96px)" }}>
-            <Plus size={26} />
+            {/* **＋にしないこと。** 記録画面の＋（記録を足す）と同じ見た目だと、どちらか分からなくなる */}
+            <FolderPlus size={26} />
           </button>
         )}
 

@@ -90,7 +90,7 @@ export {
   LuGripVertical as GripVertical, LuPin as Pin, LuBookmark as Bookmark, LuTag as Tag,
   LuCopy as Copy, LuClipboardPaste as ClipboardPaste, LuCalendarDays as CalendarDays,
   LuImage as ImageIcon, LuUndo2 as Undo2, LuRedo2 as Redo2, LuArrowUpDown as ArrowUpDown,
-  LuFolder as Folder, LuFilter as Filter, LuSettings as Settings,
+  LuFolder as Folder, LuFolderPlus as FolderPlus, LuFilter as Filter, LuSettings as Settings,
   LuLink as Link, LuImage as Image, // App.jsx は「Link as LinkIcon」「Image as ImageIcon」と読むので、元の名前でも出すこと（2.8.0〜）
 } from "react-icons/lu";
 EOF
@@ -912,6 +912,7 @@ iPhoneのSafariでは見た目だけ切り詰められ、箱の高さは全文�
 - `BookSelect` に `compact`（旧約・新約の切り替えを選ぶ欄の左に並べ、1行に収める）
 - 画面の下余白は `pb-20`（＋ボタンが無い画面なので `pb-28` は不要）
 - 絞り込みの中は `space-y-2.5` / `p-2.5`
+- 2.8.0 から、ことばの欄と「検索する」も絞り込みの欄の中（上の帯を押すと開け閉め）。高さは 2.7.0 までとほぼ同じ
 行を増やすときは `/tmp/rtcheck2/fit.cjs` で、実際にスクロールが要るかを測ってから決めること。
 
 ### 絞り込みの部品は `FilterPill` にそろえる
@@ -919,8 +920,8 @@ iPhoneのSafariでは見た目だけ切り詰められ、箱の高さは全文�
 チェックボックスと混ぜないこと。
 
 ### 検索ボタンが押せる条件
-`hasCriteria && dirty`。**`hasCriteria` に絞り込みを足し忘れないこと。**
-疑問メモを入れ忘れていたため、疑問メモだけ選んでも押せない状態になっていた。
+`hasCriteria`（2.8.0〜。以前は `hasCriteria && dirty`）。**`hasCriteria` に絞り込みを足し忘れないこと。**
+ボタンを条件の欄のいちばん下へ移したので、同じ条件でも押せるようにした（押せない理由が見えにくいため）。
 結果の出し分けは `applied.*`（押したときの状態）を使うこと。今の入力値を直接見ない。
 
 ### 一覧はダイアログの中に置く
