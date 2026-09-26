@@ -1080,11 +1080,23 @@ async function persistCaptions(map) {
 
 /* 端末の容量を圧迫しないよう、しっかり縮めてから保存する。
    線画などの透過を活かしたいので、軽ければPNG、重ければWebP→JPEGの順に切り替える */
+/* 写真の大きさと画質（2.9.0〜。姉妹アプリ My手帳 2.20.4 と同じ値）。
+   バックアップの9割近くが写真だったため、軽くした。
+   - 記録の写真：長辺720px・画質0.6（PHOTO_SIDE / PHOTO_Q）。2.8.7 までは 900px・WebP 0.72／JPEG 0.78。
+     iPhone の Safari は canvas から WebP を書き出せず JPEG になるので、
+     **WebP と JPEG で同じ画質を使うこと。** JPEG のほうだけ高くすると、iPhone の写真だけ重くなる（実際そうなっていた）。
+   - ヘッダーとフォルダの絵：大きさはそのまま、画質だけ0.65（DECO_Q）。
+     ⚠️ フォルダの絵を480pxより小さくしないこと。
+   - 切り抜きの下絵（CropSheet の shrinkPhoto(file, 1600, 0.92)）は画質を落とさない。
+     ここを落とすと、切り抜いた絵が二重に荒れる */
+const PHOTO_SIDE = 720;
+const PHOTO_Q = 0.6;
+const DECO_Q = 0.65;
 /* 記録に付ける写真の縮小。
    **イラスト用の shrinkImage（長辺220px）を使い回さないこと。** 写真が粗くなって見るに堪えない。
-   長辺900px・WebP 0.72（使えない端末は JPEG 0.78）で、1枚およそ130KBに収める。
+   長辺720px・画質0.6で、1枚およそ40〜120KBに収める。
    置き場は IndexedDB なので、この大きさでも記録の保存を圧迫しない */
-function shrinkPhoto(file, maxSide = 900) {
+function shrinkPhoto(file, maxSide = PHOTO_SIDE, quality = PHOTO_Q) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("画像を読み込めませんでした"));
@@ -1102,9 +1114,9 @@ function shrinkPhoto(file, maxSide = 900) {
           /* 透過のある絵を敷いたとき、黒くならないように下地を白で塗っておく */
           ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, w, h);
           ctx.drawImage(img, 0, 0, w, h);
-          const webp = canvas.toDataURL("image/webp", 0.72);
+          const webp = canvas.toDataURL("image/webp", quality);
           if (webp.startsWith("data:image/webp")) return resolve(webp);
-          resolve(canvas.toDataURL("image/jpeg", 0.78));
+          resolve(canvas.toDataURL("image/jpeg", quality));
         } catch (e) { reject(new Error("画像を変換できませんでした")); }
       };
       img.src = reader.result;
@@ -1155,7 +1167,7 @@ function shrinkImage(file, maxSide = 220) {
    **元の絵をそのまま入れないこと。** ヘッダーの帯は横長なので、
    どこを写すかを自分で決めてもらう（CropSheet から呼ぶ）。
    source は data URL（文字）でも File でもよい */
-function cropImage(source, { aspect = 1, scale = 1, dx = 0, dy = 0, maxSide = 640 } = {}) {
+function cropImage(source, { aspect = 1, scale = 1, dx = 0, dy = 0, maxSide = 640, quality = DECO_Q } = {}) {
   return new Promise((resolve, reject) => {
     const start = (dataUrl) => {
       const img = new Image();
@@ -1175,8 +1187,8 @@ function cropImage(source, { aspect = 1, scale = 1, dx = 0, dy = 0, maxSide = 64
         /* dx/dy は、出す絵のうえでのずれ（px）。**k を掛けないこと** */
         ctx.drawImage(img, (outW - w) / 2 + dx, (outH - h) / 2 + dy, w, h);
         let out = "";
-        try { out = cv.toDataURL("image/webp", 0.8); } catch (e) { out = ""; }
-        if (!out || out.length < 40 || out.indexOf("image/webp") < 0) out = cv.toDataURL("image/jpeg", 0.82);
+        try { out = cv.toDataURL("image/webp", quality); } catch (e) { out = ""; }
+        if (!out || out.length < 40 || out.indexOf("image/webp") < 0) out = cv.toDataURL("image/jpeg", quality);
         resolve(out);
       };
       img.src = dataUrl;
@@ -7486,11 +7498,12 @@ function CropSheet({ file, aspect = 1, round, title = "位置を決める", onCa
   const pts = useRef(new Map()); // いま触れている指
   const start = useRef(null);
   /* **元の写真をそのまま見せないこと。** iPhone の写真は大きすぎて、
-     絵として読めずにまっ黒になることがある。いちど小さくしてから見せる */
+     絵として読めずにまっ黒になることがある。いちど小さくしてから見せる。
+     **画質は落とさないこと（0.92）。** ここを落とすと、切り抜いた絵が二重に荒れる */
   useEffect(() => {
     let alive = true;
     setUrl(""); setNg(false); setNat(null);
-    shrinkPhoto(file, 1600)
+    shrinkPhoto(file, 1600, 0.92)
       .then((d) => {
         if (!alive) return;
         const im = new Image();
