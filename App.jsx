@@ -825,18 +825,6 @@ async function askPersist() {
   return false;
 }
 
-/* 端末がどれくらい置かせてくれるか、いまどれだけ使っているか。
-   **数を決め打ちしないこと。** 端末と空き容量で大きく変わる */
-async function storageRoom() {
-  try {
-    if (navigator.storage && navigator.storage.estimate) {
-      const e = await navigator.storage.estimate();
-      if (e && e.quota) return { used: e.usage || 0, quota: e.quota };
-    }
-  } catch (e) { /* 分からない端末もある */ }
-  return null;
-}
-
 /* 画面のてっぺんへ戻す。「動きの演出」を切っているとき（端末の「視差効果を減らす」も）は、すべらせない。
    すべらせるのは280〜560ms（距離しだい）。指が触れたら止める。
    画面ごとに window.scrollTo を書かず、ここを通すこと */
@@ -8701,10 +8689,6 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
         : "bg-rose-50 border-rose-200 text-rose-900"
     : "";
 
-  /* 端末の置き場にどれくらい余裕があるか。分からない端末もあるので、
-     取れなかったときは何も出さない */
-  const [room, setRoom] = useState(null);
-  useEffect(() => { storageRoom().then(setRoom); }, []);
   const unsaved = React.useContext(UnsavedContext);
 
   return (
@@ -8730,16 +8714,9 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
               )}
               <span className="text-[12.5px] text-neutral-500 ml-auto">{photosReady ? `約${sizeKb}KB` : "写真を読み込み中"}</span>
             </div>
-            {((prefs && prefs.lastBackup) || room) && (
+            {prefs && prefs.lastBackup && (
               <div className="mt-2">
-                {prefs && prefs.lastBackup && (
-                  <p className="text-[12.5px] text-neutral-400">前回 {fmtJpDate(prefs.lastBackup)}</p>
-                )}
-                {room && (
-                  <p className="text-[12.5px] text-neutral-400 mt-1 tabular-nums">
-                    置き場 約{fmtBytes(room.quota)}中 {fmtBytes(room.used)}使用
-                  </p>
-                )}
+                <p className="text-[12.5px] text-neutral-400">前回 {fmtJpDate(prefs.lastBackup)}</p>
               </div>
             )}
           </div>
