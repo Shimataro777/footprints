@@ -90,6 +90,8 @@ export {
   LuGripVertical as GripVertical, LuPin as Pin, LuBookmark as Bookmark, LuTag as Tag,
   LuCopy as Copy, LuClipboardPaste as ClipboardPaste, LuCalendarDays as CalendarDays,
   LuImage as ImageIcon, LuUndo2 as Undo2, LuRedo2 as Redo2, LuArrowUpDown as ArrowUpDown,
+  LuFolder as Folder, LuFilter as Filter, LuSettings as Settings,
+  LuLink as Link, LuImage as Image, // App.jsx は「Link as LinkIcon」「Image as ImageIcon」と読むので、元の名前でも出すこと（2.8.0〜）
 } from "react-icons/lu";
 EOF
 
@@ -1485,3 +1487,29 @@ linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))
   - **`display: none` にしないこと。** 中の高さを測る部品（`TopChrome` など）が、0のまま測ってしまう。
   - **`ft-shown` を付ける場所を増やさないこと。** 本体が早く見えてしまい、元に戻る。
   - この処理は index.html の中に直接書くこと（別ファイルにすると、読み込めなかったときに外す手だてごと失う）。
+
+
+---
+
+## フォルダ（2.8.0〜）
+
+姉妹アプリ My手帳（2.20.3）のフォルダを移植したもの。下タブの「探す」と「実績」のあいだ。
+
+- **保存先**：`bible-tracker-folders`（`loadFolders` / `persistFolders`）。1つのフォルダは
+  `{ id, name, icon, tags, types, book, from, to, picked, pinned, createdAt, updatedAt }`。
+  読み込みは必ず `migrateFolder` を通す。
+- **どの記録が入るか**は `folderRecords` の1か所で決める。画面ごとに判定を書かないこと。
+  - 自動の条件：種類・タグは「どれか」、書・期間は「その中だけ」。期間は手動で入れた記録にも効く。
+  - `picked` ＝ 手動で入れた記録。「手動で外した」は持たない（条件で入るものは条件を変えて外す）。
+  - フォルダの中で外せるのは、手動のぶんで、かつ条件に当てはまらないものだけ（自動を優位とする）。
+- **フォルダを残す道は `setFolders`（AppMain）だけ**。保存と、絵の控え（`syncFolderDeco`）をいっしょに行う。
+  直したときは `changeFolder` で `updatedAt` を書く（更新順と、書き出しを促す数に使う）。固定の切り替えは数えない。
+- **絵の控え**：ヘッダーとフォルダの絵は `DECO_PHOTO_KEY` に控えを持つ（`writeDecoPhotos`）。
+  `decoRefs.header` / `decoRefs.folders` のどちらかがまだ `undefined` のあいだは、控えを消さない。
+  `sweepPhotos` には `folders` も渡すこと（`foldersRef`）。
+- **消した数**：フォルダの削除は `prefs.folderDeletes`（時刻の並び）に残し、`unsavedCount` が数える。書き出し・復元で空にする。
+- **タグの名前を変える・消す**ときは、フォルダの `tags` にも同じことをする（`renameTag` / `deleteTag`）。
+- 探す画面とフォルダの「手動で入れる」は、同じ部品を使う：
+  `RecordFilterFields`（条件の欄）・`CriteriaBar`（上の帯）・`SearchActions`（欄の下の「選択解除」「検索する」）・
+  `filterRecordsBy`（絞り込み）・`criteriaSummary`（帯に出す短い文）。**片方だけ直さないこと。**
+- **「検索する」は条件の欄のいちばん下に置くこと。** 上へ戻さない（大きなスマホで親指が届かないため。依頼による）。

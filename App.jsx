@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
-  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste, CalendarDays, Image as ImageIcon, Undo2, Redo2, ArrowUpDown
+  Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste, CalendarDays, Image as ImageIcon, Undo2, Redo2, ArrowUpDown,
+  Folder as FolderIc, Filter, Settings
 } from "lucide-react";
 
 /* ============================================================
@@ -669,18 +670,37 @@ function loadDecoPhotos() {
   });
   return decoLoading;
 }
-/* いま使っているヘッダーの絵だけを控えに残す（使わなくなったものは落とす）。
-   **手元に無い絵があっても止めないこと。** 止めると、あとから選んだ絵の控えも作られない */
+/* いま使っているヘッダーの絵・フォルダの絵だけを控えに残す（使わなくなったものは落とす）。
+   **手元に無い絵があっても止めないこと。** 止めると、あとから選んだ絵の控えも作られない。
+   ヘッダーとフォルダは別々のときに知らせてくるので、それぞれ最後に聞いた値を覚えておく。
+   **まだ一度も聞いていない側（undefined）の控えを落とさないこと。** 起動の直後にフォルダだけ先に
+   知らせが来ると、ヘッダーの絵の控えが消えてしまう（My手帳 6-⑤ と同じ決まり） */
+const decoRefs = { header: undefined, folders: undefined };
+let decoWriting = Promise.resolve();
+function writeDecoPhotos() {
+  decoWriting = decoWriting.then(async () => {
+    const prev = (await loadDecoPhotos()) || {};
+    const keepAll = decoRefs.header === undefined || decoRefs.folders === undefined;
+    const ids = new Set();
+    if (isPhotoRef(decoRefs.header)) ids.add(decoRefs.header.slice(6));
+    (decoRefs.folders || []).forEach((r) => { if (isPhotoRef(r)) ids.add(r.slice(6)); });
+    const map = keepAll ? { ...prev } : {};
+    for (const id of ids) {
+      const src = photoCache.get(id) || await photoTx("readonly", (st) => st.get(id)) || prev[id];
+      if (typeof src === "string" && src) map[id] = src;
+    }
+    decoPhotos = map;
+    await storageSet(DECO_PHOTO_KEY, JSON.stringify(map));
+  }).catch(() => { /* 控えが作れなくても本体は止めない */ });
+  return decoWriting;
+}
 async function syncDecoPhotos(headerRef) {
-  const map = {};
-  if (isPhotoRef(headerRef)) {
-    const id = headerRef.slice(6);
-    const src = photoCache.get(id) || await photoTx("readonly", (st) => st.get(id))
-      || ((await loadDecoPhotos()) || {})[id];
-    if (typeof src === "string" && src) map[id] = src;
-  }
-  decoPhotos = map;
-  await storageSet(DECO_PHOTO_KEY, JSON.stringify(map));
+  decoRefs.header = headerRef || null;
+  await writeDecoPhotos();
+}
+function syncFolderDeco(folders) {
+  decoRefs.folders = (folders || []).map((f) => f && f.icon).filter(Boolean);
+  return writeDecoPhotos();
 }
 
 /* ============================================================
@@ -853,10 +873,15 @@ function fmtJpDate(iso) {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-function unsavedCount(records, prefs) {
+/* 前回の書き出しのあとに書きかえた数。記録に加えて、フォルダの作成・変更・削除も数える（2.8.0〜）。
+   **保存する中身を増やしたら、ここにも数えること。** 数えないと、書き出しを促す丸に出ない */
+function unsavedCount(records, prefs, folders) {
   const last = prefs && prefs.lastBackup ? prefs.lastBackup : null;
-  if (!last) return records.length;
-  return records.filter((r) => (r.updatedAt || r.createdAt || "") > last).length;
+  const fl = folders || [];
+  if (!last) return records.length + fl.length;
+  return records.filter((r) => (r.updatedAt || r.createdAt || "") > last).length
+    + fl.filter((f) => (f.updatedAt || f.createdAt || "") > last).length
+    + ((prefs && prefs.folderDeletes) || []).filter((t) => t > last).length;
 }
 async function loadPrefs() {
   try {
@@ -884,6 +909,152 @@ async function loadTagMaster() {
 }
 async function persistTagMaster(list) {
   return await storageSet(TAG_KEY, JSON.stringify(normalizeTags(list)));
+}
+
+/* ============================================================
+   フォルダ（姉妹アプリ My手帳 から移植。2.8.0〜）
+   ・自動で集める … 種類・タグ・書・期間の条件に当てはまる記録を集める
+   ・手動で入れる … 選んだ記録を入れる（picked）
+   どちらか片方だけでも、両方でもよい。
+   **フォルダを2種類に分けて持たないこと。** ひとつのフォルダで両方できる。
+   **フォルダは「集めて見せるだけの入れもの」。** フォルダを消しても、記録は消さないこと
+   ============================================================ */
+const FOLDER_KEY = "bible-tracker-folders";
+function emptyFolder(name) {
+  /* picked ＝ 手動で入れた記録。**「手動で外した」を持たないこと。**
+     条件で入ったものを1件だけ外せると、なぜ入らないのかが後から分からなくなる。
+     外すのは手動で入れたぶんだけ。条件のぶんは条件を変えて外す */
+  return { id: uid(), name: name || "", icon: "", tags: [], types: [], book: "", from: "", to: "",
+    picked: [], pinned: false, createdAt: new Date().toISOString(), updatedAt: null };
+}
+function migrateFolder(f) {
+  if (!f || typeof f !== "object") return null;
+  return {
+    ...emptyFolder(f.name), ...f,
+    name: typeof f.name === "string" ? f.name : "",
+    icon: typeof f.icon === "string" ? f.icon : "",
+    tags: normalizeTags(f.tags),
+    types: Array.isArray(f.types) ? [...new Set(f.types.filter((t) => SEARCH_TYPES.includes(t)))] : [],
+    book: typeof f.book === "string" && bookByName(f.book) ? f.book : "",
+    from: typeof f.from === "string" ? f.from : "",
+    to: typeof f.to === "string" ? f.to : "",
+    picked: Array.isArray(f.picked) ? f.picked.filter((x) => typeof x === "string") : [],
+    pinned: !!f.pinned,
+    id: typeof f.id === "string" && f.id ? f.id : uid(),
+    updatedAt: typeof f.updatedAt === "string" && f.updatedAt ? f.updatedAt : null,
+  };
+}
+async function loadFolders() {
+  try {
+    const raw = await storageGet(FOLDER_KEY);
+    const d = raw ? JSON.parse(raw) : [];
+    return Array.isArray(d) ? d.map(migrateFolder).filter(Boolean) : [];
+  } catch (e) { return []; }
+}
+async function persistFolders(list) {
+  const res = await storageSet(FOLDER_KEY, JSON.stringify(list || []));
+  /* フォルダの絵も、ヘッダーの絵と同じく控えを作る（置き場から消えても戻せるように） */
+  syncFolderDeco(list);
+  return res;
+}
+/* 集める条件が入っているか */
+function folderHasCond(f) {
+  return !!(f && (normalizeTags(f.tags).length || (f.types || []).length || f.book || f.from || f.to));
+}
+/* 「9/15」のような短い日付 */
+const shortDate = (d) => (d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : "");
+const shortYmd = (d) => (d ? `${d.slice(0, 4)}/${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : "");
+/* 条件を、そのまま読める短い文にする。画面に出して「効いている」と伝えるため */
+function folderCondText(f, N) {
+  if (!f) return "";
+  const out = [];
+  const types = f.types || [];
+  if (types.length) out.push(types.map((t) => (N && N[t]) || TYPE_LABELS[t]).join("・"));
+  const tags = normalizeTags(f.tags);
+  if (tags.length) out.push(tags.map((t) => "#" + t).join(" "));
+  if (f.book) out.push(f.book);
+  if (f.from || f.to) out.push(`${f.from ? shortYmd(f.from) : "はじめ"}〜${f.to ? shortYmd(f.to) : "いま"}`);
+  return out.join("・");
+}
+/* フォルダに入る記録。条件で集めたものと、手動で入れたものを合わせる。
+   **タグが空だと何も集めない、という作りにしないこと。** 「学びだけ集める」「ヨハネだけ集める」ができなくなる */
+function folderRecords(folder, records) {
+  if (!folder) return [];
+  const tags = normalizeTags(folder.tags).map((t) => t.toLowerCase());
+  const types = folder.types || [];
+  const picked = new Set(folder.picked || []);
+  const hasCond = tags.length > 0 || types.length > 0 || !!folder.book;
+  return (records || []).filter((r) => {
+    /* 期間は、手動で入れた記録にも効かせる */
+    if (folder.from && (r.date || "") < folder.from) return false;
+    if (folder.to && (r.date || "") > folder.to) return false;
+    if (picked.has(r.id)) return true;
+    if (!hasCond && !(folder.from || folder.to)) return false;
+    if (!hasCond) return true; // 期間だけのフォルダ
+    if (types.length && !types.includes(r.type)) return false;
+    if (tags.length && !normalizeTags(r.tags).some((t) => tags.includes(t.toLowerCase()))) return false;
+    if (folder.book && !recordRefs(r).some((x) => x.book === folder.book)) return false;
+    return true;
+  });
+}
+/* 名前順・更新順・件数順。**固定したものは、どの並びでもいちばん上。**
+   名前順は「01.」「02.」のような数も数として比べる */
+const FOLDER_SORT_OPTIONS = [
+  { key: "name", label: "名前順" },
+  { key: "updated", label: "更新順" },
+  { key: "count", label: "件数順" },
+];
+function sortFolders(list, sort, counts) {
+  const byName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ja", { numeric: true });
+  return [...list].sort((a, b) => {
+    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+    if (sort === "updated") return (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "") || byName(a, b);
+    if (sort === "count") return ((counts && counts.get(b.id)) || 0) - ((counts && counts.get(a.id)) || 0) || byName(a, b);
+    return byName(a, b);
+  });
+}
+/* 記録の並び。探す・ブックマークと同じ3つ（目次順・新しい順・古い順） */
+function sortRecordsBy(list, mode) {
+  const arr = [...list];
+  if (mode === "dateDesc") arr.sort((a, b) => (b.date || b.createdAt || "").localeCompare(a.date || a.createdAt || ""));
+  else if (mode === "dateAsc") arr.sort((a, b) => (a.date || a.createdAt || "").localeCompare(b.date || b.createdAt || ""));
+  else arr.sort(compareForSearch);
+  return arr;
+}
+/* 探す・フォルダの「手動で入れる」で共通の絞り込み。**別々に書かないこと。** 片方だけ直すと結果が食い違う */
+function filterRecordsBy(records, c) {
+  const words = String(c.q || "").trim().toLowerCase().split(/[\s　]+/).filter(Boolean);
+  const wanted = (c.tags || []).map((t) => t.toLowerCase());
+  return (records || []).filter((r) => {
+    if (words.length) {
+      const hay = (recordAllText(r) + " " + recordTitle(r)).toLowerCase();
+      if (!words.every((w) => hay.includes(w))) return false;
+    }
+    if ((c.types || []).length && !c.types.includes(r.type)) return false;
+    if (wanted.length) {
+      const has = (r.tags || []).map((t) => t.toLowerCase());
+      if (!wanted.every((t) => has.includes(t))) return false;
+    }
+    if (c.from || c.to) {
+      if (!r.date) return false;
+      if (c.from && r.date < c.from) return false;
+      if (c.to && r.date > c.to) return false;
+    }
+    if (c.book && !recordRefs(r).some((ref) => ref.book === c.book)) return false;
+    return true;
+  });
+}
+/* いまの条件を、ひと目で読める短い文にする（たたんだ帯に出す） */
+function criteriaSummary(c, N) {
+  if (!c) return "";
+  const out = [];
+  if (String(c.q || "").trim()) out.push(`「${c.q.trim()}」`);
+  if ((c.types || []).length) out.push(c.types.map((t) => (N && N[t]) || TYPE_LABELS[t]).join("・"));
+  if ((c.tags || []).length) out.push(c.tags.map((t) => "#" + t).join(" "));
+  if (c.book) out.push(c.book);
+  if (c.mine) out.push("手動");
+  if (c.from || c.to) out.push(`${c.from ? shortYmd(c.from) : "はじめ"}〜${c.to ? shortYmd(c.to) : "いま"}`);
+  return out.join("・");
 }
 
 const CAPTION_KEY = "bible-tracker-captions";
@@ -5745,8 +5916,9 @@ function ContinueCard({ records, onStart }) {
 /* しばらく保存していない・記録がたまってきた、どちらかのときに知らせる */
 const BACKUP_REMIND_COUNT = 10;
 function BackupReminder({ records, prefs, onOpenBackup }) {
-  const n = unsavedCount(records, prefs);
-  if (!records.length || n === 0) return null;
+  /* 数は AppMain で数えたもの（フォルダの変更も入っている）を使う。ここで数え直さないこと */
+  const n = React.useContext(UnsavedContext);
+  if (n === 0) return null;
   const last = prefs && prefs.lastBackup ? new Date(prefs.lastBackup) : null;
   const days = last ? Math.floor((Date.now() - last.getTime()) / 86400000) : null;
   /* **書き出していない記録が1件でもあれば知らせること。**
@@ -6126,8 +6298,6 @@ function SearchScreen({ records, setRecords, onDeleteMany, openDetail, allKnownT
   const [filterTo, setFilterTo] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(true);
 
-  const activeFilterCount = [filterBook, filterFrom, filterTo].filter(Boolean).length
-    + filterTags.length + filterTypes.length;
 
   /* 検索は「検索」ボタンを押したときに実行する。
      押した条件だけを applied に取り込み、結果はそれをもとに作る */
@@ -6175,32 +6345,19 @@ function SearchScreen({ records, setRecords, onDeleteMany, openDetail, allKnownT
      足し忘れると、その絞り込みだけを選んでも検索ボタンが押せないままになる */
   const hasCriteria = !!keyword.trim() || !!filterBook || filterTags.length > 0
     || filterTypes.length > 0 || !!filterFrom || !!filterTo;
-  const canSearch = hasCriteria && dirty;
+  /* 条件が同じでも押せるようにしておく（2.8.0〜）。ボタンが欄の下にあり、押せない理由が見えにくいため */
+  const canSearch = hasCriteria;
+  void dirty;
+  const appliedCriteria = { q: applied.keyword, types: applied.types, tags: applied.tags, book: applied.book, from: applied.from, to: applied.to };
+  /* 選択解除 … 条件も結果も消して、はじめの状態（欄を開いた形）へ戻す */
+  const clearAll = () => {
+    stopSelect();
+    setKeyword(""); setFilterBook(""); setFilterTags([]); setFilterTypes([]); setFilterFrom(""); setFilterTo("");
+    setApplied({ keyword: "", book: "", tags: [], types: [], from: "", to: "" });
+    setSearched(false); setFiltersOpen(true);
+  };
 
-  const baseFiltered = useMemo(() => records.filter((r) => {
-    if (applied.keyword.trim()) {
-      const hay = (recordAllText(r) + " " + recordTitle(r)).toLowerCase();
-      if (!hay.includes(applied.keyword.trim().toLowerCase())) return false;
-    }
-    /* 種類は「選んだもののどれか」。ひとつも選んでいなければ全部が対象 */
-    if (applied.types.length && !applied.types.includes(r.type)) return false;
-    /* タグは記録に持たせた文字をそのまま照らし合わせるだけなので、
-       新しいタグが増えても、ここを直す必要はない */
-    if (applied.tags.length) {
-      const has = (r.tags || []).map((t) => t.toLowerCase());
-      if (!applied.tags.every((t) => has.includes(t.toLowerCase()))) return false;
-    }
-    if (applied.from || applied.to) {
-      if (!r.date) return false;
-      if (applied.from && r.date < applied.from) return false;
-      if (applied.to && r.date > applied.to) return false;
-    }
-    if (applied.book) {
-      const refs = recordRefs(r);
-      if (!refs.some((ref) => ref.book === applied.book)) return false;
-    }
-    return true;
-  }), [records, applied]);
+  const baseFiltered = useMemo(() => filterRecordsBy(records, { q: applied.keyword, types: applied.types, tags: applied.tags, book: applied.book, from: applied.from, to: applied.to }), [records, applied]);
 
   /* はじめの並び順は、カスタマイズで決めたもの。指定が無ければ目次順 */
   const [sortMode, setSortMode] = useState(() => defaultSort || "book");
@@ -6220,96 +6377,29 @@ function SearchScreen({ records, setRecords, onDeleteMany, openDetail, allKnownT
     <div className="ft-pad-nav">
       <TopChrome>
       <ScreenHeader title="探す" />
-      {/* **検索の欄と絞り込みの帯は、見出しと同じ TopChrome に入れること。**
+      {/* **条件の帯は、見出しと同じ TopChrome に入れること。**
           下まで見ていった先で探し直したくなったとき、いちいち上まで戻らずに済む。
-          ここを sticky にしないこと（TopChrome の説明を参照）。高さは TopChrome が測る */}
-      <div className="px-5 pt-4 pb-3 space-y-2.5 ft-page ft-rise">
-        <div className="flex gap-2">
-          <div className="flex-1 min-w-0">
-            <TextInput value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="ことばで探す"
-              onKeyDown={(e) => { if (e.key === "Enter" && canSearch) runSearch(); }} />
-          </div>
-          <button type="button" onClick={runSearch} disabled={searching || !canSearch}
-            className={BTN_PRIMARY + " " + BTN_H + " px-4 text-[14.5px] shrink-0"}>
-            {searching ? <Spinner size={16} /> : <Search size={16} />}検索
-          </button>
-        </div>
-
-        {/* **開くだけで終わらせないこと。**
-            下のほうまで見ていった先で押しても、絞り込みの中身は画面の外（上）にあるので、
-            何も起きていないように見える。いっしょに画面のてっぺんへ戻す */}
-        <button onClick={() => { setFiltersOpen((v) => { if (!v) scrollPageTop(); return !v; }); }} className="w-full flex items-center justify-between min-h-[44px] rounded-xl border border-neutral-300 px-3.5 bg-white ft-tap ft-tap-card">
-          <span className="flex items-center gap-1.5 text-[14.5px] font-bold text-neutral-700">
-            <SlidersHorizontal size={16} /> 絞り込み{activeFilterCount > 0 ? `（${activeFilterCount}）` : ""}
-          </span>
-          <ChevronDown size={18} className={"text-neutral-500 ft-chev " + (filtersOpen ? "ft-chev-on" : "")} />
-        </button>
+          ここを sticky にしないこと（TopChrome の説明を参照）。高さは TopChrome が測る。
+          帯を押すと条件の欄が開け閉めする。探したあとは、いまの条件を短い文で出す（My手帳 と同じ。2.8.0〜） */}
+      <div className="px-5 pt-3 pb-2 ft-page ft-rise">
+        <CriteriaBar open={filtersOpen} active={searched} summary={criteriaSummary(appliedCriteria, typeNames)}
+          onToggle={() => { setFiltersOpen((v) => { if (!v) requestAnimationFrame(() => requestAnimationFrame(scrollPageTop)); return !v; }); }} />
       </div>
       </TopChrome>
 
-      {/* 絞り込みの中身は貼りつけない。開くと背が高く、
-          貼りつけると結果を見せる場所がほとんど無くなる */}
+      {/* 条件の欄は貼りつけない。開くと背が高く、貼りつけると結果を見せる場所がほとんど無くなる */}
       <div className="px-5 space-y-3">
         {filtersOpen && (
-          /* iPhoneで開いたとき、はじめの状態がスクロールなしで収まるように、
-             余白と行数をきつめに詰めている。ここを広げるときは実機の高さに注意 */
-          <div className="space-y-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 ft-open">
-            {/* **項目名と「？」は置かないこと。** 部品を見れば何を選ぶ欄か分かる
-                （種類は札、タグは「タグを選ぶ」、書は「書を選択」）。名前を付けるのは「期間」だけ。
-                選ばないときは、すべての種類が対象。タグを複数選ぶと、そのすべてが付いた記録だけが残る */}
-            <div className="flex flex-wrap gap-1.5">
-              {SEARCH_TYPES.map((t) => (
-                <FilterPill key={t} on={filterTypes.includes(t)}
-                  onClick={() => setFilterTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t])}>
-                  {typeNames[t] || TYPE_LABELS[t]}
-                </FilterPill>
-              ))}
-            </div>
-
-            <div>
-              {/* 一覧は出しっぱなしにしない。タグが増えるほど画面を圧迫するため。
-                  形は記録画面の「タグを追加」とそろえている（押すところが先、選んだ札はその下） */}
-              <button type="button" onClick={() => setTagDialog(true)}
-                className={BTN_SECONDARY + " " + BTN_H + " px-3.5 text-[14.5px]"}>
-                <Plus size={15} /> {filterTags.length ? "タグを選び直す" : "タグを選ぶ"}
-              </button>
-              {filterTags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {filterTags.map((t) => (
-                    <span key={t} className="ft-chip inline-flex items-center gap-0.5 rounded-full bg-th-50 border border-th-200 pl-2.5 pr-0.5 py-0.5">
-                      <span className="text-[12.5px] font-bold text-th-900">{t}</span>
-                      <TapOnceButton onTap={() => setFilterTags((prev) => prev.filter((x) => x !== t))} aria-label={`${t} を外す`}
-                        className="w-5 h-5 flex items-center justify-center rounded-full text-th-800/60 hover:text-red-700 ft-tap ft-tap-icon"><X size={12} /></TapOnceButton>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <BookSelect compact value={filterBook} onChange={(v) => setFilterBook(v)} />
-
-            <div className="flex items-center gap-1">
-              <span className="text-[12.5px] font-bold text-neutral-600 shrink-0 w-9">期間</span>
-              <DateInput className="flex-1 min-w-0" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} />
-              {/* 日付を選ぶ画面には取り消しが無いので、外す手だてをここに置いておく。
-                  入っているときだけ出るので、はじめの高さは増えない */}
-              {filterFrom && <button type="button" onClick={() => setFilterFrom("")} aria-label="開始日を外す"
-                className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-neutral-500 hover:bg-red-50 hover:text-red-700 ft-tap ft-tap-icon"><X size={15} /></button>}
-              <span className="text-neutral-400 font-bold shrink-0">〜</span>
-              <DateInput className="flex-1 min-w-0" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
-              {filterTo && <button type="button" onClick={() => setFilterTo("")} aria-label="終了日を外す"
-                className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-neutral-500 hover:bg-red-50 hover:text-red-700 ft-tap ft-tap-icon"><X size={15} /></button>}
-            </div>
-
-            {activeFilterCount > 0 && (
-              /* 上に線と余白を置いて、期間の日付と間違えて押さないようにしている */
-              <div className="pt-3.5 mt-1.5 border-t border-neutral-200">
-                <button onClick={() => { setFilterBook(""); setFilterTags([]); setFilterTypes([]); setFilterFrom(""); setFilterTo(""); }}
-                  className={BTN_DANGER_SOFT + " w-full " + BTN_H + " text-[14.5px]"}>
-                  <X size={15} /> 絞り込みをクリア
-                </button>
-              </div>
-            )}
+          <div className="space-y-2.5 rounded-2xl border border-neutral-200 bg-white p-2.5 ft-open">
+            <RecordFilterFields q={keyword} onQ={setKeyword} onEnter={() => { if (canSearch) runSearch(); }}
+              types={filterTypes} onToggleType={(t) => setFilterTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t])}
+              tags={filterTags} onOpenTags={() => setTagDialog(true)} onRemoveTag={(t) => setFilterTags((prev) => prev.filter((x) => x !== t))}
+              book={filterBook} onBook={(v) => setFilterBook(v)}
+              from={filterFrom} to={filterTo} onFrom={setFilterFrom} onTo={setFilterTo} />
+            {/* **「検索する」は欄のいちばん下に置くこと（2.8.0〜）。** 大きなスマホを片手で持つと、
+                親指が画面の上まで届かない。条件を選び終えた指のすぐ先で押せるようにする */}
+            <SearchActions canClear={hasCriteria || searched} onClear={clearAll}
+              canSearch={canSearch} onSearch={runSearch} busy={searching} />
           </div>
         )}
 
@@ -8191,8 +8281,17 @@ const HELP_SECTIONS = [
   {
     title: "探す",
     items: [
-      ["言葉で探す", "上の欄に言葉を入れて「検索」を押します。本文だけでなく、タグや聖書箇所も探しに含まれます。"],
+      ["言葉で探す", "上の帯を押して条件の欄を開き、言葉を入れて、欄のいちばん下の「検索する」を押します。空白で区切ると、すべての言葉を含む記録が出ます。本文だけでなく、タグや聖書箇所も探しに含まれます。"],
       ["絞り込む", "記録の種類・タグ・書・期間で絞り込めます。あとで調べたいことは、タグを付けておくと後から取り出せます。"],
+    ],
+  },
+  {
+    title: "フォルダ",
+    items: [
+      ["集めておく入れもの", "フォルダタブの右下の＋から作ります。フォルダに入れても、記録そのものは動きません。フォルダを消しても、記録は消えません。"],
+      ["自動で集める", "種類・タグ・書・期間を決めておくと、当てはまる記録がひとりでに集まります。あとから書いた記録も入ります。"],
+      ["手動で入れる", "条件で探して、入れたい記録を選びます。手動で入れたぶんは、フォルダの中で長押しすると外せます。"],
+      ["並べ方と固定", "名前順・更新順・件数順を選べます。ピンを押したフォルダは、いつもいちばん上に来ます。長押しすると、名前とアイコンを変えたり、削除したりできます。"],
     ],
   },
   {
@@ -8367,14 +8466,14 @@ function GardenScreen({ garden, records, onClose, onChangeFruit }) {
 /* ============================================================
    バックアップ画面
    ============================================================ */
-function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, onClose, onRestore, onBackedUp, onImportOne }) {
+function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, onClose, onRestore, onBackedUp, onImportOne }) {
   const [closing, close] = useClosing(onClose);
   const readableText = useMemo(() => buildBackupText(records), [records]);
   /* 写真の中身は置き場（IndexedDB）にあり、記録には「photo:番号」しか入っていない。
      **書き出すときは、絵の中身も一緒に入れること。** 入れないと、機種を変えたときに写真だけが失われる。
      読み出しは非同期なので、ここで集めて photos に持っておく（集め終わるまでは写真ぬきの内容になる） */
   const [photos, setPhotos] = useState(null);
-  const photoIds = useMemo(() => Array.from(collectPhotoRefs({ records, headerBg })), [records, headerBg]);
+  const photoIds = useMemo(() => Array.from(collectPhotoRefs({ records, headerBg, folders })), [records, headerBg, folders]);
   useEffect(() => {
     let alive = true;
     if (!photoIds.length) { setPhotos({}); return undefined; }
@@ -8392,8 +8491,10 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
   }, [photoIds]);
   const photosReady = photos !== null;
   const jsonText = useMemo(() => JSON.stringify({
-    app: "bible-tracker", version: 7, exportedAt: new Date().toISOString(),
+    app: "bible-tracker", version: 8, exportedAt: new Date().toISOString(),
     records, artworks: artworks || [], garden: garden || DEFAULT_GARDEN,
+    /* フォルダ（version 8 から）。絵は photos に入る */
+    folders: folders || [],
     /* タグの一覧も一緒に書き出す。これが無いと、機種を変えたときに
        まだ使っていないタグが消え、また作り直すことになる */
     tags: tagMaster || [],
@@ -8402,7 +8503,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
        せっかく整えたものが機種を変えるたびに消えてしまわないように。
        最終バックアップ日（lastBackup）は入れない。
        それは「この端末でいつ書き出したか」であって、持ち運ぶものではないため */
-    prefs: prefs ? { ...prefs, lastBackup: undefined } : undefined,
+    prefs: prefs ? { ...prefs, lastBackup: undefined, folderDeletes: undefined } : undefined,
     captions: captions || undefined,
     typeDesc: typeDesc || undefined,
     /* ヘッダの背景も一緒に書き出す（version 6 から）。
@@ -8410,7 +8511,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
     headerBg: headerBg || undefined,
     /* 記録に付けた写真と、ヘッダーの絵の中身（version 7 から）。{ 番号: 絵 } の形 */
     photos: photos && Object.keys(photos).length ? photos : undefined,
-  }, null, 2), [records, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, photos]);
+  }, null, 2), [records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, photos]);
   const [previewMode, setPreviewMode] = useState("readable"); // readable | json
   const [previewOpen, setPreviewOpen] = useState(false);
   const [msg, setMsg] = useState(null); // {kind:'ok'|'warn'|'err', text}
@@ -8570,6 +8671,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
             captions: data.captions && typeof data.captions === "object" ? data.captions : null,
             typeDesc: data.typeDesc && typeof data.typeDesc === "object" ? data.typeDesc : null,
             headerBg: typeof data.headerBg === "string" && data.headerBg ? data.headerBg : null,
+            folders: Array.isArray(data.folders) ? data.folders : null,
           };
         } else if (data && data.record && typeof data.record === "object") {
           /* 1件だけの受け渡しファイル。
@@ -8616,7 +8718,7 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
      取れなかったときは何も出さない */
   const [room, setRoom] = useState(null);
   useEffect(() => { storageRoom().then(setRoom); }, []);
-  const unsaved = unsavedCount(records, prefs);
+  const unsaved = React.useContext(UnsavedContext);
 
   return (
     <OverlayScreen from="right" closing={closing}>
@@ -8737,10 +8839,679 @@ function BackupScreen({ records, artworks, garden, tagMaster, prefs, captions, t
 /* ============================================================
    ボトムナビゲーション
    ============================================================ */
+/* ============================================================
+   絞り込みの欄（探す・フォルダで共通）
+   **探すとフォルダで別々に書かないこと。** 見た目と中身がずれる。
+   q を渡さなければ、ことばの欄は出さない（フォルダの「自動で集める」）
+   ============================================================ */
+function RecordFilterFields({ q, onQ, onEnter, types, onToggleType, tags, onOpenTags, onRemoveTag, book, onBook, from, to, onFrom, onTo, extra }) {
+  const typeNames = useTypeName();
+  return (
+    <>
+      {q !== undefined && (
+        <TextInput value={q} onChange={(e) => onQ(e.target.value)} placeholder="ことばで探す" enterKeyHint="search"
+          onKeyDown={(e) => { if (e.key === "Enter" && onEnter) { e.preventDefault(); onEnter(); } }} />
+      )}
+      {/* **項目名と「？」は置かないこと。** 部品を見れば何を選ぶ欄か分かる。名前を付けるのは「期間」だけ */}
+      <div className="flex flex-wrap gap-1.5">
+        {SEARCH_TYPES.map((t) => (
+          <FilterPill key={t} on={types.includes(t)} onClick={() => onToggleType(t)}>
+            {typeNames[t] || TYPE_LABELS[t]}
+          </FilterPill>
+        ))}
+        {extra}
+      </div>
+      <div>
+        <button type="button" onClick={onOpenTags} className={BTN_SECONDARY + " " + BTN_H + " px-3.5 text-[14.5px]"}>
+          <Plus size={15} /> {tags.length ? "タグを選び直す" : "タグを選ぶ"}
+        </button>
+        {tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            {tags.map((t) => (
+              <span key={t} className="ft-chip inline-flex items-center gap-0.5 rounded-full bg-th-50 border border-th-200 pl-2.5 pr-0.5 py-0.5">
+                <span className="text-[12.5px] font-bold text-th-900">{t}</span>
+                <TapOnceButton onTap={() => onRemoveTag(t)} aria-label={`${t} を外す`}
+                  className="w-5 h-5 flex items-center justify-center rounded-full text-th-800/60 hover:text-red-700 ft-tap ft-tap-icon"><X size={12} /></TapOnceButton>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <BookSelect compact value={book} onChange={onBook} />
+      <div className="flex items-center gap-1">
+        <span className="text-[12.5px] font-bold text-neutral-600 shrink-0 w-9">期間</span>
+        <DateInput className="flex-1 min-w-0" value={from} onChange={(e) => onFrom(e.target.value)} />
+        {/* 日付を選ぶ画面には取り消しが無いので、外す手だてをここに置いておく */}
+        {from && <button type="button" onClick={() => onFrom("")} aria-label="開始日を外す"
+          className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-neutral-500 hover:bg-red-50 hover:text-red-700 ft-tap ft-tap-icon"><X size={15} /></button>}
+        <span className="text-neutral-400 font-bold shrink-0">〜</span>
+        <DateInput className="flex-1 min-w-0" value={to} onChange={(e) => onTo(e.target.value)} />
+        {to && <button type="button" onClick={() => onTo("")} aria-label="終了日を外す"
+          className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg text-neutral-500 hover:bg-red-50 hover:text-red-700 ft-tap ft-tap-icon"><X size={15} /></button>}
+      </div>
+    </>
+  );
+}
+
+/* 条件の帯（探す・フォルダの「手動で入れる」）。押すと条件の欄が開け閉めする。
+   **閉じても帯はいつも上に残すこと。** 下まで見ていった先で、検索に戻る道が無くなるのがいちばん困る。
+   指で触った時点で開く（click を待たない）。キーボードや読み上げからの click も拾い、二重には動かさない */
+function CriteriaBar({ open, onToggle, active, summary }) {
+  const tapped = useRef(0);
+  return (
+    <button type="button" aria-expanded={open}
+      onPointerDown={() => { tapped.current = Date.now(); onToggle(); }}
+      onClick={(e) => { e.preventDefault(); if (Date.now() - tapped.current < 700) return; onToggle(); }}
+      className={"w-full flex items-center gap-2 rounded-2xl border px-3 min-h-[48px] text-left ft-tap ft-tap-card "
+        + (active ? "bg-th-50 border-th-200" : "bg-white border-neutral-200")}>
+      <Search size={17} className={active ? "text-th-800 shrink-0" : "text-neutral-400 shrink-0"} />
+      <span className="flex-1 min-w-0">
+        {active
+          ? <span className="block text-[14.5px] font-bold text-th-900 truncate">{summary || "条件で検索中"}</span>
+          : <span className="block text-[14.5px] text-neutral-400 truncate">{open ? "条件をえらんで検索" : "検索する"}</span>}
+      </span>
+      <ChevronDown size={18} className={"text-neutral-400 shrink-0 ft-chev " + (open ? "ft-chev-on" : "")} />
+    </button>
+  );
+}
+
+/* 条件の欄のいちばん下に置く「選択解除」「検索する」。
+   **「検索する」を上に置かないこと（2.8.0〜）。** 大きな画面のスマホでは、持った手の親指が画面の上まで届かない。
+   条件を選び終えた指のすぐ先（欄の下）で押せるようにする（My手帳 と同じ） */
+function SearchActions({ canClear, onClear, canSearch, onSearch, busy }) {
+  return (
+    <div className="flex gap-2 pt-1">
+      {canClear && (
+        <button type="button" onClick={onClear} className={BTN_SECONDARY + " " + BTN_H + " px-4 text-[14.5px] shrink-0"}>選択解除</button>
+      )}
+      <button type="button" onClick={onSearch} disabled={busy || !canSearch}
+        className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[15.5px]"}>
+        {busy ? <Spinner size={17} /> : <Search size={17} />} 検索する
+      </button>
+    </div>
+  );
+}
+
+/* フォルダの絵。決めていなければフォルダの印 */
+function FolderIcon({ icon, size = 40 }) {
+  if (icon) return <Photo src={icon} className="block w-full h-full" style={{ objectFit: "cover" }} />;
+  return <FolderIc size={size} strokeWidth={1.8} />;
+}
+
+/* 上に固定する印。押しても札はひらかない（pointerdown を止めている） */
+function PinButton({ on, onClick }) {
+  return (
+    <button type="button" onClick={onClick} onPointerDown={(e) => e.stopPropagation()}
+      aria-label={on ? "固定を解除" : "上に固定"} aria-pressed={!!on}
+      className={"w-9 h-9 shrink-0 flex items-center justify-center rounded-full ft-tap ft-tap-icon "
+        + (on ? "bg-th-100 text-th-900" : "bg-neutral-100 text-neutral-400")}>
+      <Pin size={18} fill={on ? "currentColor" : "none"} />
+    </button>
+  );
+}
+
+/* 下から出る、えらぶだけの小窓（フォルダの設定・削除など） */
+function ActionSheet({ title, items, onCancel }) {
+  const [closing, close] = useClosing(onCancel);
+  return (
+    <div data-ft-overlay="" className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+      style={{ zIndex: 2147483000 }} onClick={close}>
+      <BackgroundLock />
+      <div className="absolute inset-0 bg-black/45" />
+      <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col " + (closing ? "anim-sheet-out" : "anim-sheet")}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 shrink-0">
+          <span className="font-display text-[17px] text-neutral-900 tracking-wide truncate">{title}</span>
+          <button type="button" onClick={close} aria-label="閉じる"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={24} /></button>
+        </div>
+        <div className="px-2 py-2" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+          {items.map((it) => (
+            <button key={it.label} type="button" onClick={() => { onCancel(); it.onClick(); }}
+              className={"w-full flex items-center gap-3 px-3 min-h-[56px] rounded-xl text-left ft-tap ft-tap-card "
+                + (it.danger ? "text-red-700" : "text-neutral-800")}>
+              <span className="w-6 flex justify-center shrink-0">{it.icon}</span>
+              <span className="text-[15.5px] font-bold">{it.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* まん中に出す、確かめるだけの小窓 */
+function ConfirmBox({ title, body, confirmLabel = "削除する", danger = true, onConfirm, onCancel }) {
+  return (
+    <div data-ft-overlay="" className="fixed inset-0 bg-black/50 flex items-center justify-center px-6 anim-fade" style={{ zIndex: 2147483300 }} onClick={onCancel}>
+      <BackgroundLock />
+      <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display text-[17px] text-neutral-900 mb-2">{title}</h3>
+        {body && <p className="text-[13.5px] text-neutral-600 mb-5 whitespace-pre-line leading-relaxed">{body}</p>}
+        <div className="flex gap-2.5">
+          <button type="button" onClick={onCancel} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
+          <button type="button" onClick={onConfirm} className={(danger ? BTN_DANGER : BTN_PRIMARY) + " flex-1 " + BTN_H + " text-[14.5px]"}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* フォルダの名前と絵。新しく作るときも、設定を直すときも同じ紙を使う。
+   絵は「フォルダの印」か「自分の写真（正方形に切り抜く）」。写真は置き場に入れて photo:番号 で持つ */
+function FolderNameSheet({ title, initialName = "", initialIcon = "", confirmLabel = "保存", onCancel, onSave }) {
+  const [name, setName] = useState(initialName);
+  const [icon, setIcon] = useState(initialIcon);
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [closing, close] = useClosing(onCancel);
+  const ok = !!name.trim();
+  const save = () => { if (ok) onSave(name.trim(), icon); };
+  return (
+    <div data-ft-overlay="" className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+      style={{ zIndex: 2147483000 }} onClick={close}>
+      <BackgroundLock />
+      <div className="absolute inset-0 bg-black/45" />
+      <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-box " + (closing ? "anim-sheet-out" : "anim-sheet")}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 shrink-0">
+          <span className="font-display text-[17px] text-neutral-900 tracking-wide">{title}</span>
+          <button type="button" onClick={close} aria-label="閉じる"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={24} /></button>
+        </div>
+        <div className="ft-sheet-body overflow-y-auto px-4 py-4">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden bg-th-50 border border-th-200 text-th-800">
+              <FolderIcon icon={icon} size={28} />
+            </span>
+            <span className="flex-1 min-w-0">
+              <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="ヨハネの福音書／祈り など"
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }} />
+            </span>
+          </div>
+          <p className="text-[12.5px] font-bold text-neutral-500 mb-2">アイコン</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setIcon("")} aria-pressed={!icon} aria-label="フォルダの印"
+              className={"w-14 h-14 rounded-2xl border-2 flex items-center justify-center overflow-hidden bg-th-50 text-th-800 ft-tap ft-tap-card " + (!icon ? "border-th-800" : "border-neutral-200")}>
+              <FolderIc size={24} strokeWidth={1.8} />
+            </button>
+            <label className={"w-14 h-14 rounded-2xl border-2 flex items-center justify-center overflow-hidden cursor-pointer ft-tap ft-tap-card "
+              + (icon ? "border-th-800" : "border-dashed border-neutral-300")} aria-label="写真をえらぶ">
+              <input type="file" accept="image/*" className="hidden" disabled={busy}
+                onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) setFile(f); }} />
+              {icon ? <Photo src={icon} className="block w-full h-full" style={{ objectFit: "cover" }} />
+                : <span className="flex text-neutral-400">{busy ? <Spinner size={20} /> : <ImageIcon size={22} />}</span>}
+            </label>
+            {icon && (
+              <button type="button" onClick={() => setIcon("")} aria-label="写真をやめる"
+                className="w-14 h-14 rounded-2xl border border-neutral-200 flex items-center justify-center text-neutral-400 ft-tap ft-tap-card"><X size={20} /></button>
+            )}
+          </div>
+        </div>
+        <div className="shrink-0 flex gap-2.5 px-4 py-3 border-t border-neutral-200" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+          <button type="button" onClick={close} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
+          <button type="button" onClick={save} disabled={!ok || busy} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>{confirmLabel}</button>
+        </div>
+      </div>
+      {file && (
+        <CropSheet file={file} aspect={1} title="絵の位置を決める" onCancel={() => setFile(null)}
+          onDone={async (src) => {
+            setFile(null);
+            if (!src) return;
+            setBusy(true);
+            const id = "ph_" + uid();
+            const res = await photoPut(id, src);
+            setIcon(res === null ? src : "photo:" + id);
+            setBusy(false);
+          }} />
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   フォルダに記録を入れる紙
+   上のタブで「自動で集める」と「手動で入れる」を行き来する。
+   **別々の入口に分けないこと。** どちらもこのフォルダの集め方なので、ひとつの紙で並べて見せる。
+   手動のほうは、探す画面と同じ道具（ことば・種類・タグ・書・期間）を使う
+   ============================================================ */
+const FOLDER_TABS = [{ key: "auto", label: "自動で集める" }, { key: "manual", label: "手動で入れる" }];
+const EMPTY_CRITERIA = { q: "", types: [], tags: [], book: "", from: "", to: "", mine: false };
+function FolderSetupSheet({ folder, records, knownTags, initialTab, onCancel, onSave }) {
+  const [closing, close] = useClosing(onCancel);
+  const [tab, setTab] = useState(initialTab || "auto");
+  const [leaveAsk, setLeaveAsk] = useState(false);
+  const N = useTypeName();
+  /* --- 自動の条件 --- */
+  const start = useMemo(() => ({
+    tags: normalizeTags(folder.tags), types: folder.types || [], book: folder.book || "",
+    from: folder.from || "", to: folder.to || "",
+  }), [folder]);
+  const [cond, setCond] = useState(start);
+  const [condTagOpen, setCondTagOpen] = useState(false);
+  const setC = (patch) => setCond((d) => ({ ...d, ...patch }));
+  const toggleCondType = (t) => setC({ types: cond.types.includes(t) ? cond.types.filter((x) => x !== t) : [...cond.types, t] });
+  const condOn = folderHasCond(cond);
+  /* --- 手動で入れるぶん --- */
+  const [picked, setPicked] = useState(() => new Set(folder.picked || []));
+  const [draft, setDraft] = useState(EMPTY_CRITERIA);
+  const [applied, setApplied] = useState(null); // 「検索する」を押して決まった条件
+  const [fTagOpen, setFTagOpen] = useState(false);
+  const setD = (patch) => setDraft((d) => ({ ...d, ...patch }));
+  const hasDraft = !!(draft.q.trim() || draft.types.length || draft.tags.length || draft.book || draft.from || draft.to || draft.mine);
+  const dirty = useMemo(() => {
+    if (JSON.stringify(cond) !== JSON.stringify(start)) return true;
+    return Array.from(picked).sort().join(",") !== (folder.picked || []).slice().sort().join(",");
+  }, [cond, start, picked, folder.picked]);
+  const tryClose = () => { if (dirty) setLeaveAsk(true); else close(); };
+  /* 条件だけで入るもの */
+  const autoCount = useMemo(() => (condOn ? folderRecords({ ...folder, ...cond, picked: [] }, records).length : 0), [folder, cond, records, condOn]);
+  const results = useMemo(() => {
+    if (!applied) return [];
+    const list = filterRecordsBy(records, applied).filter((r) => !applied.mine || picked.has(r.id));
+    return sortRecordsBy(list, "dateDesc");
+  }, [records, applied, picked]);
+  const toggleDType = (t) => setD({ types: draft.types.includes(t) ? draft.types.filter((x) => x !== t) : [...draft.types, t] });
+  const toggle = (id) => setPicked((s0) => { const n = new Set(s0); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allShown = results.length > 0 && results.every((r) => picked.has(r.id));
+  const pickAll = () => setPicked((s0) => {
+    const n = new Set(s0);
+    results.forEach((r) => (allShown ? n.delete(r.id) : n.add(r.id)));
+    return n;
+  });
+  const [fOpen, setFOpen] = useState(true);
+  const bodyRef = useRef(null);
+  const toTop = () => { if (bodyRef.current) bodyRef.current.scrollTo({ top: 0, behavior: "smooth" }); };
+  const search = () => { if (!hasDraft) return; setApplied({ ...draft }); setFOpen(false); toTop(); };
+  const clear = () => { setDraft(EMPTY_CRITERIA); setApplied(null); setFOpen(true); };
+  const toggleBar = () => { const next = !fOpen; setFOpen(next); if (next) requestAnimationFrame(() => requestAnimationFrame(toTop)); };
+  /* 左右に払ってタブを切り替える */
+  const swipe = useRef(null);
+  const onDown = (e) => { swipe.current = { x: e.clientX, y: e.clientY, id: e.pointerId }; };
+  const onUp = (e) => {
+    const s0 = swipe.current; swipe.current = null;
+    if (!s0 || s0.id !== e.pointerId) return;
+    const dx = e.clientX - s0.x, dy = e.clientY - s0.y;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+    setTab(dx < 0 ? "manual" : "auto");
+  };
+  const save = () => onSave({ ...cond, picked: Array.from(picked) });
+  return (
+    <>
+      <div data-ft-overlay="" className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+        style={{ zIndex: 2147482000 }} onClick={tryClose}>
+        <BackgroundLock />
+        <div className="absolute inset-0 bg-black/45" />
+        <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-tall " + (closing ? "anim-sheet-out" : "anim-sheet")}
+          onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-1 px-4 py-3 border-b border-neutral-200 shrink-0">
+            <span className="font-display text-[17px] text-neutral-900 tracking-wide flex-1">記録を入れる</span>
+            <HelpTip label="記録を入れる" text={"自動で集めたぶんは、条件を変えるまで外せません。\n手動で入れたぶんは、いつでも外せます。"} />
+            <button type="button" onClick={tryClose} aria-label="閉じる"
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={24} /></button>
+          </div>
+          <div className="px-4 pt-3 pb-1 shrink-0">
+            <div className="flex rounded-full bg-th-50 p-1">
+              {FOLDER_TABS.map((t) => (
+                <button key={t.key} type="button" onClick={() => setTab(t.key)} aria-pressed={tab === t.key} style={{ minHeight: 42 }}
+                  className={"flex-1 rounded-full text-[14.5px] font-bold flex items-center justify-center gap-1.5 ft-tap "
+                    + (tab === t.key ? "bg-white text-th-900 shadow-sm" : "text-th-800/60")}>
+                  {t.key === "auto" ? <Filter size={14} /> : <Search size={14} />}
+                  {t.label}
+                  {t.key === "auto" && condOn && <span className="w-1.5 h-1.5 rounded-full bg-th-800" aria-hidden="true" />}
+                  {t.key === "manual" && picked.size > 0 && <span className="text-[11.5px] tabular-nums">{picked.size}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* 手動のときの条件の帯。**下の送る箱の中で sticky にしないこと**（iPhone で、下まで送ると消えることがある） */}
+          {tab === "manual" && (
+            <div className="px-4 pt-3 pb-2 shrink-0 bg-white">
+              <CriteriaBar open={fOpen} onToggle={toggleBar} active={!!applied} summary={criteriaSummary(applied, N)} />
+            </div>
+          )}
+          <div ref={bodyRef} className={"ft-sheet-body overflow-y-auto overflow-x-hidden px-4 " + (tab === "manual" ? "pt-2 pb-3" : "py-3")}
+            style={{ touchAction: "pan-y" }} onPointerDown={onDown} onPointerUp={onUp}>
+            {tab === "auto" ? (
+              <>
+                <div className="rounded-2xl bg-white border border-neutral-200 p-2.5 space-y-2.5 mb-4">
+                  <RecordFilterFields types={cond.types} onToggleType={toggleCondType}
+                    tags={cond.tags} onOpenTags={() => setCondTagOpen(true)} onRemoveTag={(t) => setC({ tags: cond.tags.filter((x) => x !== t) })}
+                    book={cond.book} onBook={(v) => setC({ book: v })}
+                    from={cond.from} to={cond.to} onFrom={(v) => setC({ from: v })} onTo={(v) => setC({ to: v })} />
+                  {condOn && (
+                    <div className="pt-1">
+                      <button type="button" onClick={() => setCond({ tags: [], types: [], book: "", from: "", to: "" })}
+                        className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px]"}>条件をすべて外す</button>
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-xl bg-neutral-100 px-3.5 py-2.5 flex items-center gap-2">
+                  <span className="text-[13.5px] text-neutral-600 flex-1">この条件で入る記録</span>
+                  <span className="text-[17px] font-bold tabular-nums text-neutral-900">{autoCount}件</span>
+                </div>
+                <p className="text-[12.5px] text-neutral-500 mt-2.5 leading-relaxed">
+                  種類とタグは、選んだどれかに当てはまれば入ります。書と期間を選ぶと、その中の記録だけになります。
+                </p>
+              </>
+            ) : (
+              <>
+                {fOpen && (
+                  <div className="rounded-2xl bg-white border border-neutral-200 p-2.5 space-y-2.5 mb-4 ft-open">
+                    <RecordFilterFields q={draft.q} onQ={(v) => setD({ q: v })} onEnter={search}
+                      types={draft.types} onToggleType={toggleDType}
+                      tags={draft.tags} onOpenTags={() => setFTagOpen(true)} onRemoveTag={(t) => setD({ tags: draft.tags.filter((x) => x !== t) })}
+                      book={draft.book} onBook={(v) => setD({ book: v })}
+                      from={draft.from} to={draft.to} onFrom={(v) => setD({ from: v })} onTo={(v) => setD({ to: v })}
+                      extra={<FilterPill on={draft.mine} onClick={() => setD({ mine: !draft.mine })}><span className="inline-flex items-center gap-1"><Check size={13} strokeWidth={3} />手動</span></FilterPill>} />
+                    <SearchActions canClear={hasDraft || !!applied} onClear={clear} canSearch={hasDraft} onSearch={search} />
+                  </div>
+                )}
+                {!applied ? (
+                  !fOpen ? null : <p className="text-[12.5px] text-neutral-500 leading-relaxed px-1">条件をえらんで「検索する」を押すと、入れる記録を選べます。</p>
+                ) : results.length === 0 ? (
+                  <p className="text-[14.5px] text-neutral-400 py-10 text-center">見つかりません</p>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2 mb-2">
+                      <button type="button" onClick={pickAll} className="h-9 px-2 -ml-2 rounded-lg text-[14.5px] font-bold text-th-900 ft-tap">{allShown ? "選択解除" : "すべて選択"}</button>
+                      <span className="flex-1" />
+                      <p className="text-[12.5px] font-bold text-neutral-500 tabular-nums">{results.length}件中 {results.filter((r) => picked.has(r.id)).length}件</p>
+                    </div>
+                    <div className="space-y-2.5 ft-seq">
+                      {results.map((r) => (
+                        <RecordCard key={r.id} r={r} selectMode selected={picked.has(r.id)} onClick={() => toggle(r.id)} />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+          <div className="shrink-0 flex gap-2.5 px-4 py-3 border-t border-neutral-200" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+            <button type="button" onClick={tryClose} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</button>
+            <button type="button" onClick={save} className={BTN_PRIMARY + " flex-[1.6] " + BTN_H + " text-[14.5px]"}>
+              <Check size={17} /> {picked.size ? `${picked.size}件を入れて保存` : "保存"}
+            </button>
+          </div>
+        </div>
+      </div>
+      {condTagOpen && (
+        <TagPickDialog title="タグを選ぶ" selected={cond.tags} known={knownTags}
+          onApply={(v) => { setC({ tags: v }); setCondTagOpen(false); }} onCancel={() => setCondTagOpen(false)} />
+      )}
+      {fTagOpen && (
+        <TagPickDialog title="タグを選ぶ" selected={draft.tags} known={knownTags}
+          onApply={(v) => { setD({ tags: v }); setFTagOpen(false); }} onCancel={() => setFTagOpen(false)} />
+      )}
+      {leaveAsk && (
+        <ConfirmBox title="保存せずに閉じますか" body="変えた内容は残りません。" danger={false} confirmLabel="閉じる"
+          onCancel={() => setLeaveAsk(false)} onConfirm={() => { setLeaveAsk(false); close(); }} />
+      )}
+    </>
+  );
+}
+
+/* ============================================================
+   フォルダの中（右から出る画面）
+   ・上の2枚の札 …「自動で集める」「手動で入れる」。押すと記録を入れる紙が開く
+   ・右下の＋ … 手動で記録をさがして入れる
+   ・長押しで選ぶ … **手動で入れたぶんだけ**「フォルダから外す」ができる。
+     条件で入っているものは、条件を変えないかぎり残る（手動で入れたものが条件にも当てはまれば、自動あつかい）
+   ・**ここで記録そのものを消せるようにしないこと。** ここはフォルダの出し入れをする場所
+   ============================================================ */
+function FolderDetail({ folder, records, knownTags, defaultSort, onClose, onChange, onDelete, onOpenDetail }) {
+  const [closing, close] = useClosing(onClose);
+  const { stripRef, screenRef } = useEdgeSwipeBack(close);
+  const N = useTypeName();
+  const [setup, setSetup] = useState(null); // "auto" / "manual"
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
+  const [sortMode, setSortMode] = useState(() => defaultSort || "book");
+  const list = useMemo(() => sortRecordsBy(folderRecords(folder, records), sortMode), [folder, records, sortMode]);
+  const hasCond = folderHasCond(folder);
+  const condText = folderCondText(folder, N);
+  const autoSet = useMemo(() => new Set(folderRecords({ ...folder, picked: [] }, records).map((r) => r.id)), [folder, records]);
+  const canPick = (r) => (folder.picked || []).includes(r.id) && !(hasCond && autoSet.has(r.id));
+  const pickedCount = useMemo(() => list.filter((r) => (folder.picked || []).includes(r.id)).length, [list, folder.picked]);
+  const pickable = useMemo(() => list.filter(canPick), [list, folder.picked, autoSet]); // eslint-disable-line
+  /* 選ぶモード */
+  const [selecting, setSelecting] = useState(false);
+  const [selIds, setSelIds] = useState([]);
+  const stopSelect = () => { setSelecting(false); setSelIds([]); };
+  const toggleSel = (id) => setSelIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const removeFromFolder = () => {
+    const gone = new Set(selIds);
+    onChange({ ...folder, picked: (folder.picked || []).filter((x) => !gone.has(x)) });
+    stopSelect();
+  };
+  const cardStyle = (on) => (on
+    ? "bg-th-50 border-th-200"
+    : "bg-white border-dashed border-neutral-300");
+  return (
+    <OverlayScreen from="right" closing={closing}>
+      <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
+        <div ref={stripRef} className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
+        <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
+          <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
+          <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">{folder.name || "（名前なし）"}</h2>
+          <button type="button" onClick={() => setMenuOpen(true)} aria-label="フォルダの設定"
+            className="w-11 h-11 flex items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><Settings size={21} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4 max-w-2xl mx-auto w-full" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 112px)" }}>
+          <div className="flex gap-2 mb-4">
+            <button type="button" onClick={() => setSetup("auto")}
+              className={"flex-1 min-w-0 rounded-2xl px-3 py-2.5 text-left border ft-tap ft-tap-card " + cardStyle(hasCond)}>
+              <span className={"flex items-center gap-1.5 mb-0.5 " + (hasCond ? "text-th-900" : "text-neutral-500")}>
+                <Filter size={14} /><span className="text-[12.5px] font-bold">自動で集める</span>
+              </span>
+              <span className="block text-[12px] text-neutral-500 truncate">{hasCond ? condText : "条件なし"}</span>
+            </button>
+            <button type="button" onClick={() => setSetup("manual")}
+              className={"flex-1 min-w-0 rounded-2xl px-3 py-2.5 text-left border ft-tap ft-tap-card " + cardStyle(pickedCount > 0)}>
+              <span className={"flex items-center gap-1.5 mb-0.5 " + (pickedCount ? "text-th-900" : "text-neutral-500")}>
+                <Search size={14} /><span className="text-[12.5px] font-bold">手動で入れる</span>
+              </span>
+              <span className="block text-[12px] text-neutral-500 truncate tabular-nums">{pickedCount ? `${pickedCount}件` : "指定なし"}</span>
+            </button>
+          </div>
+          {list.length > 0 && (
+            <div className="flex items-center gap-2 mb-3">
+              <p className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase tabular-nums">{list.length}件</p>
+              {pickable.length > 0 && !selecting && <span className="text-[11.5px] text-neutral-400">長押しで手動のぶんを外せます</span>}
+              <SortToggle value={sortMode} onChange={setSortMode} />
+            </div>
+          )}
+          {list.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-neutral-300 p-6 flex flex-col items-center ft-noresult">
+              <Mascot seed="folder-empty" size={132} />
+              <p className="text-[13.5px] text-neutral-500 mt-2 text-center leading-relaxed">まだ記録が入っていません。<br />上の札か、右下の＋から入れられます。</p>
+            </div>
+          ) : (
+            <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2.5 lg:items-start ft-seq">
+              {list.map((r) => {
+                const can = canPick(r);
+                return (
+                  <div key={r.id} className={selecting && !can ? "opacity-45 pointer-events-none" : ""}>
+                    <RecordCard r={r} selectMode={selecting && can} selected={selIds.includes(r.id)}
+                      onLongPress={!selecting && can ? () => { setSelecting(true); setSelIds([r.id]); } : undefined}
+                      onClick={() => (selecting ? (can && toggleSel(r.id)) : onOpenDetail(r))} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {!selecting && (
+          <button type="button" onClick={() => setSetup("manual")} aria-label="記録をさがして入れる"
+            className="absolute right-5 z-20 w-14 h-14 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab"
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 24px)" }}>
+            <Plus size={26} />
+          </button>
+        )}
+        {selecting && (
+          <div className="absolute left-0 right-0 bottom-0 z-30 bg-white border-t border-neutral-200" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+            <div className="max-w-2xl mx-auto flex items-center gap-2 px-4 py-2.5">
+              <span className="text-[14.5px] font-bold text-neutral-700 flex-1 min-w-0 truncate">{selIds.length}件を選択中</span>
+              <button type="button" onClick={() => setSelIds(selIds.length === pickable.length ? [] : pickable.map((r) => r.id))}
+                className={BTN_SECONDARY + " px-3 " + BTN_H + " text-[13.5px] shrink-0"}>{selIds.length === pickable.length ? "すべて外す" : "すべて選ぶ"}</button>
+              <button type="button" disabled={selIds.length === 0} onClick={removeFromFolder}
+                className={BTN_DANGER + " px-3 " + BTN_H + " text-[13.5px] shrink-0"}>フォルダから外す</button>
+              <button type="button" onClick={stopSelect} className={BTN_PRIMARY + " px-3.5 " + BTN_H + " text-[13.5px] shrink-0"}>完了</button>
+            </div>
+          </div>
+        )}
+      </div>
+      {menuOpen && (
+        <ActionSheet title="フォルダの設定" onCancel={() => setMenuOpen(false)} items={[
+          { label: "名前とアイコン", icon: <Pencil size={20} />, onClick: () => setEditOpen(true) },
+          { label: "このフォルダを削除", icon: <Trash2 size={20} />, danger: true, onClick: () => setDelOpen(true) },
+        ]} />
+      )}
+      {setup && (
+        <FolderSetupSheet folder={folder} records={records} knownTags={knownTags} initialTab={setup}
+          onCancel={() => setSetup(null)} onSave={(next) => { onChange({ ...folder, ...next }); setSetup(null); }} />
+      )}
+      {editOpen && (
+        <FolderNameSheet title="名前とアイコン" initialName={folder.name} initialIcon={folder.icon}
+          onCancel={() => setEditOpen(false)} onSave={(n, ic) => { onChange({ ...folder, name: n, icon: ic }); setEditOpen(false); }} />
+      )}
+      {delOpen && (
+        <ConfirmBox title="このフォルダを削除しますか" body={"中の記録は消えません。\nフォルダだけがなくなります。"}
+          onCancel={() => setDelOpen(false)} onConfirm={() => { setDelOpen(false); onDelete(folder.id); }} />
+      )}
+    </OverlayScreen>
+  );
+}
+
+/* ============================================================
+   ④ フォルダ（下のタブ）
+   2列のカード。絵を主役にして、文字は下にまとめる。
+   長押しで「名前とアイコン」「削除」。**ひらかないと直せない、をなくすこと**
+   ============================================================ */
+function FolderScreen({ folders, records, sort, onSort, onOpen, onPin, onChange, onDelete, resetSig = 0 }) {
+  const N = useTypeName();
+  const [q, setQ] = useState("");
+  const [menu, setMenu] = useState(null);
+  const [edit, setEdit] = useState(null);
+  const [del, setDel] = useState(null);
+  useEffect(() => { if (resetSig) setQ(""); }, [resetSig]);
+  /* **くり返しの中でフックを呼ばないこと。** 札ごとに使えるよう、素の handler を作る */
+  const press = useRef({ t: null, from: null, fired: false });
+  const stopPress = () => { if (press.current.t) { clearTimeout(press.current.t); press.current.t = null; } };
+  useEffect(() => () => stopPress(), []);
+  const longPressProps = (item) => ({
+    onPointerDown: (e) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      press.current.fired = false;
+      press.current.from = { x: e.clientX, y: e.clientY };
+      stopPress();
+      press.current.t = setTimeout(() => {
+        press.current.fired = true;
+        try { if (navigator.vibrate) navigator.vibrate(8); } catch (err) { /* 使えなくても構わない */ }
+        setMenu(item);
+      }, 480);
+    },
+    onPointerMove: (e) => {
+      const f = press.current.from;
+      if (f && (Math.abs(e.clientX - f.x) > 10 || Math.abs(e.clientY - f.y) > 10)) stopPress();
+    },
+    onPointerUp: stopPress,
+    onPointerCancel: stopPress,
+    onContextMenu: (e) => e.preventDefault(),
+    onClickCapture: (e) => { if (press.current.fired) { e.preventDefault(); e.stopPropagation(); press.current.fired = false; } },
+  });
+  /* 件数はカードの表示と「件数順」の両方に使うので、ここで一度だけ数える */
+  const counts = useMemo(() => {
+    const m = new Map();
+    for (const f of folders) m.set(f.id, folderRecords(f, records).length);
+    return m;
+  }, [folders, records]);
+  const shown = useMemo(() => {
+    const w = q.trim().toLowerCase();
+    return sortFolders(w ? folders.filter((f) => String(f.name || "").toLowerCase().includes(w)) : folders, sort, counts);
+  }, [folders, q, sort, counts]);
+  const cur = FOLDER_SORT_OPTIONS.find((o) => o.key === sort) || FOLDER_SORT_OPTIONS[0];
+  const nextSort = FOLDER_SORT_OPTIONS[(FOLDER_SORT_OPTIONS.indexOf(cur) + 1) % FOLDER_SORT_OPTIONS.length];
+  return (
+    <div className="ft-pad-fab">
+      <TopChrome>
+        <ScreenHeader title="フォルダ" />
+        <div className="px-5 pt-4 pb-3 flex items-center gap-2 ft-page">
+          <div className="flex-1 min-w-0">
+            <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="フォルダをさがす" />
+          </div>
+          <TapOnceButton onTap={() => onSort(nextSort.key)} aria-label={`並べ替え：いま${cur.label}。押すと${nextSort.label}`}
+            className="h-9 pl-2.5 pr-3 flex items-center gap-1 rounded-full text-[12.5px] font-bold text-neutral-500 hover:bg-neutral-100 shrink-0 ft-tap ft-tap-icon">
+            <ArrowUpDown size={14} /> {cur.label}
+          </TapOnceButton>
+        </div>
+      </TopChrome>
+      <div className="px-4 pt-1 ft-fgrid ft-seq">
+        {folders.length === 0 && (
+          <div className="py-8 flex flex-col items-center ft-noresult">
+            <Mascot seed="folder-list-empty" size={142} />
+            <p className="text-[14.5px] text-neutral-500 mt-1 text-center leading-relaxed">まだフォルダはありません。<br />右下の＋から作れます。</p>
+          </div>
+        )}
+        {folders.length > 0 && shown.length === 0 && (
+          <div className="py-14 text-center ft-noresult"><p className="text-[14.5px] text-neutral-400">見つかりません</p></div>
+        )}
+        {shown.map((f) => {
+          const n = counts.get(f.id) || 0;
+          const auto = folderHasCond(f);
+          const picked = (f.picked || []).length;
+          const tagText = normalizeTags(f.tags).map((t) => "#" + t).join(" ");
+          const sub = tagText || (auto ? folderCondText(f, N) : "");
+          return (
+            <div key={f.id} role="button" tabIndex={0} onClick={() => onOpen(f)} {...longPressProps(f)}
+              onKeyDown={(e) => { if (e.key === "Enter") onOpen(f); }}
+              aria-label={`${f.name || "（名前なし）"}、${n}件`}
+              style={{ WebkitTouchCallout: "none" }}
+              className="ft-fcard bg-white border border-neutral-200 text-left ft-tap ft-tap-card cursor-pointer select-none">
+              <span className="ft-fthumb bg-th-50 border border-th-200 text-th-800">
+                <FolderIcon icon={f.icon} size={40} />
+                <span className="ft-fpin"><PinButton on={f.pinned} onClick={(e) => { e.stopPropagation(); onPin(f); }} /></span>
+              </span>
+              <span className="ft-fbody">
+                <span className="ft-fname font-display text-[15.5px] text-neutral-900">{f.name || "（名前なし）"}</span>
+                <span className="ft-fmeta">
+                  <span className="text-[12.5px] font-bold text-neutral-500 tabular-nums">{n}件</span>
+                  {auto && <span className="inline-flex items-center gap-1 text-[11px] font-bold rounded-md px-1.5 py-[2px] bg-th-50 text-th-900"><Filter size={10} />自動</span>}
+                  {picked > 0 && <span className="inline-flex items-center gap-1 text-[11px] font-bold rounded-md px-1.5 py-[2px] bg-neutral-100 text-neutral-600"><Check size={10} strokeWidth={3} />手動{picked}</span>}
+                  {!auto && picked === 0 && <span className="text-[12px] text-neutral-400">まだ空です</span>}
+                </span>
+                {sub && <span className="ft-fsub text-[12px] text-neutral-400">{sub}</span>}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {menu && (
+        <ActionSheet title={menu.name || "フォルダ"} onCancel={() => setMenu(null)} items={[
+          { label: "名前とアイコン", icon: <Pencil size={20} />, onClick: () => setEdit(menu) },
+          { label: "このフォルダを削除", icon: <Trash2 size={20} />, danger: true, onClick: () => setDel(menu) },
+        ]} />
+      )}
+      {edit && (
+        <FolderNameSheet title="名前とアイコン" initialName={edit.name} initialIcon={edit.icon}
+          onCancel={() => setEdit(null)} onSave={(n, ic) => { onChange({ ...edit, name: n, icon: ic }); setEdit(null); }} />
+      )}
+      {del && (
+        <ConfirmBox title="このフォルダを削除しますか" body={"中の記録は消えません。\nフォルダだけがなくなります。"}
+          onCancel={() => setDel(null)} onConfirm={() => { const f = del; setDel(null); onDelete(f.id); }} />
+      )}
+    </div>
+  );
+}
+
 const TABS = [
   { key: "home", label: "ホーム", icon: Home },
   { key: "record", label: "記録", icon: BookOpen },
   { key: "search", label: "探す", icon: Search },
+  /* フォルダは「探す」と「実績」のあいだ（2.8.0〜） */
+  { key: "folder", label: "フォルダ", icon: FolderIc },
   { key: "progress", label: "実績", icon: TrendingUp },
 ];
 /* 下の帯（タブ）。
@@ -8832,6 +9603,7 @@ function AppMain() {
      2回め（もう上にいるときは1回めから）… その画面のはじめの状態へ戻す（いまは「探す」だけ）。
      別のタブへ移ったら数え直す。押した回数の偶数・奇数で決めないこと */
   const [searchReset, setSearchReset] = useState(0);
+  const [folderReset, setFolderReset] = useState(0);
   const topArmed = useRef(null);
   const pressTab = (k) => {
     if (k !== tab) { topArmed.current = null; setTab(k); return; }
@@ -8839,6 +9611,7 @@ function AppMain() {
     if (!atTop && topArmed.current !== k) { topArmed.current = k; scrollPageTop(); return; }
     topArmed.current = null;
     if (k === "search") setSearchReset((n) => n + 1);
+    if (k === "folder") setFolderReset((n) => n + 1);
     scrollPageTop();
   };
   const [editing, setEditing] = useState(null);
@@ -8856,6 +9629,13 @@ function AppMain() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
+  /* フォルダ（2.8.0〜）。openFolderId ＝ 中をひらいているフォルダ。
+     **フォルダそのものを持たないこと。** 持つと、中で条件を変えたときに古いフォルダのまま描かれる */
+  const [folders, setFoldersState] = useState([]);
+  const [openFolderId, setOpenFolderId] = useState(null);
+  const [newFolder, setNewFolder] = useState(false);
+  const foldersRef = useRef([]);
+  foldersRef.current = folders;
   const [typeDesc, setTypeDesc] = useState({ desc: { ...DEFAULT_TYPE_DESC }, name: { ...DEFAULT_TYPE_NAME } });
   const [garden, setGarden] = useState({ ...DEFAULT_GARDEN });
   const [pickFruit, setPickFruit] = useState(false);
@@ -8883,6 +9663,7 @@ function AppMain() {
     setViewing(null);
     setViewingBook(null);
     setViewingDay(null);
+    setOpenFolderId(null);
     fn();
     setMenuOpen(false);
   };
@@ -8906,7 +9687,10 @@ function AppMain() {
   }, []);
   useEffect(() => { askPersist(); }, []);
   useEffect(() => { loadArtworks().then(setArtworks); }, []);
-  useEffect(() => { loadHeaderBg().then(setHeaderBg); }, []);
+  /* 読み込んだヘッダーの絵を、控え（decoRefs）にも知らせておく。
+     知らせないと、フォルダの絵の控えを作るときに、ヘッダーの控えを消してよいか分からない */
+  useEffect(() => { loadHeaderBg().then((h) => { decoRefs.header = h || null; setHeaderBg(h); }); }, []);
+  useEffect(() => { loadFolders().then((list) => { setFoldersState(list); syncFolderDeco(list); }); }, []);
   useEffect(() => { loadCaptions().then(setCaptions); }, []);
   useEffect(() => { loadTagMaster().then(setTagMaster); }, []);
   /* 読み込みが終わったら、起動中の覆いをふわっと外す。
@@ -8973,11 +9757,11 @@ function AppMain() {
     });
   }, []);
 
-  const unsavedNow = unsavedCount(records, prefs);
+  const unsavedNow = unsavedCount(records, prefs, folders);
 
   const markBackedUp = useCallback(() => {
     setPrefs((prev) => {
-      const next = { ...prev, lastBackup: new Date().toISOString() };
+      const next = { ...prev, lastBackup: new Date().toISOString(), folderDeletes: [] };
       persistPrefs(next);
       return next;
     });
@@ -9029,6 +9813,10 @@ function AppMain() {
     });
     setRecords((prev) => prev.map((r) => ((r.tags || []).includes(from)
       ? { ...r, tags: normalizeTags(r.tags.map((t) => (t === from ? to : t))) } : r)));
+    /* フォルダの「自動で集める」のタグも、同じ名前に付け替える。忘れると、そのフォルダが空になる */
+    setFolders((prev) => (prev.some((f) => (f.tags || []).includes(from))
+      ? prev.map((f) => ((f.tags || []).includes(from) ? { ...f, tags: normalizeTags(f.tags.map((t) => (t === from ? to : t))) } : f))
+      : prev));
   }, []); // eslint-disable-line
   /* タグを消す。記録からも外すが、記録そのものは消さない */
   const deleteTag = useCallback((tag) => {
@@ -9039,7 +9827,45 @@ function AppMain() {
     });
     setRecords((prev) => prev.map((r) => ((r.tags || []).includes(tag)
       ? { ...r, tags: r.tags.filter((t) => t !== tag) } : r)));
+    setFolders((prev) => (prev.some((f) => (f.tags || []).includes(tag))
+      ? prev.map((f) => ((f.tags || []).includes(tag) ? { ...f, tags: f.tags.filter((t) => t !== tag) } : f))
+      : prev));
   }, []); // eslint-disable-line
+
+  /* --- フォルダ --- */
+  /* **フォルダを残す道は、かならずここを通すこと。** 保存と絵の控え（syncFolderDeco）をいっしょにする */
+  const setFolders = useCallback((updater) => {
+    setFoldersState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      persistFolders(next);
+      return next;
+    });
+  }, []);
+  const addFolder = (name, icon) => {
+    const f = { ...emptyFolder(name), icon: icon || "", updatedAt: new Date().toISOString() };
+    setFolders((prev) => [...prev, f]);
+    return f;
+  };
+  /* 直した時刻（updatedAt）を書く。並び順の「更新順」と、バックアップを促す数に使う */
+  const changeFolder = useCallback((f) => {
+    const next = { ...f, updatedAt: new Date().toISOString() };
+    setFolders((prev) => prev.map((x) => (x.id === f.id ? next : x)));
+  }, [setFolders]);
+  /* 固定の切り替えは「直した」に数えない（並びを変えるだけなので、更新順の先頭に来ないように） */
+  const pinFolder = useCallback((f) => {
+    setFolders((prev) => prev.map((x) => (x.id === f.id ? { ...x, pinned: !x.pinned } : x)));
+  }, [setFolders]);
+  const deleteFolder = useCallback((id) => {
+    setFolders((prev) => prev.filter((x) => x.id !== id));
+    setOpenFolderId((cur) => (cur === id ? null : cur));
+    /* 消したことも「まだ書き出していない変更」に数える（消えたフォルダは一覧に無いので、時刻を見られない） */
+    setPrefs((prev) => {
+      const next = { ...prev, folderDeletes: [...(prev.folderDeletes || []), new Date().toISOString()].slice(-50) };
+      persistPrefs(next);
+      return next;
+    });
+  }, [setFolders]);
+  const openFolder = openFolderId ? folders.find((f) => f.id === openFolderId) : null;
 
   const saveCaptions = useCallback(async (map) => {
     const res = await persistCaptions(map);
@@ -9203,7 +10029,7 @@ function AppMain() {
     const gone = new Set(ids);
     setRecords((prev) => {
       const next = prev.filter((p) => !gone.has(p.id));
-      sweepPhotos({ records: next, headerBg: headerBgRef.current });
+      sweepPhotos({ records: next, headerBg: headerBgRef.current, folders: foldersRef.current });
       return next;
     });
     setViewing((prev) => (prev && gone.has(prev.id) ? null : prev));
@@ -9213,7 +10039,7 @@ function AppMain() {
       const next = prev.filter((p) => p.id !== id);
       /* 消した記録に付いていた写真を、置き場からも片づける。
          **いま描かれている records を渡さないこと**（消す前の一覧なので、何も片づかない） */
-      sweepPhotos({ records: next, headerBg: headerBgRef.current });
+      sweepPhotos({ records: next, headerBg: headerBgRef.current, folders: foldersRef.current });
       return next;
     });
     closeForm();
@@ -9229,12 +10055,21 @@ function AppMain() {
     /* 画面の設定を戻す。入っていない項目は今のまま残すこと */
     if (importedSetting) {
       if (importedSetting.prefs) {
-        await savePrefs({ ...prefs, ...importedSetting.prefs, lastBackup: restoredAt });
+        await savePrefs({ ...prefs, ...importedSetting.prefs, lastBackup: restoredAt, folderDeletes: [] });
       } else {
-        await savePrefs({ ...prefs, lastBackup: restoredAt });
+        await savePrefs({ ...prefs, lastBackup: restoredAt, folderDeletes: [] });
       }
       if (importedSetting.captions) await saveCaptions({ ...captions, ...importedSetting.captions });
       if (importedSetting.headerBg) await saveHeaderBg(importedSetting.headerBg);
+      /* フォルダは足し合わせる（同じ番号のものだけ差し替える）。今あるフォルダを消さないこと */
+      if (Array.isArray(importedSetting.folders) && importedSetting.folders.length) {
+        const incoming = importedSetting.folders.map(migrateFolder).filter(Boolean);
+        setFolders((prev) => {
+          const map = new Map(prev.map((f) => [f.id, f]));
+          incoming.forEach((f) => map.set(f.id, f));
+          return Array.from(map.values());
+        });
+      }
       if (importedSetting.typeDesc) {
         await saveTypeDesc({
           name: { ...typeDesc.name, ...(importedSetting.typeDesc.name || {}) },
@@ -9242,7 +10077,7 @@ function AppMain() {
         });
       }
     } else {
-      await savePrefs({ ...prefs, lastBackup: restoredAt });
+      await savePrefs({ ...prefs, lastBackup: restoredAt, folderDeletes: [] });
     }
     /* タグの一覧は足し合わせる。今ある分を消さないこと */
     if (Array.isArray(importedTags) && importedTags.length) {
@@ -9686,6 +10521,22 @@ function AppMain() {
            渡すとページが送られ、useLockBackground が引き戻す（その往復がちらつきになる） */
         [data-ft-overlay] .overflow-y-auto, .ft-sheet-wrap .overflow-y-auto { overscroll-behavior: contain; }
         .ft-sheet-box  { max-height: 82%; }
+        /* フォルダの「記録を入れる」紙。中身が入れ替わっても高さが変わらないよう、決まった高さにする */
+        .ft-sheet-tall { height: 88%; max-height: 88%; }
+        /* --- フォルダの2列カード（My手帳 2.11.25 と同じ形） ---
+           **space-y-* を付けないこと。** グリッドの中では子の上に余白が付いて、段がずれる。
+           **絵の窓は 1/1 のまま。** フォルダの絵は正方形に切り抜いているので、形を変えると見切れる */
+        .ft-fgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+        .ft-fgrid > .ft-noresult { grid-column: 1 / -1; }
+        @media (min-width: 1024px) { .ft-fgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; } }
+        .ft-fcard { display: flex; flex-direction: column; min-width: 0; padding: 8px; border-radius: 16px; }
+        .ft-fthumb { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 1 / 1; border-radius: 12px; overflow: hidden; }
+        .ft-fpin { position: absolute; top: 4px; right: 4px; }
+        .ft-fpin > button { box-shadow: 0 0 0 2px rgba(255,255,255,.9); }
+        .ft-fbody { display: flex; flex-direction: column; min-width: 0; padding: 10px 4px 4px; }
+        .ft-fname { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; word-break: break-word; }
+        .ft-fmeta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+        .ft-fsub { display: block; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         /* --- 見つからなかったときの現れ方 ---
            ぱっと切り替わると「本当に探したのか」が分かりにくい。
            絵がふわりと出て、少し遅れて文が続くようにする */
@@ -9810,6 +10661,9 @@ function AppMain() {
         {tab === "home" && <HomeScreen records={records} prefs={prefs} onOpenBackup={() => setBackupOpen(true)} garden={garden} onStartCycle={() => setPickFruit(true)} onHarvest={harvestFruit} />}
         {tab === "record" && <RecordScreen records={records} onOpenDetail={openDetail} onStartReading={openNewReading} />}
         {tab === "search" && <SearchScreen records={records} setRecords={setRecords} onDeleteMany={handleDeleteMany} openDetail={openDetail} allKnownTags={knownTags} defaultSort={prefs.sortMode} resetSig={searchReset} />}
+        {tab === "folder" && <FolderScreen folders={folders} records={records} sort={prefs.folderSortOrder || "name"}
+          onSort={(v) => savePrefs({ ...prefs, folderSortOrder: v })} onOpen={(f) => setOpenFolderId(f.id)}
+          onPin={pinFolder} onChange={changeFolder} onDelete={deleteFolder} resetSig={folderReset} />}
         {tab === "progress" && <ProgressScreen records={records} onOpenDetail={openDetail} onOpenBook={openBook} onOpenDay={setViewingDay} />}
         </div>
       </div>
@@ -9829,7 +10683,27 @@ function AppMain() {
           </button>
         )}
 
+        {/* フォルダを作る＋。位置と大きさは記録画面の＋とそろえる */}
+        {tab === "folder" && (
+          <button onClick={() => setNewFolder(true)} aria-label="新しいフォルダを作る"
+            className="fixed right-5 z-40 w-14 h-14 rounded-full bg-th-900 text-white shadow-xl flex items-center justify-center hover:bg-th-800 ft-tap ft-fab"
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 96px)" }}>
+            <Plus size={26} />
+          </button>
+        )}
+
         <BottomNav active={tab} onChange={pressTab} />
+
+        {/* フォルダの中。記録の閲覧（viewing）より前に置くこと。あとに置くと、開いた記録の上にかぶさる */}
+        {openFolder && (
+          <FolderDetail folder={openFolder} records={records} knownTags={knownTags} defaultSort={prefs.sortMode}
+            onClose={() => setOpenFolderId(null)} onChange={changeFolder} onDelete={deleteFolder} onOpenDetail={openDetail} />
+        )}
+        {newFolder && (
+          /* 作ったら、そのまま中をひらく（すぐ記録を入れられるように） */
+          <FolderNameSheet title="新しいフォルダ" confirmLabel="作る" onCancel={() => setNewFolder(false)}
+            onSave={(n, ic) => { const f = addFolder(n, ic); setNewFolder(false); setOpenFolderId(f.id); }} />
+        )}
 
         {viewingDay && (
           <DayRecordsScreen date={viewingDay} records={records} onClose={closeDay} onOpenDetail={openDetailFromBook} />
@@ -9890,7 +10764,7 @@ function AppMain() {
             onCancel={() => setDupState(null)} />
         )}
 
-        {backupOpen && <BackupScreen records={records} artworks={artworks} garden={garden} tagMaster={tagMaster}
+        {backupOpen && <BackupScreen records={records} folders={folders} artworks={artworks} garden={garden} tagMaster={tagMaster}
           prefs={prefs} captions={captions} typeDesc={typeDesc} headerBg={headerBg} onClose={() => setBackupOpen(false)} onRestore={handleRestore} onBackedUp={markBackedUp}
           onImportOne={importOneFile} />}
 
