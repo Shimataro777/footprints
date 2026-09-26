@@ -6662,89 +6662,363 @@ function relatedRecords(records, target) {
 /* zIndex は既定（50）より大きくすること。
    ブックマークやタグの整理など、ほかの重なる画面から開くことがあり、
    同じ高さだと、あとに書かれた画面の下に隠れてしまう（実際そうなっていた） */
-/* 写真を大きく見る画面。
+/* 写真を大きく見る画面（姉妹アプリ My手帳 2.20.3 の PhotoViewer と同じ動き。2.7.0〜）。
    **地は黒く、上下の余白まで覆うこと。** 写真の色に引きずられないようにする。
-   横に払って次の写真へ、下に払うと閉じる（払った量だけ地がうすくなる）。
-   拡大（つまむ）は入れていない。入れるなら、横に払う動きと取り合いにならないよう気をつけること */
+
+   ・横に払うと、となりの写真へ（**端で先頭に戻らないこと**。端では重くして、それ以上ないことを指に返す）
+   ・上から下へ払うと、下へ滑り出て閉じる。払ったぶんだけ地がうすくなり、どこまで引けば閉じるかが指で分かる。
+     上へは少しだけしか動かさない（閉じる向きが分からなくなるため）
+   ・二本指でつまむと拡大・縮小（1〜5倍）。二度たたき（マウスなら二度クリック）でも拡大し、もういちどで、もとの大きさ
+   ・一度たたきは閉じる。**すぐ閉じないこと。** 二度目が来るかを、指なら280ms・マウスなら450ms待つ。
+     拡大しているあいだの一度たたきでは閉じない（見ている途中で消えると困る）
+   ・拡大中は「もとの大きさ」のボタンを出す。拡大中に指で動かすと、写真の中をずらして見られる
+   ・**ブラウザの dblclick を足さないこと。** 下の二度たたきと二重に働き、拡大してすぐ戻る
+   ・**位置の計算を React の状態でやらないこと。** 一こまごとに描き直しが入って指に追いつかない。
+     覚え書き（ref）に持って、要素へ直に当てている */
+const ZOOM_MAX = 5;
+const ZOOM_TAP = 2.5;
 function PhotoViewer({ images, index, onClose }) {
   const list = images || [];
   const last = Math.max(0, list.length - 1);
   const [i, setI] = useState(Math.min(Math.max(0, index || 0), last));
-  const [closing, close] = useClosing(onClose);
-  const wrapRef = useRef(null);
-  const trackRef = useRef(null);
-  const backRef = useRef(null);
-  const st = useRef({ x: 0, y: 0, dx: 0, dy: 0, mode: null, on: false });
-
+  const [zoomed, setZoomed] = useState(false); // 「もとの大きさ」を出すため
+  useLockBackground();
+  const rootRef = useRef(null);   // 外わく（うしろへ指を通さない見張りを付ける）
+  const wrapRef = useRef(null);   // 指を受ける箱（下へ払うとここが動く）
+  const backRef = useRef(null);   // 黒い地
+  const chromeRef = useRef(null); // 上下の✕・枚数・点（払うと薄くなる）
+  const trackRef = useRef(null);  // 横に並んだ帯
+  const pageRefs = useRef({});    // 写真を入れた枠（拡大はここに掛ける）
+  const gone = useRef(false);     // 二重に閉じないための札
+  const tapRef = useRef({ at: 0, timer: null });
+  const st = useRef({
+    i: Math.min(Math.max(0, index || 0), last),
+    scale: 1, tx: 0, ty: 0,
+    dx: 0, dy: 0,
+    mode: null, moved: false,
+    pts: new Map(),
+    startX: 0, startY: 0, baseTx: 0, baseTy: 0,
+    startDist: 1, startScale: 1, focal: { x: 0, y: 0 },
+  });
   const width = () => (wrapRef.current ? wrapRef.current.clientWidth : 1);
-  const apply = (anim, at) => {
-    const s2 = st.current;
+  /* 画面に当てる。anim を真にすると、するりと動く */
+  const apply = (anim) => {
+    const s = st.current;
     const w = width();
     const ease = "cubic-bezier(0.22,1,0.36,1)";
     if (trackRef.current) {
-      trackRef.current.style.transition = anim ? `transform .26s ${ease}` : "none";
-      trackRef.current.style.transform = `translate3d(${-(at === undefined ? i : at) * w + s2.dx}px, ${s2.dy}px, 0)`;
+      trackRef.current.style.transition = anim ? `transform .28s ${ease}` : "none";
+      trackRef.current.style.transform = `translate3d(${-s.i * w + s.dx}px,0,0)`;
     }
+    if (wrapRef.current) {
+      wrapRef.current.style.transition = anim ? `transform .28s ${ease}` : "none";
+      wrapRef.current.style.transform = `translate3d(0,${s.dy}px,0)`;
+    }
+    const k = Math.max(0, 1 - Math.abs(s.dy) / 420);
     if (backRef.current) {
-      const k = Math.max(0, 1 - Math.abs(s2.dy) / 420);
-      backRef.current.style.transition = anim ? "opacity .26s ease" : "none";
-      backRef.current.style.opacity = String(0.35 + 0.65 * k);
+      backRef.current.style.transition = anim ? "opacity .28s ease" : "none";
+      backRef.current.style.opacity = String(0.3 + 0.7 * k);
+    }
+    if (chromeRef.current) {
+      chromeRef.current.style.transition = anim ? "opacity .28s ease" : "none";
+      chromeRef.current.style.opacity = String(k);
+    }
+    const el = pageRefs.current[s.i];
+    if (el) {
+      el.style.transition = anim ? `transform .24s ${ease}` : "none";
+      el.style.transform = `translate3d(${s.tx}px,${s.ty}px,0) scale(${s.scale})`;
     }
   };
-  useEffect(() => { apply(false); }, [i]); // eslint-disable-line
-
+  /* 拡大したとき、写真が枠の外へ行きすぎないように押さえる */
+  const clampPan = () => {
+    const s = st.current;
+    const page = pageRefs.current[s.i];
+    const img = page && page.querySelector("img");
+    const box = wrapRef.current;
+    if (!img || !box) return;
+    const mx = Math.max(0, (img.clientWidth * s.scale - box.clientWidth) / 2);
+    const my = Math.max(0, (img.clientHeight * s.scale - box.clientHeight) / 2);
+    s.tx = Math.max(-mx, Math.min(mx, s.tx));
+    s.ty = Math.max(-my, Math.min(my, s.ty));
+  };
+  /* 拡大しているかを画面の側へ伝える。**一こまごとに setState しないこと。** 変わったときだけ */
+  const zoomedRef = useRef(false);
+  const syncZoom = () => {
+    const on = st.current.scale > 1.05;
+    if (zoomedRef.current !== on) { zoomedRef.current = on; setZoomed(on); }
+  };
+  const resetZoom = () => {
+    const s = st.current;
+    s.scale = 1; s.tx = 0; s.ty = 0;
+    syncZoom();
+  };
+  /* 閉じる。**そのまま消さないこと。** 下へ滑り出てから消える */
+  const dismiss = () => {
+    if (gone.current) return;
+    gone.current = true;
+    if (tapRef.current.timer) clearTimeout(tapRef.current.timer);
+    const out = "cubic-bezier(0.55,0,0.68,0.53)";
+    if (wrapRef.current) {
+      wrapRef.current.style.transition = `transform .26s ${out}, opacity .26s ease`;
+      wrapRef.current.style.transform = `translate3d(0,${Math.max(600, window.innerHeight)}px,0)`;
+      wrapRef.current.style.opacity = "0";
+    }
+    if (backRef.current) { backRef.current.style.transition = "opacity .26s ease"; backRef.current.style.opacity = "0"; }
+    if (chromeRef.current) { chromeRef.current.style.transition = "opacity .2s ease"; chromeRef.current.style.opacity = "0"; }
+    setTimeout(onClose, 250);
+  };
+  const toggleZoom = (x, y) => {
+    const s = st.current;
+    if (s.scale > 1.05) {
+      resetZoom();
+    } else {
+      const r = wrapRef.current.getBoundingClientRect();
+      const fx = x - (r.left + r.width / 2);
+      const fy = y - (r.top + r.height / 2);
+      s.scale = ZOOM_TAP;
+      s.tx = -fx * (ZOOM_TAP - 1);
+      s.ty = -fy * (ZOOM_TAP - 1);
+      clampPan();
+      syncZoom();
+    }
+    apply(true);
+  };
+  const onTap = (x, y, pointerType) => {
+    const win = pointerType === "mouse" ? 450 : 280;
+    const now = Date.now();
+    if (now - tapRef.current.at < win) {
+      tapRef.current.at = 0;
+      if (tapRef.current.timer) clearTimeout(tapRef.current.timer);
+      toggleZoom(x, y);
+      return;
+    }
+    tapRef.current.at = now;
+    if (st.current.scale > 1.05) return;
+    tapRef.current.timer = setTimeout(() => { dismiss(); }, win);
+  };
   const onDown = (e) => {
-    const s2 = st.current;
-    s2.on = true; s2.mode = null; s2.x = e.clientX; s2.y = e.clientY; s2.dx = 0; s2.dy = 0;
+    /* **ボタン（✕・点・もとの大きさ）の上から始まった指は、ここで受けないこと。**
+       下で setPointerCapture を呼ぶと、離したときの click がボタンではなく箱へ届き、
+       ボタンが動かなくなる（My手帳 2.11.23 で実際に起きた） */
+    if (e.target && e.target.closest && e.target.closest("button")) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return; // 右クリックを「たたき」に数えない
+    const s = st.current;
+    s.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (wrapRef.current && wrapRef.current.setPointerCapture) {
+      try { wrapRef.current.setPointerCapture(e.pointerId); } catch (x) { /* 使えない端末は素通り */ }
+    }
+    if (s.pts.size === 1) {
+      s.startX = e.clientX; s.startY = e.clientY;
+      s.baseTx = s.tx; s.baseTy = s.ty;
+      s.mode = s.scale > 1 ? "pan" : null; // null ＝ 縦か横か、まだ決めていない
+      s.moved = false;
+    } else if (s.pts.size === 2) {
+      const p = [...s.pts.values()];
+      s.startDist = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1;
+      s.startScale = s.scale;
+      const r = wrapRef.current.getBoundingClientRect();
+      s.focal = { x: (p[0].x + p[1].x) / 2 - (r.left + r.width / 2), y: (p[0].y + p[1].y) / 2 - (r.top + r.height / 2) };
+      s.baseTx = s.tx; s.baseTy = s.ty;
+      s.mode = "pinch";
+      s.moved = true;
+      s.dx = 0; s.dy = 0; // つまみ始めたら、払いかけを戻す
+    }
   };
   const onMove = (e) => {
-    const s2 = st.current;
-    if (!s2.on) return;
-    const dx = e.clientX - s2.x, dy = e.clientY - s2.y;
-    if (!s2.mode) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      s2.mode = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    const s = st.current;
+    if (!s.pts.has(e.pointerId)) return;
+    s.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    /* 二本指 ＝ つまんで拡大・縮小。指のあいだの点を動かさないようにずらす */
+    if (s.mode === "pinch" && s.pts.size >= 2) {
+      const p = [...s.pts.values()];
+      const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1;
+      const ns = Math.max(1, Math.min(ZOOM_MAX, s.startScale * (d / s.startDist)));
+      const r = wrapRef.current.getBoundingClientRect();
+      const fx = (p[0].x + p[1].x) / 2 - (r.left + r.width / 2);
+      const fy = (p[0].y + p[1].y) / 2 - (r.top + r.height / 2);
+      const ux = (s.focal.x - s.baseTx) / s.startScale;
+      const uy = (s.focal.y - s.baseTy) / s.startScale;
+      s.scale = ns;
+      s.tx = fx - ux * ns;
+      s.ty = fy - uy * ns;
+      clampPan(); syncZoom(); apply(false);
+      return;
     }
-    if (s2.mode === "x") { s2.dx = dx; s2.dy = 0; } else { s2.dy = Math.max(0, dy); s2.dx = 0; }
-    apply(false);
+    const dx = e.clientX - s.startX, dy = e.clientY - s.startY;
+    if (!s.mode) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      s.mode = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+      s.moved = true;
+    }
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) s.moved = true;
+    if (s.mode === "x") {
+      const edge = (s.i === 0 && dx > 0) || (s.i === last && dx < 0);
+      s.dx = edge ? dx * 0.3 : dx;
+      apply(false);
+    } else if (s.mode === "y") {
+      s.dy = dy < 0 ? dy * 0.28 : dy;
+      apply(false);
+    } else if (s.mode === "pan") {
+      s.tx = s.baseTx + dx; s.ty = s.baseTy + dy;
+      clampPan(); apply(false);
+    }
   };
-  const onUp = () => {
-    const s2 = st.current;
-    if (!s2.on) return;
-    s2.on = false;
+  const onUp = (e) => {
+    const s = st.current;
+    /* onDown が受けなかった指（ボタンから始まったもの）は、離しても何もしない。
+       これが無いと、前の操作の moved が残って「一度たたき」に数えられ、少し後に閉じてしまう */
+    if (!s.pts.has(e.pointerId)) return;
+    s.pts.delete(e.pointerId);
+    if (s.mode === "pinch") {
+      if (s.pts.size >= 1) {
+        /* 一本だけ残った → そのまま、ずらす操作へ引き継ぐ */
+        const p = [...s.pts.values()][0];
+        s.startX = p.x; s.startY = p.y; s.baseTx = s.tx; s.baseTy = s.ty;
+        s.mode = s.scale > 1 ? "pan" : null;
+        return;
+      }
+      if (s.scale <= 1.02) resetZoom();
+      clampPan(); syncZoom();
+      s.mode = null;
+      apply(true);
+      return;
+    }
+    if (s.pts.size > 0) return;
     const w = width();
-    if (s2.mode === "y" && s2.dy > 110) { close(); return; }
-    let next = i;
-    if (s2.mode === "x" && Math.abs(s2.dx) > w * 0.22) next = Math.min(last, Math.max(0, i - Math.sign(s2.dx)));
-    s2.dx = 0; s2.dy = 0;
-    apply(true, next);
-    if (next !== i) setI(next);
+    if (s.mode === "x") {
+      const need = Math.min(96, w * 0.22);
+      let n = s.i;
+      if (s.dx < -need && s.i < last) n = s.i + 1;
+      else if (s.dx > need && s.i > 0) n = s.i - 1;
+      s.dx = 0;
+      if (n !== s.i) { s.i = n; resetZoom(); setI(n); }
+      apply(true);
+    } else if (s.mode === "y") {
+      /* 110px ほど引いたら閉じる。浅ければ、もとの場所へ戻る */
+      if (s.dy > 110) { dismiss(); return; }
+      s.dy = 0;
+      apply(true);
+    } else if (s.mode === "pan") {
+      clampPan(); syncZoom(); apply(true);
+      /* 拡大中に、動かさず離した ＝ たたき（二度たたきで、もとの大きさへ） */
+      if (!s.moved) onTap(e.clientX, e.clientY, e.pointerType);
+    } else if (!s.moved) {
+      onTap(e.clientX, e.clientY, e.pointerType);
+    }
+    s.mode = null;
+  };
+  const onCancel = (e) => {
+    const s = st.current;
+    s.pts.delete(e.pointerId);
+    if (s.pts.size === 0) { s.dx = 0; s.dy = 0; s.mode = null; clampPan(); apply(true); }
+  };
+  /* 開いたときと、画面の向きが変わったとき。**位置を当て直すこと。** 幅が変わると、何枚目かがずれる */
+  useEffect(() => {
+    apply(false);
+    const onResize = () => { st.current.dx = 0; st.current.dy = 0; resetZoom(); apply(false); };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+      if (tapRef.current.timer) clearTimeout(tapRef.current.timer);
+    };
+  }, []); // eslint-disable-line
+  /* 指の受け取りは React まかせにせず、この要素へ直に付ける。
+     React は画面のいちばん外でまとめて受けるので、途中にある「左端から払って戻る」などの仕掛けが先に動いてしまう */
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return undefined;
+    const wrap = (fn) => (e) => { e.stopPropagation(); fn(e); };
+    const d = wrap(onDown), m = wrap(onMove), u = wrap(onUp), c = wrap(onCancel);
+    el.addEventListener("pointerdown", d);
+    el.addEventListener("pointermove", m, { passive: false });
+    el.addEventListener("pointerup", u);
+    el.addEventListener("pointercancel", c);
+    return () => {
+      el.removeEventListener("pointerdown", d);
+      el.removeEventListener("pointermove", m);
+      el.removeEventListener("pointerup", u);
+      el.removeEventListener("pointercancel", c);
+    };
+  }, []); // eslint-disable-line
+  /* うしろの画面へ、指を通さない。
+     この窓は記録の詳細画面の中に作られているので、touch / wheel はそのまま外へ上がり、
+     詳細画面の「左端から払って戻る」やうしろの巻き物に届いてしまう。
+     touchmove / wheel は既定の動きも止める（ボタンの上から始まった指は止めない。click が届かなくなるため） */
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return undefined;
+    const stop = (e) => { e.stopPropagation(); };
+    const lock = (e) => {
+      e.stopPropagation();
+      const t = e.target;
+      if (e.cancelable && !(t && t.closest && t.closest("button"))) e.preventDefault();
+    };
+    const stopTypes = ["touchstart", "touchend", "touchcancel", "mousedown", "mouseup", "dblclick", "contextmenu", "pointerdown", "pointerup", "pointermove", "pointercancel"];
+    const lockTypes = ["touchmove", "wheel"];
+    stopTypes.forEach((t) => el.addEventListener(t, stop, { passive: true }));
+    lockTypes.forEach((t) => el.addEventListener(t, lock, { passive: false }));
+    return () => {
+      stopTypes.forEach((t) => el.removeEventListener(t, stop));
+      lockTypes.forEach((t) => el.removeEventListener(t, lock));
+    };
+  }, []); // eslint-disable-line
+  const goto = (n) => {
+    const s = st.current;
+    s.i = Math.max(0, Math.min(last, n));
+    s.dx = 0;
+    resetZoom();
+    setI(s.i);
+    apply(true);
   };
 
   return (
-    <div data-ft-overlay="" className={"fixed inset-0 " + (closing ? "anim-fade-out" : "anim-fade")} style={{ zIndex: 2147483200 }}>
-      <BackgroundLock />
-      <div ref={backRef} className="absolute inset-0 bg-black" />
-      <div ref={wrapRef} className="absolute inset-0 overflow-hidden"
-        style={{ touchAction: "none" }}
-        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+    <div ref={rootRef} data-ft-overlay="" className="fixed inset-0 anim-fade" style={{ zIndex: 2147483200 }}
+      onClick={(e) => e.stopPropagation()}>
+      <div ref={backRef} className="absolute inset-0" style={{ background: "#000", opacity: 1 }} />
+      <div ref={wrapRef} className="absolute inset-0 overflow-hidden" style={{ touchAction: "none" }}>
         <div ref={trackRef} className="absolute inset-0 flex" style={{ willChange: "transform" }}>
           {list.map((src, k) => (
-            <div key={k} className="shrink-0 w-full h-full flex items-center justify-center px-2">
-              <Photo src={src} className="max-w-full max-h-full" style={{ objectFit: "contain" }} />
+            <div key={k} className="relative w-full h-full shrink-0">
+              <div ref={(el) => { pageRefs.current[k] = el; }} className="absolute inset-0 flex items-center justify-center px-2"
+                style={{ willChange: "transform" }}>
+                <Photo src={src} className="max-w-full max-h-full" style={{ objectFit: "contain", WebkitTouchCallout: "none", userSelect: "none" }} />
+              </div>
             </div>
           ))}
         </div>
+        <div ref={chromeRef} className="absolute inset-0 pointer-events-none">
+          <div className="flex items-center px-3 pointer-events-auto" style={{ paddingTop: "calc(env(safe-area-inset-top) + 8px)" }}>
+            <button type="button" onClick={dismiss} aria-label="閉じる"
+              className="w-12 h-12 flex items-center justify-center rounded-full text-white ft-tap ft-tap-icon">
+              <X size={24} />
+            </button>
+            <span className="flex-1" />
+            {list.length > 1 && (
+              <span className="text-[13.5px] text-white/70 tabular-nums pr-3">{i + 1} / {list.length}</span>
+            )}
+          </div>
+          {list.length > 1 && (
+            <div className="absolute left-0 right-0 bottom-0 flex items-center justify-center gap-1.5 pointer-events-auto"
+              style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 20px)", paddingTop: 12 }}>
+              {list.map((_, k) => (
+                <button key={k} type="button" aria-label={`${k + 1}枚目`} onClick={() => goto(k)} className="w-6 h-6 flex items-center justify-center">
+                  <span className="rounded-full block" style={{ width: 6, height: 6, background: k === i ? "#FFFFFF" : "rgba(255,255,255,.35)" }} />
+                </button>
+              ))}
+            </div>
+          )}
+          {zoomed && (
+            <div className="absolute left-0 right-0 flex justify-center pointer-events-auto"
+              style={{ bottom: "calc(env(safe-area-inset-bottom) + 56px)" }}>
+              <button type="button" onClick={() => { resetZoom(); apply(true); }}
+                className="min-h-[44px] px-4 rounded-full text-[13.5px] font-bold text-white ft-tap"
+                style={{ background: "rgba(255,255,255,.18)" }}>もとの大きさ</button>
+            </div>
+          )}
+        </div>
       </div>
-      <button type="button" onClick={close} aria-label="閉じる"
-        className="absolute right-3 w-11 h-11 rounded-full bg-black/45 text-white flex items-center justify-center ft-tap ft-tap-icon"
-        style={{ top: "calc(env(safe-area-inset-top) + 10px)" }}><X size={24} /></button>
-      {list.length > 1 && (
-        /* **指を通すこと（pointer-events-none）。** 左右いっぱいに広げた帯なので、
-           そのままだと右上の「閉じる」の上に重なり、押せなくなる */
-        <span className="absolute left-0 right-0 text-center text-[13.5px] font-bold text-white/90 pointer-events-none"
-          style={{ top: "calc(env(safe-area-inset-top) + 20px)" }}>{i + 1} / {list.length}</span>
-      )}
     </div>
   );
 }
@@ -6894,18 +7168,34 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
         </div>
 
         {/* 写真。**本文のあと、タグや箇所より前に置くこと**（入力画面と同じ並び）。
-            枚数にかかわらず2列・正方形（1枚だけ大きくしない。入力画面と同じ） */}
-        {(record.images || []).length > 0 && (
-          <div className="mt-5 grid grid-cols-2 gap-2">
-            {(record.images || []).map((src, i) => (
-              <button key={i} type="button" onClick={() => setViewer(i)} aria-label={`写真 ${i + 1} を大きく見る`}
-                className="relative rounded-2xl overflow-hidden border border-neutral-200 bg-neutral-100 ft-tap ft-tap-card"
-                style={{ aspectRatio: "1 / 1" }}>
-                <Photo src={src} className="block w-full h-full" style={{ objectFit: "cover" }} />
-              </button>
-            ))}
-          </div>
-        )}
+            並べ方は My手帳 の記録と同じ（2.7.0〜）。1つの角丸の枠に、すき間3pxで敷きつめる。
+            ・1枚 … 横長 4:3 で大きく
+            ・2枚 … 左右に並べる（枠は 3:2）
+            ・3枚 … 左に縦長の1枚、右に2枚を上下（枠は 3:2）
+            ・4枚 … 2×2（枠は 3:2）
+            切り抜いて見せているので、全体は押して開く拡大窓で見る。
+            **入力画面（ImagesField）の並べ方はこれに合わせないこと。** あちらは✕で外すたびに
+            並びが変わると、遅れて届く押し込みが別の✕に当たるので、いつも2列・正方形のまま */}
+        {(record.images || []).length > 0 && (() => {
+          const imgs = (record.images || []).slice(0, MAX_IMAGES);
+          const n = imgs.length;
+          return (
+            <div className="mt-5 grid gap-[3px] rounded-2xl overflow-hidden bg-neutral-100"
+              style={{
+                gridTemplateColumns: n === 1 ? "1fr" : "1fr 1fr",
+                gridTemplateRows: n > 2 ? "1fr 1fr" : "1fr",
+                aspectRatio: n === 1 ? "4 / 3" : "3 / 2",
+              }}>
+              {imgs.map((src, i) => (
+                <button key={i} type="button" onClick={() => setViewer(i)} aria-label={`写真 ${i + 1} を大きく見る`}
+                  className="block overflow-hidden min-w-0 min-h-0 ft-tap ft-tap-card"
+                  style={n === 3 && i === 0 ? { gridRow: "span 2", WebkitTouchCallout: "none" } : { WebkitTouchCallout: "none" }}>
+                  <Photo src={src} className="block w-full h-full" style={{ objectFit: "cover" }} />
+                </button>
+              ))}
+            </div>
+          );
+        })()}
 
         {chips.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-5 pt-4 border-t border-neutral-200">
