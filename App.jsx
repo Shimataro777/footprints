@@ -2969,6 +2969,11 @@ function useLockBackground() {
             return m;
         return Math.round(layoutHeight() * 0.5);
     };
+    /* この向きのキーボードの高さを、実際に測って覚えているか（見込みの 50% ではなく）。2.10.1〜 */
+    const kbKnown = () => {
+        const m = Number(kbMem[orient()]);
+        return m >= 60 && m < 2000;
+    };
     /* ================================================================
        キーボードと入力欄（2.16.6〜）
        ----------------------------------------------------------------
@@ -2997,6 +3002,30 @@ function useLockBackground() {
     const KB_DOWN_MS = 360;   /* 下ろす時間 */
     const KB_EASE_UP = "cubic-bezier(0.22,1,0.36,1)";   /* --ease-out と同じ */
     const KB_EASE_DOWN = "cubic-bezier(0.22,1,0.36,1)";
+    /* 持ち上げの残りがこの px 以下になったら、本物の入力欄へフォーカスを移す（2.10.1〜）。
+       持ち上げは ease-out なので、時間の半分ほどで 96% まで進み、あとは数 px しか動かない。
+       その見えない残りを待たずにカーソルを出す。**残り（数 px）は GAP（12px）より小さくしておくこと。**
+       フォーカスが入った時点で、欄の下端がキーボードの上端より上にあれば、iPhone は画面を押し上げない。
+       0 にすると 2.10.0 までと同じ（持ち上げが終わってからフォーカス）。紙と全画面だけに使う */
+    const KB_EARLY_PX = 3;
+    /* KB_EASE_UP（cubic-bezier(0.22,1,0.36,1)）で、進み具合が prog に達する時点（0〜1）。二分探索 */
+    const easeUpTimeAt = (prog) => {
+        if (prog <= 0)
+            return 0;
+        if (prog >= 1)
+            return 1;
+        const bx = (t) => 3 * (1 - t) * (1 - t) * t * 0.22 + 3 * (1 - t) * t * t * 0.36 + t * t * t;
+        const by = (t) => 3 * (1 - t) * (1 - t) * t + 3 * (1 - t) * t * t + t * t * t;
+        let lo = 0, hi = 1;
+        for (let i = 0; i < 30; i++) {
+            const mid = (lo + hi) / 2;
+            if (by(mid) < prog)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        return bx(hi);
+    };
     const GAP = 12;
     const root = document.documentElement;
     let ctx = "";
@@ -3368,17 +3397,16 @@ function useLockBackground() {
     document.addEventListener("touchcancel", tgEnd, { passive: true, capture: true });
     /* ---- こちらでフォーカスを入れる ---- */
     let pending = null;
-    const finishPending = (focusReal) => {
-        const p = pending;
-        pending = null;
-        if (!p)
+    /* 本物の入力欄へフォーカスを移す（キーボードは出たまま）。打ちかけの文字も移す。
+       2.10.1〜 は、持ち上げの途中（残りが KB_EARLY_PX 以下）でも呼ぶ。そのときは pending を残したまま
+       （onFocusIn・adjustFor が、持ち上げの途中で割りこまないように）、終わりの片づけは finishPending が行う */
+    const focusRealNow = (p) => {
+        if (p.focused)
             return;
-        clearTimeout(p.timer);
-        clearTimeout(p.fallback);
-        endScrollerLift(p.sc);
+        p.focused = true;
         const ours = document.activeElement === p.proxy;
         const v = p.proxy.value;
-        if (focusReal && ours && p.el.isConnected) {
+        if (ours && p.el.isConnected) {
             try {
                 p.el.focus({ preventScroll: true });
             }
@@ -3396,34 +3424,70 @@ function useLockBackground() {
         hideRing(p.el);
         if (p.proxy.parentNode)
             p.proxy.parentNode.removeChild(p.proxy);
-        /* 見込みの高さで足していた余地などを、実際のキーボードに合わせ直す */
-        if (focusReal)
-            measure();
     };
-    /* キーボードが出たら（または待ちきれなくなったら）、押した欄をキーボードの上へゆっくり持ち上げる */
+    const finishPending = (focusReal) => {
+        const p = pending;
+        pending = null;
+        if (!p)
+            return;
+        clearTimeout(p.timer);
+        clearTimeout(p.fallback);
+        clearTimeout(p.early);
+        clearTimeout(p.earlyFocus);
+        const early = p.focused;
+        endScrollerLift(p.sc);
+        if (focusReal)
+            focusRealNow(p);
+        else if (!p.focused) {
+            hideRing(p.el);
+            if (p.proxy.parentNode)
+                p.proxy.parentNode.removeChild(p.proxy);
+        }
+        /* 見込みの高さで足していた余地などを、実際のキーボードに合わせ直す */
+        if (focusReal) {
+            measure();
+            /* 途中でフォーカスを移したときは、そのときの focusin を見送っている（pending が残っていたため）。
+               ここで、focusin と同じ合わせ直しを済ませる */
+            if (early && document.activeElement === p.el)
+                afterFocus(p.el);
+        }
+    };
+    /* キーボードが出たら（または待ちきれなくなったら）、押した欄をキーボードの上へゆっくり持ち上げる。
+       fromFallback：true ＝知らせを待ちきれなかった／"early" ＝覚えている高さで先に動き出す（2.10.1〜） */
     const startSlide = (fromFallback) => {
         const p = pending;
         if (!p || p.started)
             return;
+        const kbOut = rawKb() >= 60 || layoutShrunk();
+        /* 押した欄が、見込みのキーボードの上端より上に収まっているか */
+        const fitsNow = () => p.el.isConnected && Math.ceil(p.el.getBoundingClientRect().bottom + GAP - kbTopNow()) <= 0;
+        /* 覚えている高さで先に動き出すのは、持ち上げが要るときだけ（2.10.1〜）。
+           持ち上げの要らない欄は、これまでどおりキーボードの出た知らせを待ってからフォーカスする */
+        if (fromFallback === "early" && !kbOut && fitsNow())
+            return;
         /* キーボードの出た知らせがまだ来ていない。いちど待ち足す。それでも来なければ、画面のキーボードが
-           出ない端末（外付けキーボードの iPad など）とみなし、持ち上げずに本物へ移す（2.16.7〜） */
+           出ない端末（外付けキーボードの iPad など）とみなし、持ち上げずに本物へ移す（2.16.7〜）。
+           **欄が見込みのキーボードより上に収まっているときは、待ち足さない（2.10.1〜）。**
+           どちらにしても持ち上げずに本物へ移すだけなので、待つ意味がない */
         let noKb = false;
-        if (fromFallback === true && rawKb() < 60 && !layoutShrunk()) {
-            if (!p.waited) {
+        if (fromFallback === true && !kbOut) {
+            const fits = fitsNow();
+            if (!fits && !p.waited) {
                 p.waited = true;
                 p.fallback = setTimeout(() => startSlide(true), KB_FALLBACK2_MS);
                 return;
             }
-            noKb = true;
+            noKb = !fits;
         }
         const wait = KB_WAIT_MS - (Date.now() - p.at);
         if (wait > 0) {
             clearTimeout(p.timer);
-            p.timer = setTimeout(startSlide, wait);
+            p.timer = setTimeout(() => startSlide(fromFallback), wait);
             return;
         }
         p.started = true;
         clearTimeout(p.fallback);
+        clearTimeout(p.early);
         const el = p.el;
         if (!el.isConnected) {
             finishPending(false);
@@ -3435,6 +3499,8 @@ function useLockBackground() {
             setFix(true);
         const need = noKb ? 0 : Math.ceil(el.getBoundingClientRect().bottom + GAP - kbTopNow());
         let moved = false;
+        /* 実際に動かす量（残りの px から、途中でフォーカスする時点を決める）。ページでは使わない */
+        let dist = 0;
         if (need > 0) {
             if (p.ctx === "sheet") {
                 const box = sheetBoxOf(el);
@@ -3450,13 +3516,16 @@ function useLockBackground() {
                     }
                     setSheetY(box, target, KB_UP_MS, KB_EASE_UP);
                     moved = target !== cur;
+                    dist = Math.max(0, target - cur);
                 }
             }
             else if (p.ctx === "overlay") {
                 const sc = scrollerOf(el, el.closest("[data-ft-overlay]"));
-                if (sc && startScrollerLift(sc, need)) {
+                const y = sc ? startScrollerLift(sc, need) : 0;
+                if (y) {
                     p.sc = sc;
                     moved = true;
+                    dist = y;
                 }
             }
             else {
@@ -3464,7 +3533,17 @@ function useLockBackground() {
                 moved = true;
             }
         }
-        p.timer = setTimeout(() => finishPending(true), (moved && motionOn()) ? KB_UP_MS + 20 : 0);
+        const anim = moved && motionOn();
+        p.timer = setTimeout(() => finishPending(true), anim ? KB_UP_MS + 20 : 0);
+        /* 持ち上げの見えない残りを待たずに、本物へフォーカスを移す（2.10.1〜。紙と全画面だけ）。
+           フォーカスの時点で残りは KB_EARLY_PX 以下＝欄の下端はキーボードの上端より (GAP − 残り) px 上にある。
+           +20ms は、transition が次のこまから動き出すぶん */
+        if (anim && dist > 0 && KB_EARLY_PX > 0 && (p.ctx === "sheet" || p.ctx === "overlay")) {
+            const at = dist <= KB_EARLY_PX ? 0 : Math.ceil(KB_UP_MS * easeUpTimeAt(1 - KB_EARLY_PX / dist));
+            if (at + 20 < KB_UP_MS + 20)
+                p.earlyFocus = setTimeout(() => { if (pending === p && !p.focused)
+                    focusRealNow(p); }, at + 20);
+        }
     };
     let fa = null;
     const faStart = (e) => {
@@ -3506,12 +3585,18 @@ function useLockBackground() {
         catch (err) {
             proxy.focus();
         }
-        pending = { el, proxy, ctx: c, sc: null, at: Date.now(), started: false, timer: 0, fallback: 0 };
+        pending = { el, proxy, ctx: c, sc: null, at: Date.now(), started: false, focused: false, timer: 0, fallback: 0, early: 0, earlyFocus: 0 };
         /* キーボードがもう出ている（別の欄から移ってきた）ときは、すぐ持ち上げへ */
         if (rawKb() >= 60)
             startSlide();
-        else
+        else {
             pending.fallback = setTimeout(() => startSlide(true), KB_FALLBACK_MS);
+            /* この向きのキーボードの高さを覚えていれば、知らせを待たずに KB_WAIT_MS で持ち上げはじめる（2.10.1〜）。
+               キーボードがせり上がるのと、欄の持ち上げが並んで進む。見込みと違えば、終わったあと adjustFor が合わせる。
+               ページ（探す など）は、これまでどおり知らせを待つ */
+            if (c !== "page" && kbKnown())
+                pending.early = setTimeout(() => startSlide("early"), KB_WAIT_MS);
+        }
     };
     /* ---- キーボードの ^ v で移ったとき・見込みと違ったとき：隠れているぶんだけ合わせる ---- */
     const adjustFor = (el) => {
@@ -3556,6 +3641,10 @@ function useLockBackground() {
             return;
         if (pending)
             finishPending(false);
+        afterFocus(t);
+    };
+    /* 入力欄にフォーカスが入ったあとの合わせ直し（onFocusIn と、途中でフォーカスを移したときの finishPending から） */
+    const afterFocus = (t) => {
         setCtx(ctxOf(t));
         if (ctx !== "sheet" && shown <= 0)
             setReserve(guessKb());
