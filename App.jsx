@@ -2974,6 +2974,40 @@ function useLockBackground() {
         const m = Number(kbMem[orient()]);
         return m >= 60 && m < 2000;
     };
+    /* ---- iPad の浮いたキーボード・外付けキーボード（2.10.2〜） ----
+       **iPad で、キーボードが画面の下に付いていない（浮いた・分割・外付け）ときは、見えない入力欄を使わない。**
+       そのキーボードでは画面の高さが変わらず、キーボードの出た知らせが来ない。待ちきってから本物の入力欄へ
+       focus() しても、iPad はその欄に文字を届けない（フォーカスは移るがカーソルが出ず、打っても入らない）。
+       本物の欄が「フォーカス済み」になるので、2回めのタップだけが iPad にまかされて入力できていた。
+       浮いたキーボードは画面を押し上げないので、iPad にそのままフォーカスさせてよい。
+       ・下に付いたキーボードか（画面の高さが 60px 以上縮んだか）を端末に覚えておく（bible-tracker-kb-dock）。
+         はじめは「付いていない」とみなす（押し上げが一度起きても、覚えたあとは見えない入力欄に切りかわる。
+         逆に「付いている」とみなすと、浮いたキーボードの人は毎回1回めのタップで入力できない）
+       ・iPhone は今までどおり（浮いたキーボードが無い） */
+    const isIPad = (() => {
+        try {
+            const ua = navigator.userAgent || "";
+            return /iPad/.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+        }
+        catch (e) {
+            return false;
+        }
+    })();
+    const DOCK_KEY = "bible-tracker-kb-dock";
+    let kbDock = false;
+    try {
+        kbDock = window.localStorage.getItem(DOCK_KEY) === "1";
+    }
+    catch (e) { }
+    const setDock = (on) => {
+        if (!isIPad || on === kbDock)
+            return;
+        kbDock = on;
+        try {
+            window.localStorage.setItem(DOCK_KEY, on ? "1" : "0");
+        }
+        catch (e) { }
+    };
     /* ================================================================
        キーボードと入力欄（2.16.6〜）
        ----------------------------------------------------------------
@@ -3478,6 +3512,8 @@ function useLockBackground() {
                 return;
             }
             noKb = !fits;
+            /* 知らせが来なかった＝下に付いたキーボードではない（2.10.2〜）。次のタップから iPad にまかせる */
+            setDock(false);
         }
         const wait = KB_WAIT_MS - (Date.now() - p.at);
         if (wait > 0) {
@@ -3569,6 +3605,9 @@ function useLockBackground() {
         const el = s0.el;
         if (!el.isConnected || !isTyping(el) || document.activeElement === el || !coarse())
             return;
+        /* iPad でキーボードが下に付いていないときは、iPad にそのままフォーカスさせる（2.10.2〜。上の isIPad の説明） */
+        if (isIPad && !kbDock)
+            return;
         e.preventDefault();
         if (pending)
             finishPending(false);
@@ -3652,6 +3691,9 @@ function useLockBackground() {
         clearTimeout(settle);
         settle = setTimeout(() => {
             if (rawKb() < 60 && !layoutShrunk() && !pending) {
+                /* 打っている最中なのに画面が縮まない＝キーボードが下に付いていない（2.10.2〜。iPad だけ覚える） */
+                if (isTyping(document.activeElement) && !isProxy(document.activeElement))
+                    setDock(false);
                 setReserve(0);
                 setFix(false);
                 lowerSheets();
@@ -3669,6 +3711,8 @@ function useLockBackground() {
                 baseH = lh;
             if (pending) {
                 /* キーボードが出た知らせ。持ち上げはここから（KB_WAIT_MS より前なら、そこまで待つ） */
+                if (raw >= 60)
+                    setDock(true);
                 if (raw >= 60 && pending.ctx !== "sheet")
                     setReserve(raw);
                 if (raw >= 60 || layoutShrunk())
@@ -3676,6 +3720,7 @@ function useLockBackground() {
                 return;
             }
             if (typing && raw >= 60) {
+                setDock(true);
                 rememberKb(raw);
                 if (ctx !== "sheet")
                     setReserve(raw);

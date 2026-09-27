@@ -571,7 +571,18 @@ iPhoneでキーボードが出るとき、手前が position:fixed でも、
 - **CSS**：`.ft-sheet-wrap` と `[data-ft-overlay]` は `overflow: clip`（`@supports`）、外がわは `box-shadow: 0 0 0 100vmax #FFFFFF`。
   下寄せの紙の箱の真下に `::after` で白を伸ばす（紙の箱に `overflow: hidden` を付けない）。`html[data-ft-kb]` / `data-ft-kbctx` / `data-ft-kbfix`
   で余地・箱の縮めを切り替える。速さを変えたいときは `KB_WAIT_MS` / `KB_UP_MS` / `KB_DOWN_MS` だけ
-- ❌ どの欄も、タップで iPhone にフォーカスさせない（例外を足さない）／本物の入力欄に、キーボードの裏になる位置で `focus()` しない
+- **iPad の例外（2.10.2〜）**：iPad（UA に iPad、または Macintosh ＋ `maxTouchPoints > 1`）で、キーボードが画面の下に
+  付いていない（浮いた・分割・外付け）ときは、見えない入力欄を使わず、iPad にそのままフォーカスさせる（`faEnd` で preventDefault しない）。
+  - 理由：そのキーボードでは画面の高さが変わらず知らせが来ない。待ちきってから本物の欄へ `focus()` しても、iPad はその欄に
+    文字を届けない（フォーカスだけ移り、カーソルが出ず打っても入らない。2回めのタップは「フォーカス済みの欄」として iPad に
+    まかされるので入力できた）。浮いたキーボードは画面を押し上げないので、まかせてよい
+  - 下に付いたキーボードかは `localStorage` の `bible-tracker-kb-dock`（"1"/"0"）に覚える。画面が 60px 以上縮んだら "1"、
+    打っている最中に縮まないまま（`afterFocus` の 1.5 秒後の確認・`startSlide` の知らせが来なかった道）なら "0"。**はじめは "0" 扱い**
+    （下に付いたキーボードの人は、最初の1回だけ画面が押し上がりうるが、以後は見えない入力欄に切りかわる）
+  - 覚えた値と実際がずれた最初の1回（下付き→浮きに切りかえた直後）だけは、2.10.1 までと同じく1回めで入力できない。そこで "0" に覚え直す
+  - iPhone には当てはめない（`setDock` は iPad のときだけ書く）。**Chromium では `maxTouchPoints` が 1 になるので、試すときは 5 に上書きすること**
+  - **iPad 実機では未確認**（Chromium で iPad の UA・maxTouchPoints を模擬して、浮き＝即フォーカス／下付き＝従来どおり、を確認）
+- ❌ どの欄も、タップで iPhone にフォーカスさせない（例外を足さない。上の iPad の例外は、iPad の浮いた・外付けキーボードだけ）／本物の入力欄に、キーボードの裏になる位置で `focus()` しない
 - ❌ `offsetTop` のぶん画面を下へずらす「相殺」を入れない／押し上げに `window.scrollTo` のくり返しで対抗しない
 - ❌ 見えない入力欄を `opacity: 0` / `display: none` / `visibility: hidden` にしない（色を透明にして z-index で奥へ）
 - ❌ `useLockBackground` に visualViewport の resize での引き戻しを戻さない／`visualViewport` の scroll のたびに紙や送り場を合わせ直さない
