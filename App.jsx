@@ -2974,40 +2974,6 @@ function useLockBackground() {
         const m = Number(kbMem[orient()]);
         return m >= 60 && m < 2000;
     };
-    /* ---- iPad の浮いたキーボード・外付けキーボード（2.10.2〜） ----
-       **iPad で、キーボードが画面の下に付いていない（浮いた・分割・外付け）ときは、見えない入力欄を使わない。**
-       そのキーボードでは画面の高さが変わらず、キーボードの出た知らせが来ない。待ちきってから本物の入力欄へ
-       focus() しても、iPad はその欄に文字を届けない（フォーカスは移るがカーソルが出ず、打っても入らない）。
-       本物の欄が「フォーカス済み」になるので、2回めのタップだけが iPad にまかされて入力できていた。
-       浮いたキーボードは画面を押し上げないので、iPad にそのままフォーカスさせてよい。
-       ・下に付いたキーボードか（画面の高さが 60px 以上縮んだか）を端末に覚えておく（bible-tracker-kb-dock）。
-         はじめは「付いていない」とみなす（押し上げが一度起きても、覚えたあとは見えない入力欄に切りかわる。
-         逆に「付いている」とみなすと、浮いたキーボードの人は毎回1回めのタップで入力できない）
-       ・iPhone は今までどおり（浮いたキーボードが無い） */
-    const isIPad = (() => {
-        try {
-            const ua = navigator.userAgent || "";
-            return /iPad/.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
-        }
-        catch (e) {
-            return false;
-        }
-    })();
-    const DOCK_KEY = "bible-tracker-kb-dock";
-    let kbDock = false;
-    try {
-        kbDock = window.localStorage.getItem(DOCK_KEY) === "1";
-    }
-    catch (e) { }
-    const setDock = (on) => {
-        if (!isIPad || on === kbDock)
-            return;
-        kbDock = on;
-        try {
-            window.localStorage.setItem(DOCK_KEY, on ? "1" : "0");
-        }
-        catch (e) { }
-    };
     /* ================================================================
        キーボードと入力欄（2.16.6〜）
        ----------------------------------------------------------------
@@ -3512,8 +3478,6 @@ function useLockBackground() {
                 return;
             }
             noKb = !fits;
-            /* 知らせが来なかった＝下に付いたキーボードではない（2.10.2〜）。次のタップから iPad にまかせる */
-            setDock(false);
         }
         const wait = KB_WAIT_MS - (Date.now() - p.at);
         if (wait > 0) {
@@ -3605,9 +3569,6 @@ function useLockBackground() {
         const el = s0.el;
         if (!el.isConnected || !isTyping(el) || document.activeElement === el || !coarse())
             return;
-        /* iPad でキーボードが下に付いていないときは、iPad にそのままフォーカスさせる（2.10.2〜。上の isIPad の説明） */
-        if (isIPad && !kbDock)
-            return;
         e.preventDefault();
         if (pending)
             finishPending(false);
@@ -3691,9 +3652,6 @@ function useLockBackground() {
         clearTimeout(settle);
         settle = setTimeout(() => {
             if (rawKb() < 60 && !layoutShrunk() && !pending) {
-                /* 打っている最中なのに画面が縮まない＝キーボードが下に付いていない（2.10.2〜。iPad だけ覚える） */
-                if (isTyping(document.activeElement) && !isProxy(document.activeElement))
-                    setDock(false);
                 setReserve(0);
                 setFix(false);
                 lowerSheets();
@@ -3711,8 +3669,6 @@ function useLockBackground() {
                 baseH = lh;
             if (pending) {
                 /* キーボードが出た知らせ。持ち上げはここから（KB_WAIT_MS より前なら、そこまで待つ） */
-                if (raw >= 60)
-                    setDock(true);
                 if (raw >= 60 && pending.ctx !== "sheet")
                     setReserve(raw);
                 if (raw >= 60 || layoutShrunk())
@@ -3720,7 +3676,6 @@ function useLockBackground() {
                 return;
             }
             if (typing && raw >= 60) {
-                setDock(true);
                 rememberKb(raw);
                 if (ctx !== "sheet")
                     setReserve(raw);
@@ -4085,6 +4040,44 @@ const appendRef = (cur, ref) => {
   const base = (cur || "").replace(/\s+$/, "");
   return base ? base + " " + ref : ref;
 };
+
+/* 選んだ書・章のうち、「読んだ箇所」の文字に書かれていない章を、文字として書き足す。
+   記録画面の「続きから」で開いたときや、前の版で保存した通読は、書・章だけ入っていて
+   文字の欄が空（または別のこと）のことがある。そのままだと、見えない章で「過去のメモ」が出たり、
+   文字を書き換えたとたんに章が消えたりするので、開いたときに見える形にそろえる */
+function showPickedChapters(r) {
+  if (!r || r.type !== "reading" || !r.book || !(r.chapters || []).length) return r;
+  const kept = keepPickedChapters(r.book, r.chapters, r.passageText).chapters;
+  const missing = r.chapters.filter((c) => !kept.includes(c)).sort((a, b) => a - b);
+  if (!missing.length) return r;
+  const runs = [];
+  missing.forEach((c) => {
+    const last = runs[runs.length - 1];
+    if (last && c === last[1] + 1) last[1] = c; else runs.push([c, c]);
+  });
+  const text = runs.map(([a, b]) => (a === b ? `${r.book} ${a}章` : `${r.book} ${a}章-${b}章`)).join(" ");
+  return { ...r, passageText: appendRef(r.passageText, text) };
+}
+
+/* 通読の「選んだ書・章」（book / chapters）を、いまの「読んだ箇所」の文字に合わせる。
+   書・章は画面に出ない控えなので、文字を消したり書き換えたりしても残ったままになり、
+   消したはずの箇所で「過去のメモ」が出続けたり、読んでいない章が読んだことに
+   なったりしていた（実際そうなっていた）。
+   **文字に残っている章だけを残す。** 1つも残らなければ、書・章ごと空にする。
+   変わらないときは同じ並びを返すので、呼ぶ側は「変わったか」で見分けられる */
+function keepPickedChapters(book, chapters, text) {
+  const list = chapters || [];
+  if (!book || !list.length) return { book: book || "", chapters: list };
+  const inText = new Set();
+  parseBibleRefs(text || "").forEach((x) => {
+    if (x.book !== book || x.chapter == null) return;
+    const to = x.chapterEnd && x.chapterEnd > x.chapter ? x.chapterEnd : x.chapter;
+    for (let c = x.chapter; c <= to; c++) inText.add(c);
+  });
+  const kept = list.filter((c) => inText.has(c));
+  if (kept.length === list.length) return { book, chapters: list };
+  return kept.length ? { book, chapters: kept } : { book: "", chapters: [] };
+}
 
 /* 書・章・節を選んでテキストへ挿入するミニピッカー */
 function RefInserter({ onInsert, onPickRange, label }) {
@@ -5255,7 +5248,8 @@ function PastNotesPanel({ notes }) {
    記録フォーム
    ============================================================ */
 function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, captions, onAutoDraft, typeLocked, knownTags, onCreateTag }) {
-  const startRecord = () => (initial ? migrateRecord(initial) : (draft || emptyRecord(initial?.type || "reading")));
+  /* 通読は、選んだ書・章を「読んだ箇所」の文字にも出しておく（showPickedChapters） */
+  const startRecord = () => showPickedChapters(initial ? migrateRecord(initial) : (draft || emptyRecord(initial?.type || "reading")));
   const [type, setType] = useState(initial?.type || draft?.type || "reading");
   const [record, setRecord] = useState(startRecord);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -5407,17 +5401,16 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
   const pastNotes = useMemo(() => {
     let refs = [];
     if (type === "reading") {
-      /* 選んだ章があればそれ。無ければ、手で書いた「読んだ箇所」から読み取る
-         （書・章を選ばずに直接書く人もいるため） */
-      if (record.book && (record.chapters || []).length > 0) {
-        refs = record.chapters.map((c) => ({ book: record.book, chapter: c }));
-      } else {
-        refs = parseBibleRefs(record.passageText || "");
-      }
+      /* 選んだ章と、手で書いた「読んだ箇所」の両方を見る
+         （書・章を選ばずに直接書く人もいる。選んだ書・章は最後に選んだ1つしか
+         覚えていないので、文字のほうに別の書があれば、それも拾う）。
+         選んだ章は章ぜんたいのまま残し、文字から読んだぶんだけ絞る（recordScopeRefs と同じ） */
+      const picked = keepPickedChapters(record.book, record.chapters, record.passageText);
+      const fixed = picked.book ? picked.chapters.map((c) => ({ book: picked.book, chapter: c })) : [];
+      refs = [...fixed, ...narrowRefs(parseBibleRefs(record.passageText || ""))];
     } else if (type === "message") {
-      refs = parseBibleRefs(record.passageText || "");
+      refs = narrowRefs(parseBibleRefs(record.passageText || ""));
     }
-    refs = narrowRefs(refs);
     if (!refs.length) return [];
     return (allRecords || [])
       .filter((r) => r.id !== record.id && recordFullDisplay(r).trim())
@@ -5530,7 +5523,15 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
             <Field>
               <RefBox refsText={record.passageText}
                 inserter={<RefInserter onPickRange={({ book, chapters, passageText }) => set({ book, chapters, passageText: appendRef(record.passageText, passageText) })} />}>
-                <TextInput bare value={record.passageText || ""} onChange={(e) => set({ passageText: e.target.value })} placeholder="読んだ箇所（例：ヨハネの福音書 3章）" />
+                <TextInput bare value={record.passageText || ""} onChange={(e) => {
+                  /* 文字を消した・書き換えたら、選んだ書・章もそれに合わせる（keepPickedChapters）。
+                     変わったときだけ一緒に渡すこと。いつも渡すと、1文字ごとに
+                     「元に戻す」の区切りができてしまう */
+                  const v = e.target.value;
+                  const picked = keepPickedChapters(record.book, record.chapters, v);
+                  if (picked.chapters === record.chapters) set({ passageText: v });
+                  else set({ passageText: v, ...picked });
+                }} placeholder="読んだ箇所（例：ヨハネの福音書 3章）" />
               </RefBox>
             </Field>
             <PastNotesPanel notes={pastNotes} />
