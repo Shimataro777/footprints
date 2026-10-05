@@ -4621,7 +4621,8 @@ function Mascot({ seed = "a", size = 132, withNotes = false, className = "" }) {
 /* ============================================================
    果樹を育てる（ホーム画面）
    通読した日数と記録の件数の**両方**が条件に届くと、次の段階へ進む。
-   最後の段階は「35日かつ42件」なので、日数だけ経っても実らない。
+   最後の段階は「21日かつ25件」（2.11.0〜。それより前に植えた木は「35日かつ42件」のまま）なので、
+   日数だけ経っても実らない。
    **画面に出す文には日数を書かないこと。**
    日数だけで実るかのように読めてしまい、実際と食い違う
    ============================================================ */
@@ -4853,27 +4854,27 @@ function FruitTree({ stage = 1, fruit = "apple", size = 150, className = "", spa
   );
 }
 
-/* 10段階。days=通読した日数、count=記録の件数（かつ判定） */
+/* 10段階の姿とみことば。進むための条件は下の STAGE_PACES に分けてある */
 const STAGES = [
-  { n: 1,  name: "ふかふかの土",         days: 0,   count: 0,
+  { n: 1,  name: "ふかふかの土",
     verse: "良い地に蒔かれたものとは、みことばを聞いて悟る人のことです。本当に実を結び、あるものは百倍、あるものは六十倍、あるものは三十倍の実を結びます。", ref: "マタイの福音書 13:23" },
-  { n: 2,  name: "ちいさな芽",           days: 1,   count: 1,
+  { n: 2,  name: "ちいさな芽",
     verse: "見よ、わたしは新しいことを行う。\n今、それが芽生えている。\nあなたがたは、それを知らないのか。\n必ず、わたしは荒野に道を、\n荒れ地に川を設ける。", ref: "イザヤ書 43:19" },
-  { n: 3,  name: "かわいい双葉",         days: 3,   count: 3,
+  { n: 3,  name: "かわいい双葉",
     verse: "私が植えて、アポロが水を注ぎました。しかし、成長させたのは神です。", ref: "コリント人への手紙 第一 3:6" },
-  { n: 4,  name: "本葉と小枝",           days: 5,   count: 6,
+  { n: 4,  name: "本葉と小枝",
     verse: "主のおしえを喜びとし\n昼も夜も　そのおしえを口ずさむ人。\nその人は\n流れのほとりに植えられた木。\n時が来ると実を結び\nその葉は枯れず\nそのなすことはすべて栄える。", ref: "詩篇 1:2-3" },
-  { n: 5,  name: "青々とした若木",       days: 7,  count: 10,
+  { n: 5,  name: "青々とした若木",
     verse: "しかし、主を待ち望む者は新しく力を得、\n鷲のように、翼を広げて上ることができる。\n走っても力衰えず、歩いても疲れない。", ref: "イザヤ書 40:31" },
-  { n: 6,  name: "小さなつぼみ",         days: 14,  count: 17,
+  { n: 6,  name: "小さなつぼみ",
     verse: "神のなさることは、すべて時にかなって美しい。", ref: "伝道者の書 3:11" },
-  { n: 7,  name: "可憐な花（満開）",     days: 21,  count: 25,
+  { n: 7,  name: "可憐な花（満開）",
     verse: "しかし、わたしが与える水を飲む人は、いつまでも決して渇くことがありません。わたしが与える水は、その人の内で泉となり、永遠のいのちへの水が湧き出ます。", ref: "ヨハネの福音書 4:14" },
-  { n: 8,  name: "青くて小さな実",       days: 27,  count: 32,
+  { n: 8,  name: "青くて小さな実",
     verse: "しかし、御霊の実は、愛、喜び、平安、寛容、親切、善意、誠実、柔和、自制です。このようなものに反対する律法はありません。", ref: "ガラテヤ人への手紙 5:22-23" },
-  { n: 9,  name: "大きく膨らんだ実",     days: 32,  count: 38,
+  { n: 9,  name: "大きく膨らんだ実",
     verse: "私を強くしてくださる方によって、私はどんなことでもできるのです。", ref: "ピリピ人への手紙 4:13" },
-  { n: 10, name: "熟した美味しそうな実", days: 35, count: 42,
+  { n: 10, name: "熟した美味しそうな実",
     verse: "ですから、私の愛する兄弟たち。堅く立って、動かされることなく、いつも主のわざに励みなさい。あなたがたは、自分たちの労苦が主にあって無駄でないことを知っているのですから。", ref: "コリント人への手紙 第一 15:58" },
 ];
 
@@ -4889,10 +4890,25 @@ function cycleCounts(records, startedAt) {
   return { days: days.size, count: inCycle.length };
 }
 
+/* 段階ごとに要る [日数, 件数]（かつ判定）。並びは STAGES と同じ（段階1〜10）。
+   **木ごとに、植えたときのペースで判定する（`cycle.pace`）。**
+   段階は保存しておらず毎回数え直すので、表の数字を下げると、育てている途中の木が
+   その場で何段も先へ飛んでしまう。それを避けるため、新しい表は「新しく植えた木」からだけ使う。
+   ・pace 1 … 2.10.3 までの表（35日・42件で実る）。`pace` の無い木（2.10.3 までに植えた木）はこちら
+   ・pace 2 … 2.11.0 からの表（21日・25件で実る）。始めのほうを早めて、変化を感じやすくしてある
+   **ペースを変えるときは、既存の表を書き換えず、新しい番号を足して CURRENT_PACE を上げること。** */
+const STAGE_PACES = {
+  1: [[0, 0], [1, 1], [3, 3], [5, 6], [7, 10], [14, 17], [21, 25], [27, 32], [32, 38], [35, 42]],
+  2: [[0, 0], [1, 1], [2, 2], [4, 5], [6, 7], [9, 11], [12, 15], [15, 18], [18, 22], [21, 25]],
+};
+const CURRENT_PACE = 2; // これから植える木のペース
+const paceOf = (cycle) => (cycle && STAGE_PACES[cycle.pace] ? cycle.pace : 1);
+
 /* 条件を満たしている一番上の段階を返す */
-function stageOf(days, count) {
+function stageOf(days, count, pace = 1) {
+  const table = STAGE_PACES[pace] || STAGE_PACES[1];
   let cur = STAGES[0];
-  for (const st of STAGES) if (days >= st.days && count >= st.count) cur = st;
+  STAGES.forEach((st, i) => { const [d, c] = table[i]; if (days >= d && count >= c) cur = st; });
   return cur;
 }
 
@@ -6252,7 +6268,7 @@ function TreeArea({ records, garden, onStart, onHarvest }) {
     );
   }
   const { days, count } = cycleCounts(records, cycle.startedAt);
-  const st = stageOf(days, count);
+  const st = stageOf(days, count, paceOf(cycle));
   const ripe = st.n === 10;
   const today = todayStr();
   const hasToday = (records || []).some((r) => r && recDate(r) === today);
@@ -8606,7 +8622,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit , zIndex}) {
   const tally = FRUITS.map((f) => ({ f, n: harvests.filter((h) => h.fruit === f.key).length }));
   const cycle = garden.cycle;
   const cc = cycle ? cycleCounts(records, cycle.startedAt) : null;
-  const cur = cc ? stageOf(cc.days, cc.count) : null;
+  const cur = cc ? stageOf(cc.days, cc.count, paceOf(cycle)) : null;
 
   return (
     <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
@@ -9926,7 +9942,7 @@ function AppMain() {
   /* 種を植える（初回・植え替え・収穫後の新しいサイクル） */
   const plantFruit = useCallback((fruit) => {
     setGarden((g) => {
-      const next = { ...g, cycle: { fruit, startedAt: todayStr(), harvested: false } };
+      const next = { ...g, cycle: { fruit, startedAt: todayStr(), harvested: false, pace: CURRENT_PACE } };
       persistGarden(next);
       return next;
     });
