@@ -13,13 +13,16 @@
     <link rel="manifest" href="./manifest-v4.json" />
     <link rel="apple-touch-icon" href="./apple-touch-icon-v4.png" />
     <link rel="icon" type="image/png" href="./icon-192-v4.png" />
-    <link rel="stylesheet" href="./app.css" />
     <!-- 書体の読み込みを早めるための下ごしらえ（アプリの中からも読み込むが、先に始めておく） -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>Footprints</title>
     <!-- **版数はここ1か所で決めること。** 起動の画面にも、アプリの中にも同じ値が出る -->
-    <script>window.__FT_VERSION = "2.10.2";</script>
+    <script>window.__FT_VERSION = "2.10.3";</script>
+    <!-- 見た目（app.css）は「?v=版数」を付けて読む。
+         インターネットが無くても開けるようにした係（sw.js）が、版ごとに部品をしまうため。
+         版数が上がると名前も変わるので、新しい index.html に古い見た目が混ざることもない -->
+    <script>document.write('<link rel="stylesheet" href="./app.css?v=' + window.__FT_VERSION + '" />');</script>
     <style>
       /* ============================================================
          起動の画面（スプラッシュ）
@@ -166,6 +169,20 @@
         }, wait);
       };
     </script>
-    <script defer src="./app.js"></script>
+    <!-- 本体（app.js）も「?v=版数」を付けて読む（理由は app.css と同じ） -->
+    <script>document.write('<script defer src="./app.js?v=' + window.__FT_VERSION + '"><\/script>');</script>
+
+    <!-- インターネットが無くても開けるようにする係（sw.js）を登録する。
+         一度ネットにつながった状態で開けば、次からはつながっていなくても開ける。
+         **sw.js も、ほかのファイルと同じ場所（1階層）にアップロードすること。**
+         名前に版数を付けて登録するので、版数を上げれば端末の中身も入れ替わる -->
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("./sw.js?v=" + encodeURIComponent(window.__FT_VERSION), { scope: "./" })
+            .catch(function () { /* 登録できなくても、アプリはふつうに動く */ });
+        });
+      }
+    </script>
   </body>
 </html>
