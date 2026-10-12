@@ -5125,6 +5125,12 @@ function SideMenu({ open, onClose, items, footer, instant, under }) {
   }, [open, onClose]);
 
   if (!mounted) return null;
+  /* 沈めた板（under）は、閉じたその描き直しで外すこと（2.11.1〜）。
+     goFromMenu の finish は、板を閉じる（open=false）のと同時に、移った先の画面を
+     66 から 50 へ下ろす（menuLift を外す）。上の useEffect で mounted を落とすのを待つと、
+     そのあいだの1コマだけ、板（65）が画面（50）より上に来て、メニューがチラッと映っていた。
+     **useEffect の setMounted(false) だけに任せないこと。** */
+  if (!open && under) return null;
   return (
     <div data-ft-overlay="" className="fixed inset-0" style={{ zIndex: under ? MENU_UNDER_Z : 2147483200 }}>
       <BackgroundLock />
@@ -9871,6 +9877,18 @@ function AppMain() {
   const [menuLift, setMenuLift] = useState(null);
   const menuGoTimer = useRef(null);
   useEffect(() => () => clearTimeout(menuGoTimer.current), []);
+  /* 開き直し待ちの画面（2.11.2〜）。選んだ画面が、いま見ている画面の下にもう開いていたとき、
+     いったん閉じて、その描き直しが済んでから（この useEffect で）goFromMenu をやり直す。
+     **同じ描き直しの中で閉じて開き直さないこと。** React がまとめてしまい、閉じたことにならない。
+     goFromMenu は下のほう（起動を待つ return のあと）で作るので、覚え（ref）から呼ぶ */
+  const [menuRelaunch, setMenuRelaunch] = useState(null);
+  const goFromMenuRef = useRef(null);
+  useEffect(() => {
+    if (!menuRelaunch) return;
+    setMenuRelaunch(null);
+    menuGoTimer.current = null;
+    if (goFromMenuRef.current) goFromMenuRef.current(menuRelaunch);
+  }, [menuRelaunch]);
   const [artworks, setArtworks] = useState([]);
   const [headerBg, setHeaderBg] = useState(null); // ヘッダの背景に敷く絵（1枚だけ。「photo:番号」）
   /* 片づけ（sweepPhotos）は、記録を消した流れの中から呼ぶ。そのときの headerBg を
@@ -10333,12 +10351,12 @@ function AppMain() {
      その画面の OverlayScreen に zIndex を渡すこと**（zIndex={menuLift === "…" ? MENU_LIFT_Z : undefined}）。
      閉じ忘れると、その画面が下に残ったままになり、戻ったときに前の画面が出てくる */
   const MENU_SCREENS = {
-    art: { isOpen: artOpen, open: () => setArtOpen(true) },
-    bookmark: { isOpen: bookmarkOpen, open: () => setBookmarkOpen(true) },
-    garden: { isOpen: gardenOpen, open: () => setGardenOpen(true) },
-    tags: { isOpen: tagsOpen, open: () => setTagsOpen(true) },
-    backup: { isOpen: backupOpen, open: () => setBackupOpen(true) },
-    help: { isOpen: helpOpen, open: () => setHelpOpen(true) },
+    art: { isOpen: artOpen, open: () => setArtOpen(true), close: () => setArtOpen(false) },
+    bookmark: { isOpen: bookmarkOpen, open: () => setBookmarkOpen(true), close: () => setBookmarkOpen(false) },
+    garden: { isOpen: gardenOpen, open: () => setGardenOpen(true), close: () => setGardenOpen(false) },
+    tags: { isOpen: tagsOpen, open: () => setTagsOpen(true), close: () => setTagsOpen(false) },
+    backup: { isOpen: backupOpen, open: () => setBackupOpen(true), close: () => setBackupOpen(false) },
+    help: { isOpen: helpOpen, open: () => setHelpOpen(true), close: () => setHelpOpen(false) },
   };
   const goFromMenu = (key) => {
     /* 移っている途中に、もう一度押されたぶんは受けない */
@@ -10348,6 +10366,18 @@ function AppMain() {
     if (target.isOpen && !viewing) {
       setMenuInstant(false);
       setMenuOpen(false);
+      return;
+    }
+    /* 選んだ画面が、いま見ている画面（記録の閲覧）の下にもう開いている（2.11.2〜）。
+       例：ブックマーク → 記録を開く → 三本線 → ブックマーク。
+       そのまま持ち上げると、すでに入りきった画面がいきなりいちばん上に出て、
+       右から入ってこずにパッと切り替わっていた。
+       下の画面はいったん閉じ（閲覧画面に隠れているので見えない）、開き直して、ほかの画面と同じく右から入れる。
+       開き直すまでのあいだの二度押し・三本線は受けない（menuGoTimer に印を置く） */
+    if (target.isOpen) {
+      menuGoTimer.current = "relaunch";
+      target.close();
+      setMenuRelaunch(key);
       return;
     }
     setMenuUnder(true);
@@ -10379,6 +10409,7 @@ function AppMain() {
     };
     menuGoTimer.current = setTimeout(wait, motionIsOff() ? 0 : FT_EXIT_RIGHT_MS);
   };
+  goFromMenuRef.current = goFromMenu;
   /* 三本線を押したとき。**instant と under を戻すのは、ここ（次に開くとき）。移る途中で戻さないこと。**
      戻すと、板が一瞬いちばん上に戻って、移った先の画面の上にちらつく */
   const openMenu = () => {
