@@ -3,7 +3,7 @@ import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
   Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste, CalendarDays, Image as ImageIcon, Undo2, Redo2, ArrowUpDown,
-  Folder as FolderIc, FolderPlus, Filter, Settings
+  Folder as FolderIc, FolderPlus, Filter, Settings, RefreshCw
 } from "lucide-react";
 
 /* ============================================================
@@ -1707,6 +1707,65 @@ const inputCls = "w-full rounded-xl bg-white border border-neutral-200 px-3.5 py
    ここはアーティファクト版（index.html が無い）のための控え。
    数を上げるときは index.html を直すこと */
 const APP_VERSION = (typeof window !== "undefined" && window.__FT_VERSION) || "2.6.1";
+
+/* ============================================================
+   最新バージョンに更新（2.12.0〜。姉妹アプリ「暗記ノート」「My手帳 2.27.0」と同じ役目）
+   1. 公開中の index.html をGitHubから直に取り、window.__FT_VERSION を読んで比べる
+   2. 同じなら「最新です」で終わり
+   3. ちがえば、その版の係（sw.js?v=新しい版）を登録し、新しい部品が端末にしまわれる
+      （activated）のを待ってから、読み込み直す
+   ・記録（localStorage）・写真の置き場には**さわらないこと**。入れ替えるのはアプリの部品だけ
+   ・**index.html を取るとき、?_=（毎回ちがう数）と cache: "no-store" の両方を付けること。**
+     付けないと sw.js のしまってある部品が返り、いつまでも「最新です」になる。
+     sw.js（2.12.0〜）は no-store の取りに行きを素通しにする。?_= は、それを知らない
+     古い sw.js が動いている端末でも、しまってあるものに当たらないための用心
+   ・アーティファクト版（index.html が無い＝window.__FT_VERSION が無い）では使えないので、メニューに出さない
+   ============================================================ */
+const CAN_SELF_UPDATE = typeof window !== "undefined" && !!window.__FT_VERSION;
+const UPDATE_FETCH_MS = 10000; /* 版数を取りに行って、これだけ待っても来なければあきらめる */
+const UPDATE_INSTALL_MS = 20000; /* 新しい部品をしまい終わるのを、これだけ待つ（過ぎたら読み込み直す） */
+async function fetchLatestVersion() {
+  const url = new URL("./", window.location.href);
+  url.searchParams.set("_", String(Date.now()));
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const t = ctrl ? setTimeout(() => ctrl.abort(), UPDATE_FETCH_MS) : null;
+  try {
+    const res = await fetch(url.href, { cache: "no-store", signal: ctrl ? ctrl.signal : undefined });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const m = (await res.text()).match(/window\.__FT_VERSION\s*=\s*["']([^"']+)["']/);
+    if (!m) throw new Error("version not found");
+    return m[1];
+  }
+  finally { if (t) clearTimeout(t); }
+}
+/* 新しい版の係を入れ、入りきる（activated）まで待つ。
+   入れられなかった・待ちきれなかったときも先へ進む。読み込み直せば、index.html は
+   「まずネット」で取るので新しい版になり、そこから新しい係も入り直す */
+async function installVersion(version) {
+  if (!("serviceWorker" in navigator)) {
+    await Promise.all([`./app.js?v=${version}`, `./app.css?v=${version}`]
+      .map((u) => fetch(u, { cache: "reload" }).catch(() => {})));
+    return;
+  }
+  try {
+    /* 登録のしかた（scope）は index.html とそろえること */
+    const reg = await navigator.serviceWorker.register("./sw.js?v=" + encodeURIComponent(version), { scope: "./" });
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, UPDATE_INSTALL_MS);
+      const done = () => { clearTimeout(timer); resolve(); };
+      const settled = (sw) => sw.state === "activated" || sw.state === "redundant";
+      const watch = (sw) => {
+        if (!sw) return;
+        if (settled(sw)) { done(); return; }
+        sw.addEventListener("statechange", () => { if (settled(sw)) done(); });
+      };
+      const sw = reg.installing || reg.waiting;
+      if (sw) { watch(sw); return; }
+      if (reg.active && new URL(reg.active.scriptURL).searchParams.get("v") === version) { done(); return; }
+      reg.addEventListener("updatefound", () => watch(reg.installing));
+    });
+  } catch (e) { /* 登録できなくても、読み込み直せば新しい版の画面になる */ }
+}
 
 const SAFE_TOP = (extra) => ({ paddingTop: `calc(env(safe-area-inset-top) + ${extra}px)` });
 
@@ -5057,11 +5116,12 @@ function ScreenHeader({ title, right }) {
 /* 右から出てくる一般的なドロワーメニュー */
 function MenuRow({ it }) {
   const [pressed, go] = useTapThen(it.onClick);
+  /* busy ＝ その行の仕事（更新の確認など）の最中。しるしをくるくるに替え、押しても受けない */
   return (
-    <button onClick={go}
+    <button onClick={it.busy ? undefined : go} aria-busy={it.busy ? "true" : undefined}
       className={"w-full flex items-center gap-3 px-5 py-3.5 text-left min-h-[56px] ft-tap ft-tap-card "
         + (pressed ? "bg-neutral-200 ft-tap-pressed" : "hover:bg-neutral-50")}>
-      <span className="w-10 h-10 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center shrink-0 text-th-800">{it.icon}</span>
+      <span className="w-10 h-10 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center shrink-0 text-th-800">{it.busy ? <Spinner size={20} /> : it.icon}</span>
       <span className="flex-1 min-w-0">
         <span className="block font-display text-[17px] text-neutral-900 tracking-wide">{it.label}</span>
         {it.desc && <span className="block text-[12.5px] text-neutral-500 mt-0.5">{it.desc}</span>}
@@ -10133,6 +10193,36 @@ function AppMain() {
     importTimer.current = setTimeout(() => setImportMsg(null), ms);
   };
   useEffect(() => () => clearTimeout(importTimer.current), []);
+
+  /* 最新バージョンに更新（2.12.0〜。上の fetchLatestVersion / installVersion）。
+     updating ＝ null（何もしていない）／ "check"（確かめている）／ 版数の文字（その版へ入れ替えている）。
+     **メニューは閉じないこと。** 行の下の字で、いまどこまで進んだかを見せる。
+     結果の知らせは、取り込みの知らせ（tellImport）と同じ場所・同じ形で出す（メニューより上に出る） */
+  const [updating, setUpdating] = useState(null);
+  const updatingRef = useRef(false);
+  const checkUpdate = async () => {
+    if (updatingRef.current) return;
+    updatingRef.current = true;
+    setUpdating("check");
+    let latest;
+    try { latest = await fetchLatestVersion(); }
+    catch (e) {
+      updatingRef.current = false;
+      setUpdating(null);
+      tellImport("確認できませんでした。通信状態を確かめてください", 2600);
+      return;
+    }
+    if (latest === APP_VERSION) {
+      updatingRef.current = false;
+      setUpdating(null);
+      tellImport(`最新のバージョンです（v${APP_VERSION}）`, 2200);
+      return;
+    }
+    setUpdating(latest);
+    await installVersion(latest);
+    /* **updatingRef を戻さないこと。** 読み込み直すまでのあいだに、もう一度押されても受けない */
+    window.location.reload();
+  };
   /* 人から受け取ったファイルを取り込む。
      **いまある記録は消さないこと。** 受け取った分を新しい記録として足すだけにする。
      idは必ず振り直す。送り手のidをそのまま使うと、
@@ -11164,6 +11254,16 @@ function AppMain() {
               badge: unsavedNow,
               onClick: () => goFromMenu("backup"),
             },
+            /* 画面へは移らない。押した行の下の字が「確認しています…」→「v○ に更新しています…」と変わる */
+            ...(CAN_SELF_UPDATE ? [{
+              label: "最新バージョンに更新",
+              desc: updating === "check" ? "確認しています…"
+                : updating ? `v${updating} に更新しています…`
+                : `今のバージョン v${APP_VERSION}`,
+              busy: !!updating,
+              icon: <RefreshCw size={20} />,
+              onClick: checkUpdate,
+            }] : []),
           ]}
           footer={
             /* さりげなく置きつつ、押す場所は行いっぱいに広げてある。

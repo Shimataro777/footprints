@@ -62,6 +62,10 @@ self.addEventListener("activate", function (event) {
 self.addEventListener("fetch", function (event) {
   var req = event.request;
   if (req.method !== "GET") return;
+  /* メニューの「最新バージョンに更新」（2.12.0〜）が版数を確かめるための取りに行き。
+     cache: "no-store" で来たものは、しまってあるものを使わず、しまいもしない（そのままGitHubへ）。
+     **ここを外さないこと。** 外すと古い index.html が返り、いつまでも「最新です」になる */
+  if (req.cache === "no-store") return;
   var url = new URL(req.url);
 
   /* Googleの書体（文字の形）。一度取れたら端末にしまい、ネットが無いときはそれを使う */
