@@ -7990,19 +7990,18 @@ function GoogleSyncCard() {
     () => (sync ? sync.getStatus() : NO_SYNC),
     () => NO_SYNC,
   );
-  const [idDraft, setIdDraft] = useState("");
-  const [idOpen, setIdOpen] = useState(false);
   const [askOff, setAskOff] = useState(false);
   const [note, setNote] = useState("");
   const [, tick] = useState(0);
   useEffect(() => { if (sync && st.hasClientId) sync.preload(); }, [sync, st.hasClientId]);
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30000); return () => clearInterval(t); }, []);
-  if (!sync) return null;
+  /* クライアントID（index.html）が無いときは、カードごと出さない */
+  if (!sync || !st.hasClientId) return null;
 
   const connect = () => {
     setNote("");
     /* **ここで await を挟まないこと。** ログインのポップアップは、指の操作の流れの中でしか開かない */
-    if (!st.ready) { sync.preload(); setNote("Googleの準備中です。数秒たってから、もう一度押してください。"); return; }
+    if (!st.ready) { sync.preload(); setNote("準備中です。もう一度押してください。"); return; }
     sync.connect();
   };
   const busy = st.phase === "syncing";
@@ -8013,7 +8012,7 @@ function GoogleSyncCard() {
   const phaseColor = st.phase === "error" ? "text-rose-700" : st.phase === "needsAuth" || st.phase === "offline" ? "text-amber-700" : "text-neutral-500";
 
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm">
+    <div data-gsync-card="" className="rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm">
       <div className="flex items-center gap-2">
         <RefreshCw size={17} className="text-th-800 shrink-0" />
         <h3 className="font-display text-[17px] text-neutral-900 flex-1">Googleドライブと同期</h3>
@@ -8023,16 +8022,11 @@ function GoogleSyncCard() {
       {!st.enabled && (
         <>
           <p className="text-[13.5px] leading-relaxed text-neutral-600 mt-2">
-            記録・写真・設定を、あなたのGoogleドライブに自動で保存します。「Google連携」を押して同じアカウントでログインすれば、ほかの端末とも同じ内容になります。
-            ドライブの「{SYNC_FOLDER}」フォルダだけを使い、ほかのファイルには触れません。
+            記録・写真・設定をGoogleドライブに自動で保存し、同じアカウントの端末どうしで同期します。
           </p>
-          {st.hasClientId ? (
-            <button onClick={connect} className={BTN_PRIMARY + " w-full mt-3 " + BTN_H + " text-[15.5px]"}>Google連携</button>
-          ) : (
-            <p className="text-[12.5px] leading-relaxed text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mt-3">
-              はじめに、Googleでの設定（クライアントIDの取得）が一度だけ必要です。手順は同梱の <b>SETUP-GOOGLE.md</b> をご覧ください。取得したIDは下の「設定」に貼りつけます。
-            </p>
-          )}
+          <button onClick={connect} className={BTN_PRIMARY + " w-full mt-3 " + BTN_H + " text-[15.5px]"}>Google連携</button>
+          {st.message && <p className="text-[12.5px] text-rose-700 mt-2">{st.message}</p>}
+
         </>
       )}
 
@@ -8052,27 +8046,16 @@ function GoogleSyncCard() {
           </div>
           <label className="flex items-start gap-2 mt-3 text-[13.5px] text-neutral-700 leading-relaxed">
             <input type="checkbox" className="mt-0.5" checked={st.autoBackup} onChange={(e) => sync.setAutoBackup(e.target.checked)} />
-            <span>1日1回、バックアップファイルもドライブに残す（直近7日ぶん。「データ復元」で戻せます）</span>
+            <span>1日1回、バックアップファイルも保存（7日分）</span>
           </label>
           <p className="text-[12.5px] text-neutral-400 mt-2 leading-relaxed">
-            書きかえると数秒後に自動で同期し、アプリを開いたときにも確認します。ログインは約1時間で切れるため、切れたときは画面のどこかを触ると静かにつなぎ直します（できないときは「ログインする」を押してください）。
+            書きかえると自動で同期します。ログインが切れたら「ログインする」を押してください。
           </p>
         </>
       )}
 
       {note && <p className="text-[12.5px] text-amber-800 mt-2">{note}</p>}
 
-      <button onClick={() => { setIdOpen((v) => !v); setIdDraft(st.clientId || ""); }} className="mt-3 text-[12.5px] font-bold text-th-800 underline">
-        {idOpen ? "設定を閉じる" : "設定（クライアントID）"}
-      </button>
-      {idOpen && (
-        <div className="mt-2">
-          {st.clientIdFixed && <p className="text-[12.5px] text-neutral-500 mb-1.5">いまは index.html に書かれたIDを使っています。ここに入力すると、そちらより優先されます。</p>}
-          <input value={idDraft} onChange={(e) => setIdDraft(e.target.value)} placeholder="xxxxxxxx.apps.googleusercontent.com"
-            className="w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-[14.5px] text-neutral-800" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
-          <button onClick={() => { sync.setClientId(idDraft); setIdOpen(false); setNote("保存しました。"); }} className={BTN_SECONDARY + " w-full mt-2 " + BTN_H + " text-[14.5px]"}>保存</button>
-        </div>
-      )}
     </div>
   );
 }

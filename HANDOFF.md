@@ -218,32 +218,14 @@ Chromium（`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`、playwright 経
 
 ## 2-3. Googleドライブ同期（2.15.0〜）
 
-使い方の説明は `SETUP-GOOGLE.md`。ここは作り手向けの要点。
-
-| 部品 | 場所 | 役目 |
-|---|---|---|
-| `gsync.js` | 別ファイル | 同期エンジン。**画面にも、このアプリの保存まわりにも依存しない**（必要なものは `createGoogleSync` に渡す）。認証（Google Identity Services のトークン方式）・Drive窓口・3者マージ・自動の起動条件を持つ |
-| `gsync.test.mjs` | 別ファイル | 試験。`node gsync.test.mjs`。偽のドライブで2〜3台の動きを再現する（15項目） |
-| `syncBridge` / `buildSyncSnapshot` / `getGoogleSync` / `GoogleSyncCard` | `App.jsx`（`makeBackupObject` の近く） | アプリとエンジンをつなぐ糊と、バックアップ画面のカード |
-| `applySyncSnapshot` | `App.jsx` の `AppMain`（`handleRestore` のすぐ下） | 混ぜ終わった中身を、この端末の保存へ反映する。変わっていない部分には触れない |
-
-**新しく保存する物（設定など）を増やしたら、`buildSyncSnapshot` と `applySyncSnapshot` の両方に足すこと**
-（`makeBackupObject` にも）。足し忘れると、その物だけ端末ごとにバラバラのままになる。
-
-**守ること**
-- ❌ **「相手に無い」だけで記録を消さないこと。** 消すのは「消した印（tombs）」があり、中身のハッシュが一致するときだけ。
-  ドライブへの書き込みが途中で失われても、端末の記録は消えない。`mergeKeyed` を直すときは試験の「書き込みが失われても…」を必ず通す
-- ❌ **「接続」ボタンの中で `await` を挟まないこと。** ログインのポップアップは、指の操作の流れの中でしか開かない。
-  Googleの部品（`gsi/client`）は、カードを出したときに先読みしている
-- ❌ **`sw.js` で `googleapis.com` / `accounts.google.com` を扱わないこと。** `sw.js` は他サイトへの通信に手を出さない作りで、これで正しい
-- 同期の設定・ログインの控えは `localStorage` の `ft-gsync-cfg` / `ft-gsync-token`、前回の同期の姿は IndexedDB `footprints-sync-meta`。
-  **記録（localStorage の `bible-tracker-*`）とは別**。`lastBackup` と `folderDeletes` は同期しない（`buildSyncSnapshot` で外し、`applySyncSnapshot` で端末のものを残す）
-- クライアントIDは `index.html` の `window.__FT_GOOGLE_CLIENT_ID`、または画面の「設定（クライアントID）」。公開されて困る値ではない
-- Tailwind：新しく使うクラスは、既存の `app.css` に無いと効かない。カードは既存のクラスだけで組んである
-  （この環境の Tailwind は v4 で、手順書の v3 と違うため `app.css` は作り直していない。クラスを足したら、`app.css` に同名があるか確かめること）
-
-**実機で確かめられていないこと**：iPhoneの「ホーム画面から開いたアプリ」でのGoogleログインのポップアップ。
-ブラウザ（Chromium）と偽のGoogleでは通しで確認済み。
+- `gsync.js` … 同期エンジン（画面・保存まわりに依存しない）。試験は `node gsync.test.mjs`
+- `App.jsx` … `buildSyncSnapshot` / `getGoogleSync` / `GoogleSyncCard`（`makeBackupObject` の近く）と、`AppMain` の `applySyncSnapshot`
+- **新しく保存する物を増やしたら、`buildSyncSnapshot`・`applySyncSnapshot`・`makeBackupObject` の3か所に足す**
+- ❌ 「相手に無い」だけで記録を消さない（消すのは、消した印と中身が一致するときだけ）
+- ❌ 「Google連携」ボタンの中で `await` を挟まない（ポップアップは指の操作の中でしか開かない）
+- クライアントIDは `index.html` の `window.__FT_GOOGLE_CLIENT_ID` だけ。空ならカードは出ない
+- `app.css` は作り直していない（環境のTailwindがv4）。新しいクラスは既存の `app.css` にあるものだけ使う
+- 未確認：iPhoneのホーム画面アプリでのGoogleログイン
 
 ---
 

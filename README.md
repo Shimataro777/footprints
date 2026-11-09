@@ -2,7 +2,7 @@
 
 React で作られた、聖書通読・学び・聖句・メモなどを記録するアプリです。
 データは端末のブラウザ内（localStorage）に保存されます。
-2.15.0 から、Googleドライブとつないで自動バックアップ・端末どうしの同期もできます（準備は `SETUP-GOOGLE.md`）。
+Googleドライブとの自動バックアップ・同期もできます（`SETUP-GOOGLE.md`）。
 
 ## 公開しているファイルについて
 
@@ -17,8 +17,9 @@ GitHub 側では何もビルドしません（`npm install` や `npm run build` 
 | `app.css` | 見た目（組み立て済み） |
 | `manifest-v4.json` / `icon-*-v4.png` / `apple-touch-icon-v4.png` | ホーム画面追加まわり |
 | `sw.js` | インターネットが無くても開けるようにする係（2.10.3〜。**必ず一緒にアップロード**） |
-| `App.jsx` / `gsync.js` | もとの材料（Claude が次に直すときに使う資料。公開には使っていません。`gsync.js` はGoogle同期の部品） |
-| `SETUP-GOOGLE.md` | Googleドライブ同期を使うための準備の手順（2.15.0〜）。公開には使いません |
+| `App.jsx` / `gsync.js` | もとの材料（Claude が次に直すときの資料。公開には使いません） |
+| `privacy.html` | プライバシーポリシー（Google連携の公開に必要。アップロードする） |
+| `SETUP-GOOGLE.md` | Google連携の準備の手順（公開には使いません） |
 
 ## 公開手順（最初の1回だけ）
 

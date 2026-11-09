@@ -301,4 +301,24 @@ await test("通信中に端末が書きかえられたら、上書きせずや�
   assert.equal(ids(B), ids(A));
 });
 
+await test("初めての連携でログインを拒否されたら、未連携に戻る。解除はログインなしでできる", async () => {
+  const drive = fakeDrive();
+  const A = device("A", drive);
+  A.allow = false; A.token = null;
+  let asked = 0;
+  const req = A.auth.request; A.auth.request = async (o) => { asked++; return { token: null, why: "access_denied" }; };
+  await A.sync.connect();
+  const s = A.sync.getStatus();
+  assert.equal(s.enabled, false);
+  assert.equal(s.phase, "off");
+  assert.match(s.message, /拒否/);
+  // 古い版で「連携中のまま」になった端末を想定：解除してもログインを求めない
+  A.sync.setAutoBackup(true);
+  const before = asked;
+  await A.sync.disconnect();
+  assert.equal(asked, before);
+  assert.equal(A.sync.getStatus().enabled, false);
+  A.auth.request = req;
+});
+
 console.log(`\n${pass} passed${process.exitCode ? " (失敗あり)" : ""}`);

@@ -235,11 +235,11 @@ export function createDrive(fetchFn, getToken) {
     if (res.status === 401) throw new SyncError("auth", "ログインの期限が切れました");
     if (res.status === 404) throw new SyncError("notfound", "見つかりませんでした");
     if (res.status === 403) {
-      if (/rate|quota/i.test(reason)) throw new SyncError("rate", "Googleの混雑で、少し待つ必要があります");
-      if (/accessNotConfigured|SERVICE_DISABLED/i.test(reason)) throw new SyncError("config", "Google Cloud で Drive API が有効になっていません");
-      throw new SyncError("auth", "Googleドライブへのアクセスが許可されていません");
+      if (/rate|quota/i.test(reason)) throw new SyncError("rate", "混雑中です。しばらく待ってください");
+      if (/accessNotConfigured|SERVICE_DISABLED/i.test(reason)) throw new SyncError("config", "Drive API が有効になっていません");
+      throw new SyncError("auth", "ドライブへのアクセスが許可されていません");
     }
-    if (res.status === 429) throw new SyncError("rate", "Googleの混雑で、少し待つ必要があります");
+    if (res.status === 429) throw new SyncError("rate", "混雑中です。しばらく待ってください");
     throw new SyncError("drive", "Googleドライブでエラーが起きました（" + res.status + "）");
   }
   const json = async (url, init) => (await call(url, init)).json();
@@ -431,9 +431,9 @@ export function createGoogleSync(opts) {
 
   function parseRemote(text) {
     let d;
-    try { d = JSON.parse(text); } catch (e) { throw new SyncError("drive", "ドライブの同期データを読めませんでした（壊れている可能性があります）。上書きは行いません"); }
+    try { d = JSON.parse(text); } catch (e) { throw new SyncError("drive", "同期データを読めません。上書きはしません"); }
     if (!d || typeof d !== "object" || d.format !== FORMAT || !Array.isArray(d.records)) {
-      throw new SyncError("drive", "ドライブの同期データの形式が違います。アプリを最新版に更新してください");
+      throw new SyncError("drive", "同期データの形式が新しすぎます。アプリを更新してください");
     }
     return d;
   }
@@ -536,16 +536,26 @@ export function createGoogleSync(opts) {
     }
   }
 
+  /* ログインが切れたとき、次のタップでログインし直す。
+     **一度も同期できていない（ログインできたことがない）ときは使わないこと。**
+     Google側の設定不備でログインが拒まれると、どこを触ってもログイン画面が開き、解除もできなくなる（2.16.1で直した）。
+     **Google連携のカード（data-gsync-card）の中のタップには反応しないこと**（解除ボタンを押せなくなる） */
+  let tapHandler = null;
+  function disarmTap() {
+    if (tapHandler && opts.doc) opts.doc.removeEventListener("pointerup", tapHandler, true);
+    tapHandler = null; tapArmed = false;
+  }
   function armTap() {
-    if (tapArmed || !opts.doc || !cfg.enabled) return;
+    if (tapArmed || !opts.doc || !cfg.enabled || !cfg.email) return;
     tapArmed = true;
-    const h = () => {
-      opts.doc.removeEventListener("pointerup", h, true);
-      tapArmed = false;
+    tapHandler = (ev) => {
+      const t = ev && ev.target;
+      if (t && t.closest && t.closest("[data-gsync-card]")) return; // カードの中は、ボタンに任せる
+      disarmTap();
       if (!cfg.enabled || auth.getStored()) return;
       syncNow({ reason: "tap", interactive: true });
     };
-    opts.doc.addEventListener("pointerup", h, true);
+    opts.doc.addEventListener("pointerup", tapHandler, true);
   }
 
   function classify(e) {
@@ -565,6 +575,15 @@ export function createGoogleSync(opts) {
         const why = (r && r.why) || "";
         if (why === "noclient") { setStatus({ phase: "error", message: "クライアントIDが設定されていません" }); return; }
         if (why === "scope") { setStatus({ phase: "error", message: "Googleドライブへのアクセスを許可してください" }); return; }
+        const denied = why === "access_denied" || why === "denied";
+        /* 一度もログインできていない（初めての連携）ときに失敗したら、連携していない状態に戻す */
+        if (interactive && !cfg.email && why !== "notready") {
+          cfg.enabled = false; saveCfg(); disarmTap();
+          setStatus({ phase: "off", message: denied
+            ? "Googleにログインを拒否されました。アプリのGoogle設定（公開状態）を確認してください"
+            : "ログインできませんでした" });
+          return;
+        }
         if (interactive && why !== "notready") { setStatus({ phase: "needsAuth", message: "ログインが完了しませんでした" }); return; }
         setStatus({ phase: "needsAuth", message: "再ログインが必要です" });
         armTap();
@@ -589,7 +608,7 @@ export function createGoogleSync(opts) {
         setStatus({ phase: "needsAuth", message: err.message });
         armTap();
       } else if (err.kind === "network") {
-        setStatus({ phase: "offline", message: "通信できません。つながったら自動で再開します" });
+        setStatus({ phase: "offline", message: "通信できません。つながれば自動で再開します" });
       } else {
         setStatus({ phase: "error", message: err.message });
       }
@@ -643,7 +662,9 @@ export function createGoogleSync(opts) {
       return syncNow({ reason: "manual", interactive: true });
     },
     syncManual() { return syncNow({ reason: "manual", interactive: !auth.getStored() }); },
+    /* 解除はログインなしでできること（Googleへは何も問い合わせない） */
     async disconnect() {
+      disarmTap();
       cfg.enabled = false; cfg.email = ""; cfg.folderId = ""; cfg.lastSyncAt = 0; cfg.lastBackupDay = ""; saveCfg();
       folderVerified = false; clearTimeout(timer); timer = null;
       const t = auth.getStored(); if (t) auth.revoke(t);
