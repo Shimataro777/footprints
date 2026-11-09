@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { createGoogleSync, createKV, setHash as syncSetHash, SYNC_FOLDER } from "./gsync.js";
 import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
@@ -7883,6 +7884,200 @@ function SaveFallbackDialog({ onCopy, onCancel }) {
   );
 }
 
+/* 書き出すデータ（復元用JSON）の中身。
+   **メニューの「データを保存」と、Googleドライブの毎日の控え（2.15.0〜）の両方がここを通る。
+   2か所に書かないこと。** 新しく設定を増やしたら、ここに足す */
+function makeBackupObject({ records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, photos }) {
+  return {
+    app: "bible-tracker", version: 8, exportedAt: new Date().toISOString(),
+    records, artworks: artworks || [], garden: garden || DEFAULT_GARDEN,
+    /* フォルダ（version 8 から）。絵は photos に入る */
+    folders: folders || [],
+    /* タグの一覧も一緒に書き出す。これが無いと、機種を変えたときに
+       まだ使っていないタグが消え、また作り直すことになる */
+    tags: tagMaster || [],
+    /* 画面の設定も一緒に書き出す（version 5 から）。
+       テーマ色・文字の大きさ・ひとこと・ヘッダーの背景など、
+       せっかく整えたものが機種を変えるたびに消えてしまわないように。
+       最終バックアップ日（lastBackup）は入れない。
+       それは「この端末でいつ書き出したか」であって、持ち運ぶものではないため */
+    prefs: prefs ? { ...prefs, lastBackup: undefined, folderDeletes: undefined } : undefined,
+    captions: captions || undefined,
+    typeDesc: typeDesc || undefined,
+    /* ヘッダの背景も一緒に書き出す（version 6 から）。
+       新しく設定を増やしたら、ここにも足すこと。足し忘れると機種変更で消える */
+    headerBg: headerBg || undefined,
+    /* 記録に付けた写真と、ヘッダーの絵の中身（version 7 から）。{ 番号: 絵 } の形 */
+    photos: photos && Object.keys(photos).length ? photos : undefined,
+  };
+}
+
+/* ============================================================
+   Googleドライブとの同期（2.15.0〜）
+   エンジンは gsync.js（画面にも保存まわりにも依存しない）。ここは、このアプリの保存まわりとつなぐ糊。
+   ・同期する物 … 記録・フォルダ・イラスト・タグ・果樹・設定・文言・ヘッダーの絵・写真
+   ・同期しない物 … lastBackup と folderDeletes（この端末で書き出した日。持ち運ぶものではない）、書きかけの下書き
+   **新しく保存する物（設定など）を増やしたら、下の buildSyncSnapshot と applySyncSnapshot（AppMain）の両方に足すこと。**
+   足し忘れると、その物だけ端末ごとにバラバラのままになる
+   ============================================================ */
+const syncBridge = { getState: null, apply: null, onBackedUp: null };
+function buildSyncSnapshot(s) {
+  const g = s.garden || DEFAULT_GARDEN;
+  return {
+    records: s.records || [],
+    folders: s.folders || [],
+    artworks: s.artworks || [],
+    tags: s.tagMaster || [],
+    garden: { cycle: g.cycle || null, harvests: g.harvests || [] },
+    prefs: { ...(s.prefs || {}), lastBackup: undefined, folderDeletes: undefined },
+    captions: s.captions || null,
+    typeDesc: s.typeDesc || null,
+    headerBg: s.headerBg || null,
+  };
+}
+async function photoHas(id) {
+  if (photoCache.has(id)) return true;
+  const n = await photoTx("readonly", (st) => st.count(id));
+  return typeof n === "number" && n > 0;
+}
+/* 控えファイル（Footprints-backup-日付.txt）。「データを保存」と同じ形式なので、「データ復元」でそのまま戻せる */
+async function buildDriveBackupText() {
+  const s = syncBridge.getState && syncBridge.getState();
+  if (!s) return "";
+  const photos = {};
+  for (const id of collectPhotoRefs({ records: s.records, headerBg: s.headerBg, folders: s.folders })) {
+    const v = await photoGet(id);
+    if (typeof v === "string" && v) photos[id] = v;
+  }
+  const json = JSON.stringify(makeBackupObject({ ...s, photos }), null, 2);
+  return buildBackupFile(buildBackupText(s.records), json);
+}
+let googleSyncInst = null;
+function getGoogleSync() {
+  if (googleSyncInst) return googleSyncInst;
+  if (typeof window === "undefined" || typeof document === "undefined") return null;
+  /* 埋め込み表示（アーティファクト）や、保存の使えない環境では出さない */
+  let ls = null;
+  try { ls = window.localStorage; ls.getItem("ft-gsync-cfg"); } catch (e) { return null; }
+  if (!window.__FT_VERSION || typeof fetch !== "function") return null;
+  googleSyncInst = createGoogleSync({
+    fetch: (u, i) => fetch(u, i), ls, kv: createKV(ls), doc: document, win: window,
+    defaultClientId: window.__FT_GOOGLE_CLIENT_ID || "",
+    getSnapshot: async () => buildSyncSnapshot((syncBridge.getState && syncBridge.getState()) || {}),
+    applySnapshot: async (m) => { if (syncBridge.apply) await syncBridge.apply(m); },
+    listPhotoRefs: (snap) => Array.from(collectPhotoRefs({ records: snap.records, headerBg: snap.headerBg, folders: snap.folders })),
+    photoHas, photoGet, photoPut,
+    buildBackupText: buildDriveBackupText,
+    onBackedUp: () => { if (syncBridge.onBackedUp) syncBridge.onBackedUp(); },
+  });
+  return googleSyncInst;
+}
+const NO_SYNC = Object.freeze({ phase: "off", message: "", enabled: false, email: "", lastSyncAt: 0, autoBackup: true, hasClientId: false, clientIdFixed: false, clientId: "", ready: false });
+function agoText(t) {
+  if (!t) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 1) return "たった今";
+  if (m < 60) return `${m}分前`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `${h}時間前` : `${Math.round(h / 24)}日前`;
+}
+
+/* バックアップ画面の上に置く、Google連携のカード */
+function GoogleSyncCard() {
+  const sync = getGoogleSync();
+  const st = React.useSyncExternalStore(
+    (fn) => (sync ? sync.subscribe(fn) : () => {}),
+    () => (sync ? sync.getStatus() : NO_SYNC),
+    () => NO_SYNC,
+  );
+  const [idDraft, setIdDraft] = useState("");
+  const [idOpen, setIdOpen] = useState(false);
+  const [askOff, setAskOff] = useState(false);
+  const [note, setNote] = useState("");
+  const [, tick] = useState(0);
+  useEffect(() => { if (sync && st.hasClientId) sync.preload(); }, [sync, st.hasClientId]);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30000); return () => clearInterval(t); }, []);
+  if (!sync) return null;
+
+  const connect = () => {
+    setNote("");
+    /* **ここで await を挟まないこと。** ログインのポップアップは、指の操作の流れの中でしか開かない */
+    if (!st.ready) { sync.preload(); setNote("Googleの準備中です。数秒たってから、もう一度押してください。"); return; }
+    sync.connect();
+  };
+  const busy = st.phase === "syncing";
+  const phaseText = st.phase === "syncing" ? "同期しています…"
+    : st.phase === "needsAuth" ? (st.message || "再ログインが必要です")
+      : st.phase === "offline" || st.phase === "error" ? st.message
+        : st.lastSyncAt ? `同期済み（${agoText(st.lastSyncAt)}）` : "準備できました";
+  const phaseColor = st.phase === "error" ? "text-rose-700" : st.phase === "needsAuth" || st.phase === "offline" ? "text-amber-700" : "text-neutral-500";
+
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm">
+      <div className="flex items-center gap-2">
+        <RefreshCw size={17} className="text-th-800 shrink-0" />
+        <h3 className="font-display text-[17px] text-neutral-900 flex-1">Googleドライブと同期</h3>
+        {st.enabled && busy && <Spinner size={18} className="text-th-700" />}
+      </div>
+
+      {!st.enabled && (
+        <>
+          <p className="text-[13.5px] leading-relaxed text-neutral-600 mt-2">
+            記録・写真・設定を、あなたのGoogleドライブに自動で保存します。「Google連携」を押して同じアカウントでログインすれば、ほかの端末とも同じ内容になります。
+            ドライブの「{SYNC_FOLDER}」フォルダだけを使い、ほかのファイルには触れません。
+          </p>
+          {st.hasClientId ? (
+            <button onClick={connect} className={BTN_PRIMARY + " w-full mt-3 " + BTN_H + " text-[15.5px]"}>Google連携</button>
+          ) : (
+            <p className="text-[12.5px] leading-relaxed text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mt-3">
+              はじめに、Googleでの設定（クライアントIDの取得）が一度だけ必要です。手順は同梱の <b>SETUP-GOOGLE.md</b> をご覧ください。取得したIDは下の「設定」に貼りつけます。
+            </p>
+          )}
+        </>
+      )}
+
+      {st.enabled && (
+        <>
+          <div className="mt-2 text-[13.5px] text-neutral-700 break-all">{st.email ? `アカウント：${st.email}` : "アカウント確認中…"}</div>
+          <p className={"text-[13.5px] font-bold mt-1 " + phaseColor}>{phaseText}</p>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <button onClick={() => { setNote(""); sync.syncManual(); }} disabled={busy} className={BTN_PRIMARY + " " + BTN_H + " text-[14.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
+              {st.phase === "needsAuth" ? "ログインする" : "今すぐ同期"}
+            </button>
+            <button
+              onClick={() => { if (!askOff) { setAskOff(true); setTimeout(() => setAskOff(false), 4000); return; } setAskOff(false); sync.disconnect(); }}
+              className={BTN_SECONDARY + " " + BTN_H + " text-[14.5px]"}>
+              {askOff ? "もう一度押すと解除" : "Google連携を解除"}
+            </button>
+          </div>
+          <label className="flex items-start gap-2 mt-3 text-[13.5px] text-neutral-700 leading-relaxed">
+            <input type="checkbox" className="mt-0.5" checked={st.autoBackup} onChange={(e) => sync.setAutoBackup(e.target.checked)} />
+            <span>1日1回、バックアップファイルもドライブに残す（直近7日ぶん。「データ復元」で戻せます）</span>
+          </label>
+          <p className="text-[12.5px] text-neutral-400 mt-2 leading-relaxed">
+            書きかえると数秒後に自動で同期し、アプリを開いたときにも確認します。ログインは約1時間で切れるため、切れたときは画面のどこかを触ると静かにつなぎ直します（できないときは「ログインする」を押してください）。
+          </p>
+        </>
+      )}
+
+      {note && <p className="text-[12.5px] text-amber-800 mt-2">{note}</p>}
+
+      <button onClick={() => { setIdOpen((v) => !v); setIdDraft(st.clientId || ""); }} className="mt-3 text-[12.5px] font-bold text-th-800 underline">
+        {idOpen ? "設定を閉じる" : "設定（クライアントID）"}
+      </button>
+      {idOpen && (
+        <div className="mt-2">
+          {st.clientIdFixed && <p className="text-[12.5px] text-neutral-500 mb-1.5">いまは index.html に書かれたIDを使っています。ここに入力すると、そちらより優先されます。</p>}
+          <input value={idDraft} onChange={(e) => setIdDraft(e.target.value)} placeholder="xxxxxxxx.apps.googleusercontent.com"
+            className="w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-[14.5px] text-neutral-800" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+          <button onClick={() => { sync.setClientId(idDraft); setIdOpen(false); setNote("保存しました。"); }} className={BTN_SECONDARY + " w-full mt-2 " + BTN_H + " text-[14.5px]"}>保存</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 /* 書き出すファイルの中身。
    **読める文と復元用データを、1つのファイルにまとめること。**
    2つに分けると、どちらを選べばよいか分からなくなり、
@@ -8997,28 +9192,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
     return () => { alive = false; };
   }, [photoIds]);
   const photosReady = photos !== null;
-  const jsonText = useMemo(() => JSON.stringify({
-    app: "bible-tracker", version: 8, exportedAt: new Date().toISOString(),
-    records, artworks: artworks || [], garden: garden || DEFAULT_GARDEN,
-    /* フォルダ（version 8 から）。絵は photos に入る */
-    folders: folders || [],
-    /* タグの一覧も一緒に書き出す。これが無いと、機種を変えたときに
-       まだ使っていないタグが消え、また作り直すことになる */
-    tags: tagMaster || [],
-    /* 画面の設定も一緒に書き出す（version 5 から）。
-       テーマ色・文字の大きさ・ひとこと・ヘッダーの背景など、
-       せっかく整えたものが機種を変えるたびに消えてしまわないように。
-       最終バックアップ日（lastBackup）は入れない。
-       それは「この端末でいつ書き出したか」であって、持ち運ぶものではないため */
-    prefs: prefs ? { ...prefs, lastBackup: undefined, folderDeletes: undefined } : undefined,
-    captions: captions || undefined,
-    typeDesc: typeDesc || undefined,
-    /* ヘッダの背景も一緒に書き出す（version 6 から）。
-       新しく設定を増やしたら、ここにも足すこと。足し忘れると機種変更で消える */
-    headerBg: headerBg || undefined,
-    /* 記録に付けた写真と、ヘッダーの絵の中身（version 7 から）。{ 番号: 絵 } の形 */
-    photos: photos && Object.keys(photos).length ? photos : undefined,
-  }, null, 2), [records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, photos]);
+  const jsonText = useMemo(() => JSON.stringify(makeBackupObject({ records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, photos }), null, 2), [records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg, photos]);
   const [msg, setMsg] = useState(null); // {kind:'ok'|'warn'|'err', text}
   const [fallbackOpen, setFallbackOpen] = useState(false); // 保存に失敗したときのダイアログ
   const fileInputRef = useRef(null);
@@ -9219,6 +9393,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
+          <GoogleSyncCard />
           <div className="rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm">
             <div className="flex items-baseline gap-2">
               <span className="font-display text-[26px] text-neutral-900">{records.length}</span>
@@ -10621,6 +10796,68 @@ function AppMain() {
       saveGarden(next);
     }
   };
+
+  /* ---- Googleドライブ同期（2.15.0〜。エンジンは gsync.js、つなぎは buildSyncSnapshot の近く） ----
+     **hooks は、下の「if (!loaded) return」より前に置くこと。** */
+  const syncStateRef = useRef({});
+  syncStateRef.current = { records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg };
+  /* 混ぜ終わった中身を、この端末の保存へ反映する。
+     **変わっていない部分には触れないこと**（描き直しと保存を増やさない）。
+     lastBackup と folderDeletes は、この端末のものをそのまま残す */
+  const applySyncSnapshot = useCallback(async (m) => {
+    const cur = syncStateRef.current;
+    const same = (a, b) => syncSetHash([a]) === syncSetHash([b]);
+    if (syncSetHash(m.records) !== syncSetHash(cur.records)) {
+      const list = await Promise.all((m.records || []).map(async (r) => (r && r.id ? await stashPhotos(migrateRecord(r)) : null)));
+      setRecords(list.filter(Boolean));
+    }
+    if (syncSetHash(m.folders) !== syncSetHash(cur.folders)) {
+      setFolders((m.folders || []).map(migrateFolder).filter(Boolean));
+    }
+    if (syncSetHash(m.tags) !== syncSetHash(cur.tagMaster)) {
+      const list = normalizeTags(m.tags || []);
+      setTagMaster(list);
+      persistTagMaster(list);
+    }
+    if (syncSetHash(m.artworks) !== syncSetHash(cur.artworks)) {
+      await saveArtworks((m.artworks || []).filter((a) => a && a.id && a.src).slice(0, ART_MAX));
+    }
+    if (m.garden && (!same(m.garden.cycle || null, (cur.garden || {}).cycle || null)
+      || syncSetHash(m.garden.harvests) !== syncSetHash((cur.garden || {}).harvests))) {
+      saveGarden({ cycle: m.garden.cycle || null, harvests: Array.isArray(m.garden.harvests) ? m.garden.harvests : [] });
+    }
+    if (m.prefs && typeof m.prefs === "object") {
+      const strip = (p) => ({ ...p, lastBackup: undefined, folderDeletes: undefined });
+      if (!same(strip(m.prefs), strip(cur.prefs))) {
+        await savePrefs({ ...cur.prefs, ...m.prefs, lastBackup: cur.prefs.lastBackup, folderDeletes: cur.prefs.folderDeletes });
+      }
+    }
+    if (m.captions && typeof m.captions === "object" && !same(m.captions, cur.captions)) await saveCaptions({ ...DEFAULT_CAPTIONS, ...m.captions });
+    if (m.typeDesc && typeof m.typeDesc === "object" && !same(m.typeDesc, cur.typeDesc)) {
+      await saveTypeDesc({
+        desc: { ...DEFAULT_TYPE_DESC, ...(m.typeDesc.desc || {}) },
+        name: { ...DEFAULT_TYPE_NAME, ...(m.typeDesc.name || {}) },
+      });
+    }
+    if ((m.headerBg || null) !== (cur.headerBg || null)) await saveHeaderBg(m.headerBg || null);
+  }, [savePrefs, saveCaptions, saveArtworks, saveTypeDesc, saveHeaderBg, saveGarden, setRecords, setFolders]);
+  syncBridge.getState = () => syncStateRef.current;
+  syncBridge.apply = applySyncSnapshot;
+  syncBridge.onBackedUp = markBackedUp;
+  /* 読み込みが終わったら同期を始める（つないでいなければ何もしない） */
+  useEffect(() => {
+    if (!loaded) return undefined;
+    const g = getGoogleSync();
+    if (!g) return undefined;
+    g.start();
+    return () => g.stop();
+  }, [loaded]);
+  /* 端末の中が書きかわったら、少し置いて同期する（gsync.js の中で間引く） */
+  useEffect(() => {
+    if (!loaded) return;
+    const g = getGoogleSync();
+    if (g) g.notifyChange();
+  }, [loaded, records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg]);
 
   if (!loaded) {
     /* ここは起動中の覆い（index.html の #splash）に隠れているので、

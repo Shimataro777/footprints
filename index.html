@@ -18,7 +18,13 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>Footprints</title>
     <!-- **版数はここ1か所で決めること。** 起動の画面にも、アプリの中にも同じ値が出る -->
-    <script>window.__FT_VERSION = "2.14.0";</script>
+    <script>window.__FT_VERSION = "2.16.0";</script>
+    <!-- Googleドライブ同期（2.15.0〜）のクライアントID。
+         Google Cloud Console で作った「ウェブ アプリケーション」のクライアントIDを、引用符の中に貼る
+         （例: "123456-abcdef.apps.googleusercontent.com"）。手順は SETUP-GOOGLE.md。
+         空のままでもよい。その場合は、アプリの「バックアップ」画面の「設定」に貼っても使える。
+         **クライアントIDは公開されても問題ない値**（秘密にするのはクライアントシークレットで、このアプリでは使わない） -->
+    <script>window.__FT_GOOGLE_CLIENT_ID = "319961278001-9o51h19lgo0mgh2idf3m12eor2t237qt.apps.googleusercontent.com";</script>
     <!-- 見た目（app.css）は「?v=版数」を付けて読む。
          インターネットが無くても開けるようにした係（sw.js）が、版ごとに部品をしまうため。
          版数が上がると名前も変わるので、新しい index.html に古い見た目が混ざることもない -->
