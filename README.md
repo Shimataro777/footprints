@@ -18,7 +18,7 @@ GitHub 側では何もビルドしません（`npm install` や `npm run build` 
 | `manifest-v4.json` / `icon-*-v4.png` / `apple-touch-icon-v4.png` | ホーム画面追加まわり |
 | `sw.js` | インターネットが無くても開けるようにする係（2.10.3〜。**必ず一緒にアップロード**） |
 | `App.jsx` / `gsync.js` | もとの材料（Claude が次に直すときの資料。公開には使いません） |
-| `privacy.html` | プライバシーポリシー（Google連携の公開に必要。アップロードする） |
+| `privacy.html` / `terms.html` | プライバシーポリシー・利用規約（Google連携の公開に使う。アップロードする） |
 | `SETUP-GOOGLE.md` | Google連携の準備の手順（公開には使いません） |
 
 ## 公開手順（最初の1回だけ）
