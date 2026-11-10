@@ -2,187 +2,260 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="robots" content="noindex, nofollow" />
+    <!-- viewport-fit=cover ＝ ノッチのある機種でも画面の端まで使う -->
+    <!-- **interactive-widget=resizes-content は足さないこと（2.16.1〜）。**
+         WebKit（iPhone の Safari も、ホーム画面から開いたアプリも）はこの指定を読まず、
+         キーボードを出してもレイアウトの高さは変わらない。効くのは Android の Chrome だけで、
+         そちらでは画面の高さが縮み、アプリ側の --ft-kb と二重に縮む。
+         キーボードのぶん中身を縮めるのは、アプリ側（installKeyboardInset）でそろえて行う -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+    <title>My手帳</title>
+    <meta name="description" content="ひびの記録をつける、じぶんだけの手帳" />
+    <meta name="theme-color" content="#FFFFFF" />
+
+    <!-- ホーム画面に置いたとき、上の余白まで深い緑にする -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Footprints" />
-    <!-- アイコンの名前には版数（-v4）を付けている。
-         同じ名前のまま絵だけ差し替えても、端末とGitHubに残った古い画像が
-         出続けてアイコンが変わらない。描き替えたら必ず版数を上げること -->
-    <link rel="manifest" href="./manifest-v4.json" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon-v4.png" />
-    <link rel="icon" type="image/png" href="./icon-192-v4.png" />
-    <!-- 書体の読み込みを早めるための下ごしらえ（アプリの中からも読み込むが、先に始めておく） -->
+    <meta name="apple-mobile-web-app-title" content="My手帳" />
+
+    <!-- 文字の読み込みを少しでも早くするための下ごしらえ -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <title>Footprints</title>
-    <!-- **版数はここ1か所で決めること。** 起動の画面にも、アプリの中にも同じ値が出る -->
-    <script>window.__FT_VERSION = "2.17.0";</script>
-    <!-- Google連携のクライアントID（手順は SETUP-GOOGLE.md）。空のあいだは、Google連携の画面は出ない。公開されて困る値ではない -->
-    <script>window.__FT_GOOGLE_CLIENT_ID = "319961278001-9o51h19lgo0mgh2idf3m12eor2t237qt.apps.googleusercontent.com";</script>
-    <!-- 見た目（app.css）は「?v=版数」を付けて読む。
-         インターネットが無くても開けるようにした係（sw.js）が、版ごとに部品をしまうため。
-         版数が上がると名前も変わるので、新しい index.html に古い見た目が混ざることもない -->
-    <script>document.write('<link rel="stylesheet" href="./app.css?v=' + window.__FT_VERSION + '" />');</script>
+
+    <link rel="stylesheet" href="./app.css?v=2.29.0" />
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon-v6.png" />
+    <link rel="manifest" href="./manifest-v6.json" />
+
     <style>
-      /* ============================================================
-         起動の画面（スプラッシュ）
-         アプリ名と双葉が主役。版数は小さく。くるくるは出さない。
-         **このCSSは index.html の中に直接書くこと。**
-         別のファイルにすると、そのファイルを読み込むまで白いままになり、
-         白い画面を隠すという目的を果たせない
-         ============================================================ */
-      html, body { margin: 0; background: #F4FBFE; }
-      /* **起動の画面が出ているあいだ、アプリの本体は見えなくしておくこと。**
-         本体（下の帯や右下のボタン）は、読み込みの途中でも先に描かれる。
-         覆いの下に隠れているはずだが、iPhone では下の端（ホームバーのあたり）や、
-         覆いが出る前後の一瞬に、下の帯だけが透けて見えることがあった。
-         そもそも見えなければ透けようがないので、覆いを外し始めるとき（ふわっと消えるのと同時）まで
-         visibility: hidden にしておく。**display: none にしないこと**
-         （中の高さを測る部品が、0のまま測ってしまう）。
-         印は html に付ける ft-shown。付けるのは下の __ftHideSplash と、いつまでも付かないときの保険の2か所 */
-      html:not(.ft-shown) #root { visibility: hidden; }
-      #splash {
-        /* 上下左右を明示し、高さも大きいほうの画面（bar が引っ込んだときの高さ）まで取っておく。
-           inset: 0 だけだと、端末によっては下の端が数十px空く */
-        position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 2147483600;
-        height: 100vh; height: 100lvh;
-        background: #F4FBFE;
+      /* 読み込みが終わるまでの間だけ出す絵。
+         中身が出たら __hibiHideSplash() で静かに消える */
+      /* **上下左右を、inset だけに任せないこと。**
+         iPhone では下の端（ホームバーのあたり）が数十px 空き、
+         そこからアプリ本体の下の帯がのぞいてしまう。
+         四辺を明示し、高さは大きいほうの画面（lvh / dvh）まで取る */
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        top: 0; right: 0; bottom: 0; left: 0;
+        width: 100%;
+        min-width: 100%;
+        height: 100vh;
+        min-height: 100vh;
+        z-index: 2147483600;
+        /* アイコンと同じ、白地に水色の手帳。**アプリの帯の色と混ぜないこと** */
+        background: #FFFFFF;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
         font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
-        transition: opacity .45s ease-out;
+        transition: opacity 320ms ease;
       }
-      #splash.gone { opacity: 0; pointer-events: none; }
-      /* アイコン・名前・版数を、ひとつの箱にまとめて置く場所。
-         **ホーム画面から開いたとき、アイコンが上から下へ動いて見える不具合の直し。**
-         原因：iPhoneはホーム画面から開いた直後、本体の高さ（window.innerHeight）がいちど変わる
-         （実測でおよそ51px）。中身を #splash の高さ（100vh）のまんなかに置いていたため、
-         その変化のぶんの半分だけ、中身がまるごと下へ動いて見えていた。
-         直し方：中身の位置は、変わらない「端末の画面そのものの高さ」（screen.height）で決める。
-         下のスクリプトが、ホーム画面から開いたときだけ top を screen.height の半分に固定し直す
-         （ブラウザのタブで開いたときは、上下の帯の分だけ画面のまん中と端末の画面のまん中が
-         食い違うため、直さず従来どおり本体の高さのまん中に置く）。
-         **top の書き換えは、この JS の1か所だけにすること。** ほかの場所で位置を決め直すと、
-         せっかく固定した位置がまた動く原因になる */
-      #splash .splash-inner {
-        position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-        display: flex; flex-direction: column; align-items: center;
+      /* 名前と版数。**版数を大きく出さないこと。**
+         目には入るが、読ませるためのものではない */
+      #app-splash .name {
+        margin-top: 22px;
+        font-size: 22px; font-weight: 700; color: #3E7EA6; letter-spacing: .08em;
       }
-      #splash .mark {
-        width: 112px; height: 112px; border-radius: 28px; background: #fff;
-        box-shadow: 0 8px 26px rgba(12,74,110,.12);
-        animation: splash-in .55s cubic-bezier(.22,1,.36,1) backwards;
+      #app-splash .ver {
+        margin-top: 7px;
+        font-size: 11.5px; color: rgba(62,126,166,.55); letter-spacing: .04em;
       }
-      @keyframes splash-in { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
-      #splash .name {
-        margin-top: 20px; font-size: 25px; font-weight: 600; color: #0C4A6E; letter-spacing: .08em;
-        animation: splash-in .55s .1s cubic-bezier(.22,1,.36,1) backwards;
+      #app-splash .mark {
+        width: 92px;
+        height: 82px;
+        border: 5px solid #6FB9E0;
+        border-radius: 12px;
+        position: relative;
       }
-      /* 版数は控えめに。目に入るが、読ませるためのものではない */
-      #splash .ver {
-        margin-top: 8px; font-size: 11.5px; color: rgba(12,74,110,.45); letter-spacing: .04em;
-        animation: splash-in .55s .18s cubic-bezier(.22,1,.36,1) backwards;
+      #app-splash .mark::before {
+        content: "";
+        position: absolute;
+        left: 23px; top: -5px; bottom: -5px;
+        width: 5px;
+        background: #6FB9E0;
       }
-
-      /* うまく読み込めなかったときの案内。ふつうに動けば目に触れない */
-      .boot { position: absolute; bottom: 0; left: 0; right: 0;
-              font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
-              color: #404040; padding: 0 24px 32px; max-width: 480px; margin: 0 auto; line-height: 1.8;
-              opacity: 0; animation: bootlate 0s 3.5s forwards; }
-      @keyframes bootlate { to { opacity: 1; } }
-      .boot-h { font-size: 17px; font-weight: 700; color: #0C4A6E; margin-bottom: 4px; }
-      .boot ol { padding-left: 1.2em; }
-      .boot li { margin-bottom: 10px; }
-      .boot code { background: rgba(255,255,255,.7); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
-
-      /* 画面の動きを減らす設定のときは、動かさない */
+      #app-splash .mark::after {
+        content: "";
+        position: absolute;
+        left: 55px; top: -5px;
+        width: 18px; height: 44px;
+        background: #6FB9E0;
+        clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 74%, 0 100%);
+      }
+      /* **しるし・名前・版数を、ひとつずつ動かして出さないこと**（2.11.0〜）。
+         字やアイコンが細かく動くと読みづらい。はじめから定位置に置き、
+         消えるときだけ絵ぜんたいを薄くする。
+         **#app-splash 自身の transition（消えるときの薄まり）だけを許し、
+         中の部品にはどんな transition / animation も付かないようにしておく**
+         （2.11.22〜）。今後どこかに `.mark` などと同じクラス名や、うっかり
+         広すぎるセレクタ（例：`div { transition: ... }`）を足しても、
+         起動画面の中では絶対に動かないようにする用心 */
+      #app-splash * {
+        transition: none !important;
+        animation: none !important;
+      }
+      @supports (height: 100lvh) {
+        #app-splash { height: 100lvh; min-height: 100lvh; }
+      }
+      /* **中身の位置を、画面の高さで決めないこと（2.11.24〜）。**
+         症状：起動画面のしるし（アイコン）が、出たあと下へずれる。
+         原因：中身は justify-content: center で「画面の高さのまん中」に置いていた。
+         iPhone はホーム画面から開いた直後、本体の高さがいちど変わる（実機で
+         測ると約51px）。まん中に置いたものは、高さが Δ 変われば Δ/2 だけ動くので、
+         しるしが約25px 下へずれて見えた（実機の写しで実測 25.5px、
+         同じ高さの変わり方を作った試しでも 25.5px で一致）。
+         直し方：ホーム画面から開いたときは、画面そのものの高さ（screen.height。
+         本体の高さと違って、起動のあいだ変わらない）の半分の位置に中身を留める。
+         こうすると本体の高さがどう変わっても、しるしは1pxも動かない。
+         **.box を flex の中央寄せに戻さないこと。** 同じずれが戻る */
+      #app-splash .box {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      /* JS が付ける。留められなかったとき（画面の高さが読めない・ブラウザのタブで
+         開いたとき）は、これまでどおり中央寄せのまま */
+      #app-splash.pinned { justify-content: flex-start; }
+      #app-splash.pinned .box {
+        position: absolute;
+        left: 0; right: 0;
+        transform: translateY(-50%); /* top は screen.height の半分（JSが入れる） */
+      }
       @media (prefers-reduced-motion: reduce) {
-        #splash .mark, #splash .name, #splash .ver { animation: none; }
-        #splash { transition: none; }
+        #app-splash { transition: none; }
+      }
+      /* **起動画面が消えはじめるまで、アプリ本体を見えなくしておくこと。**
+         本体は読み込みの途中でも先に描かれ、下の帯も出る。起動画面は上に重なって
+         いるはずだが、画面の下の端や、起動画面が出る前後の一瞬に、帯だけが
+         透けて見えることがある。見えなければ透けようがない。
+         **display: none にしないこと。** ヘッダーの高さを測る部品が
+         0 のまま測ってしまい、余白がずれる。visibility で隠す */
+      body.mt-booting #root {
+        visibility: hidden;
+        pointer-events: none;
+      }
+      /* **起動画面のあいだ、紙（ページ）自体を送れる状態にしないこと**（2.11.22〜）。
+         症状：起動画面のしるし（アイコン）が、出た瞬間に上から下へずれて見える。
+         原因：本体（#root）は visibility だけで隠していて、高さはふつうに
+         測れる状態のまま。中の一覧が長いと、隠れているだけで紙ぜんたいの
+         高さが画面より高くなり、起動画面が出ている数百 ms のあいだ紙が
+         送れる状態になる。viewport-fit=cover で端まで広げた画面のまま
+         紙が送れる状態だと、iPhone は「実際に送れる高さ」を測り直し、
+         その拍子に position: fixed で置いたもの（起動画面もそのひとつ）が
+         数十px ずれて見える。3章「下タブが画面ごとに上下する不具合」
+         （body を position: fixed にしたときに起きるもの）と同じ、
+         iPhone の「広げた画面を測り直す」ときの副作用が、こちらは
+         「紙が送れる状態」で起きている。
+         直し方：起動画面が出ているあいだは html・body とも送れない状態にし、
+         本体を見せる瞬間（mtShowApp）に一緒に外す。中身の一覧がどれだけ
+         長くても、起動画面のときは紙ぜんたいとしては送れない状態のまま
+         で保つ */
+      body.mt-booting {
+        overflow: hidden;
       }
     </style>
   </head>
-  <body>
-    <div id="root"></div>
-
-    <!-- 起動の画面。読み込みが終わり、かつ1秒たつと、ふわっと消える。
-         いつまでも消えないときは、うまく読み込めていないので案内を出す -->
-    <div id="splash">
-      <div class="splash-inner">
-        <img class="mark" src="./icon-192-v4.png" alt="" width="112" height="112" />
-        <p class="name">Footprints</p>
-        <p class="ver" id="splash-ver"></p>
-      </div>
-      <div class="boot">
-        <p class="boot-h">プログラムを読み込めませんでした</p>
-        <p>GitHubで公開している場合は、次の2つをご確認ください。</p>
-        <ol>
-          <li><code>app.js</code> と <code>app.css</code> が、このファイルと同じ場所に<br>
-            アップロードされているか</li>
-          <li>Settings → Pages の Source が <b>Deploy from a branch</b> になっているか<br>
-            （Branch は保存した場所、Folder は <code>/ (root)</code>）</li>
-        </ol>
+  <body class="mt-booting">
+    <div id="app-splash">
+      <div class="box">
+        <div class="mark"></div>
+        <p class="name">My手帳</p>
+        <p class="ver" id="app-splash-ver"></p>
       </div>
     </div>
-
+    <div id="root"></div>
     <script>
-      document.getElementById("splash-ver").textContent = "v" + window.__FT_VERSION;
+      /* 版数はここひとつで決める。**あちこちに書かないこと**（食い違う）。
+         アプリの中からも window.__MT_VERSION で読む */
+      /* X＝見た目や操作性の大きな変更・画面の追加
+         Y＝細かな機能向上・部分的な追加・画面の手直し
+         Z＝不具合や誤字の直し */
+      window.__MT_VERSION = "2.29.0";
+      /* Googleドライブ同期のクライアントID（2.29.0〜。引継書 6-⑳）。配布する人が1回だけ書く。
+         **空にすると、雲のしるしも、バックアップ画面のGoogleのカードも出ない**（いままでどおりに戻る）。
+         いまは Footprints と同じIDを使っている（同じ github.io に置いているので、承認済みの生成元が共通） */
+      window.__MT_GOOGLE_CLIENT_ID = "319961278001-9o51h19lgo0mgh2idf3m12eor2t237qt.apps.googleusercontent.com";
+      document.getElementById("app-splash-ver").textContent = "v" + window.__MT_VERSION;
 
-      /* アイコンが動いて見える不具合の直し（本体）。
-         ホーム画面から開いたとき（standalone）だけ、中身の top を
-         「端末の画面そのものの高さ」（screen.height。起動中も変わらない）の半分に固定し直す。
-         これは本体の高さ（window.innerHeight）が変わるより前、できるだけ早く行うこと。
-         遅れると、動いたあとの位置で一瞬止まってから直る＝結局チラつく形で見えてしまう。
-         ブラウザのタブで開いたとき（standalone でない）は、なにもしない
-         （画面の上下に出る帯の分だけ、画面のまん中と本体のまん中が食い違うため、
-         従来どおり本体の高さのまん中に置いたままにする） */
+      /* **起動画面の中身を、画面の高さのまん中へ留める（2.11.24〜）。**
+         本体（window.innerHeight）の高さは、ホーム画面から開いた直後に変わる。
+         screen.height は端末の画面そのものの高さで、そのあいだ変わらないので、
+         これを基準にすれば中身は動かない。
+         ・ホーム画面から開いたとき（standalone）だけ留める。ブラウザのタブでは
+           上下に帯がある分、本体の高さが画面より低く、まん中がずれてしまう
+         ・画面を縦向きに固めてある（manifest の orientation: portrait）ので、
+           向きによる読み替えは要らない
+         ・**描かれる前に済ませること。** あとから動かすと、それ自体がずれて見える */
       (function () {
-        var standalone = window.navigator.standalone === true
-          || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
-        if (!standalone) return;
-        var h = window.screen && window.screen.height;
-        if (!h) return;
-        var inner = document.querySelector("#splash .splash-inner");
-        if (inner) inner.style.top = (h / 2) + "px";
+        try {
+          var sp = document.getElementById("app-splash");
+          var box = sp && sp.querySelector(".box");
+          var sh = (window.screen && window.screen.height) || 0;
+          var standalone = window.navigator.standalone === true
+            || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+          if (sp && box && sh > 0 && standalone) {
+            box.style.top = Math.round(sh / 2) + "px";
+            sp.classList.add("pinned");
+          }
+        }
+        catch (e) { /* 留められなくても、中央寄せのまま出る */ }
       })();
 
-      /* 起動の画面を外す手だて。アプリの読み込みが終わったときに呼ばれる。
-         **かならず最低の時間だけ見せること。** 読み込みが速い端末では
-         一瞬だけ光って消え、かえって目ざわりになる。
-         **この処理は index.html の中に直接書くこと。**
-         組み立て後のファイルに置くと、それを読み込めなかったときに
-         外す手だてごと失われる */
-      var FT_SPLASH_MS = 2000;
-      var ftSplashFrom = Date.now();
-      /* 本体を見せる。起動の画面が消え始めるときに呼ぶ */
-      function ftShow() { document.documentElement.classList.add("ft-shown"); }
-      /* 保険。アプリが読み込みの完了を知らせてこなくても、いつまでも真っ白にはしない。
-         読み込みに失敗しているときは、本体は空なので、案内（.boot）はそのまま見える */
-      setTimeout(ftShow, 12000);
-      window.__ftHideSplash = function () {
-        var el = document.getElementById("splash");
-        if (!el || el.dataset.going) return;
+      /* **html 自体も、起動画面のあいだは送れない状態にしておく**（2.11.22〜）。
+         `body.mt-booting { overflow: hidden }`（上の <style>）だけでは、
+         紙を実際に送っているのは body ではなく html（documentElement）の
+         ほうなので足りないことがある。ここで直に閉じ、mtShowApp で一緒に開ける */
+      document.documentElement.style.overflow = "hidden";
+
+      /* 消し方は index.html の側に持たせてある。
+         こうしておくと、本体の読み込みが失敗しても絵が残り続けない */
+      /* **かならず最低の時間だけ見せること。** 読み込みが速い端末では
+         一瞬だけ光って消え、かえって目ざわりになる */
+      var MT_SPLASH_MS = 1400;
+      var mtSplashFrom = Date.now();
+      /* 本体を見せる。起動画面が消えはじめる（ふわっと薄くなる）のと同じ瞬間に呼ぶ */
+      function mtShowApp() {
+        document.body.classList.remove("mt-booting");
+        document.documentElement.style.overflow = "";
+      }
+      window.__hibiHideSplash = function () {
+        var el = document.getElementById("app-splash");
+        /* **二度目の呼び出しで、その場で本体を出さないこと。**
+           起動直後に一度呼ばれ、記録を読み終えたあとにもう一度呼ばれる。
+           ここで出すと、まだ起動画面が出ているうちに本体が見えてしまう。
+           一度目が用意した時計に任せる（絵が無いときだけ出す） */
+        if (el && el.dataset.going) return;
+        if (!el) { mtShowApp(); return; }
         el.dataset.going = "1";
-        var wait = Math.max(0, FT_SPLASH_MS - (Date.now() - ftSplashFrom));
+        var wait = Math.max(0, MT_SPLASH_MS - (Date.now() - mtSplashFrom));
         setTimeout(function () {
-          ftShow();
-          el.classList.add("gone");
-          setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 600);
+          /* 薄くなりはじめるのと同時に本体を出す。それより早く出さないこと（帯が透ける） */
+          mtShowApp();
+          el.style.opacity = "0";
+          setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 360);
         }, wait);
       };
+      /* 念のため、5秒たったら必ず消す */
+      setTimeout(function () { window.__hibiHideSplash(); }, 5000);
+      /* 最後の歯止め。アプリが読み込み終わりを知らせてこなくても、
+         12秒たてば本体を出す（真っ白なまま使えなくならないように） */
+      setTimeout(mtShowApp, 12000);
     </script>
-    <!-- 本体（app.js）も「?v=版数」を付けて読む（理由は app.css と同じ） -->
-    <script>document.write('<script defer src="./app.js?v=' + window.__FT_VERSION + '"><\/script>');</script>
-
-    <!-- インターネットが無くても開けるようにする係（sw.js）を登録する。
-         一度ネットにつながった状態で開けば、次からはつながっていなくても開ける。
-         **sw.js も、ほかのファイルと同じ場所（1階層）にアップロードすること。**
-         名前に版数を付けて登録するので、版数を上げれば端末の中身も入れ替わる -->
+    <!-- **?v= は app.css と app.js の両方に必ず付けること。**
+         付けないと、端末に残った古いファイルがそのまま使われ、
+         直したはずの見た目が変わらない。版数を上げたらここも必ず合わせる -->
+    <script src="./app.js?v=2.29.0" defer></script>
+    <!-- 電波がなくても開けるようにする（2.24.0〜）。中身は sw.js と 引継書.md 6-⑯。
+         **版数を "./sw.js?v=" に付けて登録すること。** 版数が変わると新しい本体を端末に置き直す。
+         版数をここに書き込まないこと（window.__MT_VERSION から読む） -->
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
-          navigator.serviceWorker.register("./sw.js?v=" + encodeURIComponent(window.__FT_VERSION), { scope: "./" })
-            .catch(function () { /* 登録できなくても、アプリはふつうに動く */ });
+          navigator.serviceWorker
+            .register("./sw.js?v=" + window.__MT_VERSION, { scope: "./", updateViaCache: "none" })
+            .catch(function () { /* 登録できなくても、これまでどおり使える */ });
         });
       }
     </script>
