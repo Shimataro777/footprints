@@ -225,6 +225,11 @@ Chromium（`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`、playwright 経
 - ❌ 「Google連携」ボタンの中で `await` を挟まない（ポップアップは指の操作の中でしか開かない）
 - クライアントIDは `index.html` の `window.__FT_GOOGLE_CLIENT_ID` だけ。空ならカードは出ない
 - `app.css` は作り直していない（環境のTailwindがv4）。新しいクラスは既存の `app.css` にあるものだけ使う
+- **見た目（2.17.0〜）**：ヘッダーの雲 `SyncHeaderButton`（`MenuButton` と `ScreenHeader` の中、三本線の左）→ 押すと `SyncSheet`（AppMain が持つ。`SyncUiContext`）。図は `SyncFlow`（この端末 ⇄ Googleドライブ、送る→／←受け取る）。バックアップ画面の `GoogleSyncCard` も同じ図。説明文で伝えない（依頼）
+- **ログインの画面は、ボタンを押したときにだけ出す（2.17.0〜）**。❌ 「次のタップでログインし直す」（armTap）を戻さないこと。使っている途中にGoogleの画面がはさまり、分かりにくいと言われた。指の操作の外では `auth.request` を呼ばない
+- 起動したとき（と3分以上離れて戻ったとき）にトークンが切れていれば、エンジンが `askLogin` を立て、スプラッシュが消えてから AppMain が `SyncSheet` を launch の形で出す。同期し終えたら1.2秒で自動で閉じる
+- `pending`（まだ送っていない数）＝前回の同期の目録（base）と今のちがい。`indexOf` / `diffCount`。最後に送った・受け取った数と時刻は cfg の `sentN/sentAt/recvN/recvAt`
+- つないでいるときは `unsavedNow` を0にする（「書き出していない」の印を出さない）
 - 未確認：iPhoneのホーム画面アプリでのGoogleログイン
 
 ---

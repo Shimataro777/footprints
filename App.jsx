@@ -5205,12 +5205,16 @@ function MenuButton({ size = MENU_BTN, guard }) {
   const openMenu = React.useContext(MenuContext);
   const unsaved = React.useContext(UnsavedContext);
   if (!openMenu) return null;
+  /* 三本線の左に、Googleドライブの雲（2.17.0〜）。どの画面からでも同期の様子が見え、押せば小窓が開く */
   return (
-    <button onClick={guard ? () => guard(openMenu) : openMenu} aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
-      className="relative flex items-center justify-center rounded-xl text-neutral-800 hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0"
-      style={{ minWidth: size, minHeight: size }}>
-      <MenuIconWithBadge size={MENU_ICON} unsaved={unsaved} ringClass="border-white" />
-    </button>
+    <>
+      <SyncHeaderButton size={size} />
+      <button onClick={guard ? () => guard(openMenu) : openMenu} aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
+        className="relative flex items-center justify-center rounded-xl text-neutral-800 hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0"
+        style={{ minWidth: size, minHeight: size }}>
+        <MenuIconWithBadge size={MENU_ICON} unsaved={unsaved} ringClass="border-white" />
+      </button>
+    </>
   );
 }
 
@@ -5299,6 +5303,7 @@ function ScreenHeader({ title, right }) {
         <div className="min-w-0"><h1 className="font-display text-[27px] text-neutral-900 tracking-wide truncate">{title}</h1></div>
         <div className="flex items-center gap-1 shrink-0">
           {right}
+          {openMenu && <SyncHeaderButton />}
           {openMenu && (
             <button onClick={openMenu} aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
               className="relative flex items-center justify-center rounded-xl text-neutral-800 hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0"
@@ -7972,7 +7977,7 @@ function getGoogleSync() {
   });
   return googleSyncInst;
 }
-const NO_SYNC = Object.freeze({ phase: "off", message: "", enabled: false, email: "", lastSyncAt: 0, autoBackup: true, hasClientId: false, clientIdFixed: false, clientId: "", ready: false });
+const NO_SYNC = Object.freeze({ phase: "off", message: "", enabled: false, email: "", lastSyncAt: 0, autoBackup: true, hasClientId: false, clientIdFixed: false, clientId: "", ready: false, pending: 0, askLogin: false, sentN: 0, sentAt: 0, recvN: 0, recvAt: 0 });
 function agoText(t) {
   if (!t) return "";
   const m = Math.max(0, Math.round((Date.now() - t) / 60000));
@@ -7981,63 +7986,272 @@ function agoText(t) {
   const h = Math.round(m / 60);
   return h < 24 ? `${h}時間前` : `${Math.round(h / 24)}日前`;
 }
-
-/* バックアップ画面の上に置く、Google連携のカード */
-function GoogleSyncCard() {
+const noSyncSub = () => () => {};
+/* 同期の状態を読む（どの画面からでも同じものが見える） */
+function useSyncStatus() {
   const sync = getGoogleSync();
-  const st = React.useSyncExternalStore(
-    (fn) => (sync ? sync.subscribe(fn) : () => {}),
+  return React.useSyncExternalStore(
+    sync ? sync.subscribe : noSyncSub,
     () => (sync ? sync.getStatus() : NO_SYNC),
     () => NO_SYNC,
   );
+}
+/* ヘッダーの雲から開く小窓（AppMain が持つ）。{ open() } */
+const SyncUiContext = React.createContext(null);
+
+/* ============================================================
+   同期の見た目（2.17.0〜）
+   **説明文で伝えないこと（依頼による）。** 「この端末 ⇄ Googleドライブ」の2つの箱と、
+   その間の2本の矢印（送る →／← 受け取る）で、データがどちらへ動くのかを見せる。
+   ・書きかえて、まだ送っていない → 「送る」の矢印が琥珀色になり、件数が付く。ヘッダーの雲も ↑ と件数
+   ・やりとりの最中 → 2本の矢印が流れる。雲は ⇅
+   ・そろった → 矢印は落ち着いた色。雲は ✓
+   ・ログインが要る／つながらない → 矢印が灰色の点線。雲は ! か 斜線
+   ============================================================ */
+/* 雲のしるし。mark: check | up | sync | alert | off */
+function CloudGlyph({ mark = "check", size = 28, anim = false }) {
+  const marks = {
+    check: <path d="M9.4 14.1l2 2 3.6-3.6" />,
+    up: <><path d="M12 17v-5.6" /><path d="M9.6 13.6 12 11.2l2.4 2.4" /></>,
+    sync: <g className={anim ? "ft-sync-bob" : undefined}><path d="M10 16.6v-5" /><path d="M8.4 13.1 10 11.5l1.6 1.6" /><path d="M14 11.5v5" /><path d="M12.4 15 14 16.6l1.6-1.6" /></g>,
+    alert: <><path d="M12 11v3" /><path d="M12 16.6h.01" /></>,
+    off: <path d="M4 4l16 16" />,
+  };
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+      {marks[mark] || null}
+    </svg>
+  );
+}
+function PhoneGlyph({ size = 26 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="6" y="2.5" width="12" height="19" rx="2.5" /><path d="M11 18h2" />
+    </svg>
+  );
+}
+/* 状態 → 雲のしるし・色 */
+function syncLook(st) {
+  if (!st.enabled) return { mark: "off", tone: "text-neutral-400", label: "Googleドライブ（未連携）" };
+  if (st.phase === "syncing") return { mark: "sync", anim: true, tone: "text-th-800", label: "Googleドライブとやりとり中" };
+  if (st.phase === "needsAuth") return { mark: "alert", tone: "text-amber-600", label: "Googleドライブ（ログインが必要）", dot: true };
+  if (st.phase === "offline") return { mark: "off", tone: "text-neutral-500", label: "Googleドライブ（通信できません）" };
+  if (st.phase === "error") return { mark: "alert", tone: "text-rose-700", label: "Googleドライブ（エラー）", dot: true };
+  if (st.pending > 0) return { mark: "up", tone: "text-amber-600", label: `Googleドライブ（${st.pending}件を送る前）` };
+  return { mark: "check", tone: "text-th-800", label: "Googleドライブ（保存ずみ）" };
+}
+
+/* ヘッダーの雲。三本線のとなりに置く（ScreenHeader と MenuButton から） */
+function SyncHeaderButton({ size = MENU_BTN }) {
+  const ui = React.useContext(SyncUiContext);
+  const st = useSyncStatus();
+  if (!ui || !st.hasClientId) return null;
+  const look = syncLook(st);
+  const n = st.enabled ? st.pending : 0;
+  return (
+    <button onClick={ui.open} aria-label={look.label + (n > 0 ? `・${n}件` : "")} data-ft-sync-btn=""
+      className={"relative flex items-center justify-center rounded-xl hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0 " + look.tone}
+      style={{ minWidth: 48, minHeight: size }}>
+      <span className="relative inline-flex">
+        <CloudGlyph mark={look.mark} anim={look.anim} size={30} />
+        {n > 0 ? (
+          <span className="absolute" style={{ top: -6, right: -9 }}><CountBadge n={n} size={18} className="border-2 border-white" /></span>
+        ) : look.dot ? (
+          <span className="absolute border-2 border-white"
+            style={{ top: -3, right: -4, width: 12, height: 12, borderRadius: 9999, background: st.phase === "error" ? "#E11D48" : "#F59E0B" }} />
+        ) : null}
+      </span>
+    </button>
+  );
+}
+
+/* 2本の矢印の1本。dir: "right"（送る）| "left"（受け取る）
+   mode: run（流れている）| ok（そろっている）| wait（送る前。琥珀色）| stop（止まっている。灰色の点線） */
+function FlowArrow({ dir, label, mode, chip, meta }) {
+  const color = mode === "wait" ? "text-amber-600" : mode === "stop" ? "text-neutral-300" : "text-th-700";
+  return (
+    <div className={"min-w-0 " + color}>
+      <div className={"flex items-center gap-1.5 " + (dir === "left" ? "justify-end" : "")}>
+        <span className={"text-[12.5px] font-bold " + (mode === "stop" ? "text-neutral-400" : mode === "wait" ? "text-amber-700" : "text-th-900")}>{label}</span>
+        {chip && <span className="font-bold rounded-full bg-amber-50 border border-amber-200 text-amber-800 px-1.5 tabular-nums" style={{ fontSize: 11.5, lineHeight: "16px" }}>{chip}</span>}
+      </div>
+      <div className={"ft-flow " + (dir === "left" ? "ft-flow-l " : "ft-flow-r ") + (mode === "run" ? "ft-flow-run" : mode === "stop" ? "ft-flow-stop" : "")} />
+      <div className="text-neutral-400 tabular-nums truncate" style={{ fontSize: 11.5, height: 16, lineHeight: "16px", textAlign: dir === "left" ? "right" : "left" }}>{meta || ""}</div>
+    </div>
+  );
+}
+function FlowNode({ icon, label, dim }) {
+  return (
+    <div className="flex flex-col items-center shrink-0" style={{ width: 72, opacity: dim ? 0.45 : 1 }}>
+      <span className="rounded-2xl bg-th-50 border border-th-200 text-th-800 flex items-center justify-center" style={{ width: 54, height: 54 }}>{icon}</span>
+      <span className="font-bold text-neutral-700 mt-1.5 text-center leading-tight" style={{ fontSize: 12 }}>{label}</span>
+    </div>
+  );
+}
+/* 「この端末 ⇄ Googleドライブ」の図 */
+function SyncFlow({ st }) {
+  const on = st.enabled;
+  const stop = !on || st.phase === "needsAuth" || st.phase === "offline" || st.phase === "error";
+  const run = on && st.phase === "syncing";
+  const sendMode = stop ? "stop" : run ? "run" : st.pending > 0 ? "wait" : "ok";
+  const recvMode = stop ? "stop" : run ? "run" : "ok";
+  const sentMeta = on && st.sentAt ? `${st.sentN}件・${agoText(st.sentAt)}` : "";
+  const recvMeta = on && st.recvAt ? `${st.recvN}件・${agoText(st.recvAt)}` : "";
+  return (
+    <div className="flex items-center gap-1" data-ft-syncflow="">
+      <FlowNode icon={<PhoneGlyph />} label="この端末" />
+      <div className="flex-1 min-w-0 flex flex-col gap-1">
+        <FlowArrow dir="right" label="送る" mode={sendMode} chip={on && st.pending > 0 ? `${st.pending}件` : ""} meta={sentMeta} />
+        <FlowArrow dir="left" label="受け取る" mode={recvMode} meta={recvMeta} />
+      </div>
+      <FlowNode icon={<CloudGlyph mark={!on ? "off" : "check"} size={28} />} label={<>Google<br />ドライブ</>} dim={stop} />
+    </div>
+  );
+}
+/* 図の下の1行。いまの状態だけを短く */
+function SyncStatusLine({ st }) {
+  let icon = null; let text = ""; let cls = "text-neutral-600";
+  if (!st.enabled) { text = st.message || ""; cls = "text-rose-700"; }
+  else if (st.phase === "syncing") { icon = <Spinner size={15} />; text = "やりとりしています…"; cls = "text-th-900"; }
+  else if (st.phase === "needsAuth") { text = st.message || "ログインが必要です"; cls = "text-amber-700"; }
+  else if (st.phase === "offline" || st.phase === "error") { text = st.message; cls = st.phase === "error" ? "text-rose-700" : "text-amber-700"; }
+  else if (st.pending > 0) { text = `${st.pending}件をまもなく送ります`; cls = "text-amber-700"; }
+  else if (st.lastSyncAt) { icon = <Check size={15} strokeWidth={3} />; text = `ドライブと同じ内容です（${agoText(st.lastSyncAt)}）`; cls = "text-th-900"; }
+  if (!text) return null;
+  return (
+    <p className={"flex items-center justify-center gap-1.5 text-[13.5px] font-bold mt-3 text-center " + cls} data-ft-syncline="">
+      {icon}<span className="min-w-0">{text}</span>
+    </p>
+  );
+}
+
+/* ボタンの中身。**ここで await を挟まないこと。** ログインのポップアップは、指の操作の流れの中でしか開かない */
+function useSyncActions(setNote) {
+  const sync = getGoogleSync();
+  const st = useSyncStatus();
+  const needReady = () => {
+    if (st.ready) return true;
+    sync.preload();
+    setNote("準備中です。もう一度押してください。");
+    return false;
+  };
+  return {
+    connect: () => { setNote(""); if (!needReady()) return; sync.connect(); },
+    login: () => { setNote(""); if (!needReady()) return; sync.loginNow(); },
+    syncNow: () => { setNote(""); if (st.phase === "needsAuth" && !needReady()) return; sync.syncManual(); },
+  };
+}
+
+/* ヘッダーの雲から開く小窓。起動したときにログインが切れていれば、同じ小窓を launch の形で出す（2.17.0〜）。
+   **ログインの画面を出すのは、ここのボタンを押したときだけ。** 使っている途中に勝手に出さない */
+function SyncSheet({ launch, onClose, onOpenBackup }) {
+  const sync = getGoogleSync();
+  const st = useSyncStatus();
+  const [closing, close] = useClosing(onClose, 220);
+  const [note, setNote] = useState("");
+  const act = useSyncActions(setNote);
+  const [, tick] = useState(0);
+  useEffect(() => { if (sync && st.hasClientId) sync.preload(); }, [sync, st.hasClientId]);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30000); return () => clearInterval(t); }, []);
+  /* 起動時の小窓は、つなぎ直して同期し終えたら、そろった姿を少し見せてから閉じる */
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (!launch) return undefined;
+    if (st.phase === "syncing") { wasBusy.current = true; return undefined; }
+    if (wasBusy.current && st.phase === "idle") { const t = setTimeout(close, 1200); return () => clearTimeout(t); }
+    return undefined;
+  }, [launch, st.phase, close]);
+  if (!sync) return null;
+  const busy = st.phase === "syncing";
+  const look = syncLook(st);
+
+  let primary = null;
+  if (!st.enabled) primary = <button type="button" onClick={act.connect} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"}>Google連携</button>;
+  else if (st.phase === "needsAuth") primary = <button type="button" onClick={act.login} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"}>ログインして同期</button>;
+  else primary = (
+    <button type="button" onClick={act.syncNow} disabled={busy} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
+      <ArrowUpDown size={18} /> 今すぐ同期
+    </button>
+  );
+
+  return (
+    <div data-ft-overlay="" data-gsync-card="" className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+      style={{ zIndex: 2147482000 }} onClick={close}>
+      <BackgroundLock />
+      <div className="absolute inset-0 bg-black/45" />
+      <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-box "
+        + (closing ? "anim-sheet-out" : "anim-sheet")}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-neutral-200 shrink-0">
+          <span className={look.tone}><CloudGlyph mark={look.mark} anim={look.anim} size={24} /></span>
+          <div className="flex-1 min-w-0">
+            <p className="font-display text-[17px] text-neutral-900 tracking-wide">{launch ? "Googleドライブとつなぎ直す" : "Googleドライブ"}</p>
+            {st.enabled && st.email && <p className="text-neutral-500 truncate" style={{ fontSize: 12 }}>{st.email}</p>}
+          </div>
+          <button type="button" onClick={close} aria-label="閉じる"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={22} /></button>
+        </div>
+
+        <div className="ft-sheet-body overflow-y-auto px-5 pt-5 pb-2">
+          <SyncFlow st={st} />
+          <SyncStatusLine st={st} />
+          {note && <p className="text-[12.5px] text-amber-800 mt-2 text-center">{note}</p>}
+        </div>
+
+        <div className="shrink-0 px-4 pt-3 space-y-2" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+          {primary}
+          {launch ? (
+            <button type="button" onClick={close} className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px]"}>{st.phase === "needsAuth" ? "あとで" : "閉じる"}</button>
+          ) : onOpenBackup ? (
+            <button type="button" onClick={onOpenBackup}
+              className="w-full min-h-[44px] flex items-center justify-center gap-1 rounded-xl text-[13.5px] font-bold text-neutral-500 hover:bg-neutral-50 ft-tap">
+              ファイルでの保存・復元<ChevronRight size={16} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* バックアップ画面の上に置く、Google連携のカード。図はヘッダーの小窓と同じもの */
+function GoogleSyncCard() {
+  const sync = getGoogleSync();
+  const st = useSyncStatus();
   const [askOff, setAskOff] = useState(false);
   const [note, setNote] = useState("");
+  const act = useSyncActions(setNote);
   const [, tick] = useState(0);
   useEffect(() => { if (sync && st.hasClientId) sync.preload(); }, [sync, st.hasClientId]);
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30000); return () => clearInterval(t); }, []);
   /* クライアントID（index.html）が無いときは、カードごと出さない */
   if (!sync || !st.hasClientId) return null;
-
-  const connect = () => {
-    setNote("");
-    /* **ここで await を挟まないこと。** ログインのポップアップは、指の操作の流れの中でしか開かない */
-    if (!st.ready) { sync.preload(); setNote("準備中です。もう一度押してください。"); return; }
-    sync.connect();
-  };
   const busy = st.phase === "syncing";
-  const phaseText = st.phase === "syncing" ? "同期しています…"
-    : st.phase === "needsAuth" ? (st.message || "再ログインが必要です")
-      : st.phase === "offline" || st.phase === "error" ? st.message
-        : st.lastSyncAt ? `同期済み（${agoText(st.lastSyncAt)}）` : "準備できました";
-  const phaseColor = st.phase === "error" ? "text-rose-700" : st.phase === "needsAuth" || st.phase === "offline" ? "text-amber-700" : "text-neutral-500";
 
   return (
     <div data-gsync-card="" className="rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm">
-      <div className="flex items-center gap-2">
-        <RefreshCw size={17} className="text-th-800 shrink-0" />
-        <h3 className="font-display text-[17px] text-neutral-900 flex-1">Googleドライブと同期</h3>
-        {st.enabled && busy && <Spinner size={18} className="text-th-700" />}
+      <div className="flex items-center gap-2 mb-4">
+        <h3 className="font-display text-[17px] text-neutral-900 shrink-0">Googleドライブ</h3>
+        {st.enabled && <span className="text-neutral-500 truncate min-w-0 ml-auto" style={{ fontSize: 12 }}>{st.email || "アカウント確認中…"}</span>}
       </div>
+      <SyncFlow st={st} />
+      <SyncStatusLine st={st} />
 
       {!st.enabled && (
-        <>
-          <p className="text-[13.5px] leading-relaxed text-neutral-600 mt-2">
-            記録・写真・設定をGoogleドライブに自動で保存し、同じアカウントの端末どうしで同期します。
-          </p>
-          <button onClick={connect} className={BTN_PRIMARY + " w-full mt-3 " + BTN_H + " text-[15.5px]"}>Google連携</button>
-          {st.message && <p className="text-[12.5px] text-rose-700 mt-2">{st.message}</p>}
-
-        </>
+        <button onClick={act.connect} className={BTN_PRIMARY + " w-full mt-4 " + BTN_H + " text-[15.5px]"}>Google連携</button>
       )}
 
       {st.enabled && (
         <>
-          <div className="mt-2 text-[13.5px] text-neutral-700 break-all">{st.email ? `アカウント：${st.email}` : "アカウント確認中…"}</div>
-          <p className={"text-[13.5px] font-bold mt-1 " + phaseColor}>{phaseText}</p>
-          <div className="grid grid-cols-2 gap-2 mt-3">
-            <button onClick={() => { setNote(""); sync.syncManual(); }} disabled={busy} className={BTN_PRIMARY + " " + BTN_H + " text-[14.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
-              {st.phase === "needsAuth" ? "ログインする" : "今すぐ同期"}
-            </button>
+          <div className="grid grid-cols-2 gap-2 mt-4">
+            {st.phase === "needsAuth" ? (
+              <button onClick={act.login} className={BTN_PRIMARY + " " + BTN_H + " text-[14.5px]"}>ログインして同期</button>
+            ) : (
+              <button onClick={act.syncNow} disabled={busy} className={BTN_PRIMARY + " " + BTN_H + " text-[14.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
+                <ArrowUpDown size={16} /> 今すぐ同期
+              </button>
+            )}
             <button
               onClick={() => { if (!askOff) { setAskOff(true); setTimeout(() => setAskOff(false), 4000); return; } setAskOff(false); sync.disconnect(); }}
               className={BTN_SECONDARY + " " + BTN_H + " text-[14.5px]"}>
@@ -8048,14 +8262,10 @@ function GoogleSyncCard() {
             <input type="checkbox" className="mt-0.5" checked={st.autoBackup} onChange={(e) => sync.setAutoBackup(e.target.checked)} />
             <span>1日1回、バックアップファイルも保存（7日分）</span>
           </label>
-          <p className="text-[12.5px] text-neutral-400 mt-2 leading-relaxed">
-            書きかえると自動で同期します。ログインが切れたら「ログインする」を押してください。
-          </p>
         </>
       )}
 
       {note && <p className="text-[12.5px] text-amber-800 mt-2">{note}</p>}
-
     </div>
   );
 }
@@ -9376,6 +9586,8 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
+          {/* **中身の幅に上限を置くこと（2.17.0〜）。** タブレットで画面いっぱいに広がり、ボタンが極端に横長になっていた */}
+          <div className="max-w-lg mx-auto">
           <GoogleSyncCard />
           <div className="rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm">
             <div className="flex items-baseline gap-2">
@@ -9397,7 +9609,8 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
           </div>
 
           {/* **控えを取っていない書きかえがあることは、ここで一度だけ知らせること。**
-              あちこちに出すと、ただの飾りになって読み飛ばされる */}
+              あちこちに出すと、ただの飾りになって読み飛ばされる。
+              Googleドライブとつないでいるときは出さない（unsavedNow が 0。ドライブに入っていれば控えがあるのと同じ。2.17.0〜） */}
           {unsaved > 0 && (
             <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 mb-4">
               <p className="text-[13.5px] font-bold text-amber-800">
@@ -9437,6 +9650,7 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
 
           {/* いちばん下の逃げ場。無いと帯や一覧が画面の端すれすれになる */}
           <div className="h-16" />
+          </div>
         </div>
       </div>
 
@@ -10395,7 +10609,11 @@ function AppMain() {
     });
   }, []);
 
-  const unsavedNow = unsavedCount(records, prefs, folders);
+  /* Googleドライブとつないでいるときは、「書き出していない」の印（三本線の丸・バックアップ画面の黄色い帯）を出さない（2.17.0〜）。
+     ドライブに入っていれば控えがあるのと同じ。まだ送っていない分は、ヘッダーの雲に件数で出る */
+  const syncSt = useSyncStatus();
+  const driveOn = !!(syncSt.hasClientId && syncSt.enabled);
+  const unsavedNow = driveOn ? 0 : unsavedCount(records, prefs, folders);
 
   const markBackedUp = useCallback(() => {
     setPrefs((prev) => {
@@ -10841,6 +11059,31 @@ function AppMain() {
     const g = getGoogleSync();
     if (g) g.notifyChange();
   }, [loaded, records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg]);
+  /* ヘッダーの雲から開く小窓。"open"＝雲を押した、"launch"＝起動したときにログインが切れていた（2.17.0〜）。
+     **起動の小窓は、起動の画面（スプラッシュ）が消えてから出すこと。** 消える前に出すと、覆いの下に隠れたまま開く */
+  const [syncSheet, setSyncSheet] = useState(null);
+  const [splashGone, setSplashGone] = useState(false);
+  useEffect(() => {
+    if (!loaded || splashGone) return undefined;
+    let t = null;
+    const look = () => {
+      const gone = typeof document === "undefined" || !document.getElementById("splash")
+        || document.documentElement.classList.contains("ft-shown");
+      if (gone) t = setTimeout(() => setSplashGone(true), 450);
+      else t = setTimeout(look, 150);
+    };
+    look();
+    return () => clearTimeout(t);
+  }, [loaded, splashGone]);
+  useEffect(() => {
+    if (splashGone && syncSt.enabled && syncSt.askLogin) setSyncSheet((p) => p || "launch");
+  }, [splashGone, syncSt.enabled, syncSt.askLogin]);
+  const syncUi = useMemo(() => ({ open: () => setSyncSheet("open") }), []);
+  const closeSyncSheet = useCallback(() => {
+    setSyncSheet(null);
+    const g = getGoogleSync();
+    if (g) g.dismissLogin();
+  }, []);
 
   if (!loaded) {
     /* ここは起動中の覆い（index.html の #splash）に隠れているので、
@@ -10932,6 +11175,7 @@ function AppMain() {
     <ArtworkContext.Provider value={artworks}>
     <PrefsContext.Provider value={prefs}>
     <UnsavedContext.Provider value={unsavedNow}>
+    <SyncUiContext.Provider value={syncUi}>
     <TypeNameContext.Provider value={typeDesc.name}>
     <MenuContext.Provider value={openMenu}>
     {/* ft-root ＝ 動きの効き先。「動きの演出」を切ると ft-still が付いて、すべて止まる */}
@@ -11120,6 +11364,19 @@ function AppMain() {
         .anim-fade-out  { animation: ft-fade-out 0.2s ease-out forwards; }
         .anim-pop       { animation: ft-pop 0.26s cubic-bezier(0.34,1.4,0.5,1) backwards; }
         .spin           { animation: ft-spin 0.75s linear infinite; }
+        /* 同期の図の矢印（2.17.0〜）。線は currentColor、先の三角は ::after。
+           ft-flow-run ＝ やりとり中（点線が矢印の向きへ流れる）、ft-flow-stop ＝ 止まっている（灰色の点線・動かない） */
+        .ft-flow { position: relative; height: 3px; border-radius: 3px; background: currentColor; margin: 5px 7px 3px; }
+        .ft-flow::after { content: ""; position: absolute; top: 50%; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; transform: translateY(-50%); }
+        .ft-flow-r::after { right: -8px; border-left: 9px solid currentColor; }
+        .ft-flow-l::after { left: -8px; border-right: 9px solid currentColor; }
+        .ft-flow-run, .ft-flow-stop { background: repeating-linear-gradient(90deg, currentColor 0 7px, transparent 7px 12px); background-size: 12px 3px; }
+        .ft-flow-run.ft-flow-r { animation: ft-flow-r 0.55s linear infinite; }
+        .ft-flow-run.ft-flow-l { animation: ft-flow-l 0.55s linear infinite; }
+        @keyframes ft-flow-r { from { background-position: 0 0; } to { background-position: 12px 0; } }
+        @keyframes ft-flow-l { from { background-position: 12px 0; } to { background-position: 0 0; } }
+        .ft-sync-bob { animation: ft-sync-bob 1s ease-in-out infinite; transform-origin: center; }
+        @keyframes ft-sync-bob { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
         .no-anim, .no-anim * { animation: none !important; }
 
         /* ============================================================
@@ -11596,6 +11853,11 @@ function AppMain() {
             onCancel={() => setDupState(null)} />
         )}
 
+        {syncSheet && (
+          <SyncSheet launch={syncSheet === "launch"} onClose={closeSyncSheet}
+            onOpenBackup={() => { closeSyncSheet(); if (goFromMenuRef.current) goFromMenuRef.current("backup"); }} />
+        )}
+
         {backupOpen && <BackupScreen zIndex={menuLift === "backup" ? MENU_LIFT_Z : undefined} records={records} folders={folders} artworks={artworks} garden={garden} tagMaster={tagMaster}
           prefs={prefs} captions={captions} typeDesc={typeDesc} headerBg={headerBg} onClose={() => setBackupOpen(false)} onRestore={handleRestore} onBackedUp={markBackedUp}
           onImportOne={importOneFile} />}
@@ -11665,7 +11927,9 @@ function AppMain() {
               label: "バックアップ",
               /* **いつ書き出したかを、開かなくても分かるようにすること。**
                  「書き出しと復元」とだけ書いてあっても、控えが古いことに気づけない */
-              desc: unsavedNow > 0
+              desc: driveOn
+                ? (syncSt.lastSyncAt ? `Googleドライブ・${agoText(syncSt.lastSyncAt)}に同期` : "Googleドライブと同期")
+                : unsavedNow > 0
                 ? (prefs.lastBackup ? `前回は ${fmtJpDate(prefs.lastBackup)}・${unsavedNow}件が未書き出し` : "まだ一度も書き出していません")
                 : (prefs.lastBackup ? `${fmtJpDate(prefs.lastBackup)} に書き出しました` : "書き出しと復元"),
               icon: <Download size={20} />,
@@ -11700,6 +11964,7 @@ function AppMain() {
     </div>
     </MenuContext.Provider>
     </TypeNameContext.Provider>
+    </SyncUiContext.Provider>
     </UnsavedContext.Provider>
     </PrefsContext.Provider>
     </ArtworkContext.Provider>
