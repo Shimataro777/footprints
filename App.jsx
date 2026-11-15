@@ -6676,9 +6676,13 @@ function computeNextReading(records) {
   return { book: nextBook.name, chapter: 1, newBook: true, finished: last.book };
 }
 
-/* 通読の「続きから」。ホームの木の下に置く（2.18.0〜）。
-   その書をどこまで読んだか（○/○章）を、細い棒といっしょに添える。
-   数えるのは事実だけ。呼びかけ・ほめ言葉は書かないこと */
+/* 通読の「続きから」。ホームの木の下に、さりげない1行で置く（2.18.1〜）。
+   2.18.0 は大きなカード（題18px・アイコン44px・影つき）で、目立ちすぎると言われた。
+   ・1行：しるし／小さなラベル／書と章（ここだけ太字）／読んだ章数／›。
+     進み具合の棒は付けない（2.18.2。下のふちの細い線は要らないと言われた。数字だけで足りる）
+   ・**文字「大」でも1行に収まること。** 書の名前だけが縮む（truncate）。ほかは shrink-0。
+     ラベルを長い文（「○○を読み終えました。次は」）にしないこと。1行に入らなくなる
+   ・影を付けない。枠は1px のうすい線。ほめ言葉・呼びかけは書かない */
 function ContinueCard({ records, onStart }) {
   const next = useMemo(() => computeNextReading(records), [records]);
   const readN = useMemo(() => (next ? Object.keys(chapterCountsByBook(records)[next.book] || {}).length : 0), [records, next]);
@@ -6687,24 +6691,16 @@ function ContinueCard({ records, onStart }) {
   return (
     <button
       onClick={() => onStart({ book: next.book, chapters: [next.chapter] })}
-      className="w-full text-left rounded-2xl border border-th-700/25 bg-white p-4 mb-4 flex items-center gap-3 ft-tap ft-tap-card shadow-sm"
+      aria-label={`通読の続きから：${next.book} ${next.chapter}章`}
+      className="w-full text-left rounded-xl border border-neutral-200 bg-white px-3 py-2.5 mb-3 flex items-center gap-2 ft-tap ft-tap-card"
     >
-      <span className="w-11 h-11 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center shrink-0">
-        <BookOpen size={20} className="text-th-800" />
-      </span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-[11.5px] font-bold tracking-wider text-th-800/70">
-          {next.first ? "はじめから" : next.newBook ? `${next.finished} を読み終えました。次は` : "続きから"}
-        </span>
-        <span className="block font-display text-[18px] text-neutral-900 truncate">{next.book} {next.chapter}章</span>
-        {total > 0 && readN > 0 && (
-          <span className="flex items-center gap-2 mt-1.5">
-            <span className="flex-1 min-w-0"><MiniBar value={readN} total={total} /></span>
-            <span className="text-[11.5px] font-bold text-neutral-500 tabular-nums shrink-0">{readN}/{total}章</span>
-          </span>
-        )}
-      </span>
-      <ChevronRight size={20} className="text-neutral-400 shrink-0" />
+      <BookOpen size={16} className="text-th-800 shrink-0" />
+      <span className="text-[11.5px] font-bold text-th-800/70 shrink-0">{next.first ? "はじめから" : next.newBook ? "次の書" : "続きから"}</span>
+      <span className="flex-1 min-w-0 text-[13.5px] font-bold text-neutral-900 truncate">{next.book} {next.chapter}章</span>
+      {total > 0 && readN > 0 && (
+        <span className="text-[11.5px] text-neutral-500 tabular-nums shrink-0">{readN}/{total}</span>
+      )}
+      <ChevronRight size={16} className="text-neutral-400 shrink-0" />
     </button>
   );
 }
@@ -7004,7 +7000,7 @@ function HomeScreen({ records, prefs, onOpenBackup, garden, onStartCycle, onHarv
         <TreeArea records={records} garden={garden} onStart={onStartCycle} onHarvest={onHarvest} />
         {/* 通読のつづきは、木のすぐ下（2.18.0〜。それまでは記録画面のいちばん上）。
             開いてすぐ、今日読むところから書き始められるように（依頼による） */}
-        <div className="mt-3"><ContinueCard records={records} onStart={onStartReading} /></div>
+        <div className="mt-2"><ContinueCard records={records} onStart={onStartReading} /></div>
         <BackupReminder records={records} prefs={prefs} onOpenBackup={onOpenBackup} />
       </div>
     </div>

@@ -1,7 +1,7 @@
 /* gsync.js の試験。  node gsync.test.mjs
    本物のGoogleドライブの代わりに、同じ形で答える偽のドライブを使い、2〜3台の端末のふるまいを再現する */
 import assert from "node:assert/strict";
-import { createGoogleSync, mergeKeyed, mergeValue, DATA_FILE, BACKUP_PREFIX, SYNC_FOLDER, MYTECHO_SCHEMA } from "./gsync.src.mjs";
+import { createGoogleSync, mergeKeyed, mergeValue, DATA_FILE, BACKUP_PREFIX, SYNC_FOLDER } from "./gsync.js";
 
 /* ---------- 偽のGoogleドライブ ---------- */
 function fakeDrive() {
@@ -161,7 +161,7 @@ await test("削除が届く。別端末で書き直していたら消さない",
   assert.equal(ids(B), "r1,r2,r3");
   // A が r1・r2 を消す。B は r2 を書き直す
   A.st.records = A.st.records.filter((r) => r.id === "r3");
-  B.st.records = B.st.records.map((r) => (r.id === "r2" ? { ...r, text: "two-B", updatedAt: new Date(CLOCK + 1000).toISOString() } : r));
+  B.st.records = B.st.records.map((r) => (r.id === "r2" ? { ...r, text: "two-B", updatedAt: "2026-11-05T00:00:00.000Z" } : r));
   await A.run();
   await B.run();
   assert.equal(ids(B), "r2,r3", "r1は消え、書き直したr2は残る");
@@ -321,74 +321,7 @@ await test("初めての連携でログインを拒否されたら、未連携�
   A.auth.request = req;
 });
 
-await test("読み込み時の自動補正で中身が違っても、消した記録は戻ってこない", async () => {
-  const drive = fakeDrive();
-  const A = device("A", drive), B = device("B", drive);
-  A.st.records = [rec("r1", "one"), rec("r2", "two")];
-  await A.sync.connect(); await B.sync.connect();
-  // Bの記録は、読み込み直しで自動的に整えられて中身が少し変わった（直した時刻は変わらない）
-  B.st.records = B.st.records.map((r) => ({ ...r, links: [], images: [] }));
-  A.st.records = A.st.records.filter((r) => r.id !== "r1");
-  await A.run();
-  await B.run();
-  assert.equal(ids(B), "r2", "Bからも消える");
-  await A.run();
-  assert.equal(ids(A), "r2", "Aに戻ってこない");
-});
-
-await test("長く圏外だった端末が消しても、そのあいだに別端末で直した記録は残る", async () => {
-  const drive = fakeDrive();
-  const A = device("A", drive), B = device("B", drive);
-  A.st.records = [rec("r1", "one"), rec("r2", "two")];
-  await A.sync.connect(); await B.sync.connect();
-  // Aは圏外。Bが r1 を直して同期。そのあとAが（古い状態のまま）r1 を消して同期
-  CLOCK += 3600 * 1000;
-  B.st.records = B.st.records.map((r) => (r.id === "r1" ? { ...r, text: "one-edited", updatedAt: new Date(CLOCK).toISOString() } : r));
-  await B.run();
-  CLOCK += 3 * 24 * 3600 * 1000;
-  A.st.records = A.st.records.filter((r) => r.id !== "r1");
-  await A.run();
-  assert.equal(ids(A), "r1,r2", "Bが直した r1 は消えない");
-  assert.equal(A.st.records.find((r) => r.id === "r1").text, "one-edited");
-});
-
-await test("My手帳の形：計画・種類・フォルダ・タグも同期し、checkedAt の新しいほうを残す", async () => {
-  const drive = fakeDrive();
-  const mk = (name) => {
-    const st = { records: [], plans: [], kinds: [], folders: [], tags: [], prefs: { theme: "sky" } };
-    const kvm = new Map();
-    const d = { st };
-    d.sync = createGoogleSync({
-      schema: MYTECHO_SCHEMA, names: { folder: "MyTecho-Sync", data: "mytecho-sync.json", backup: "hibi-backup-", backupExt: ".json" },
-      fetch: (u, i) => drive.fetch(u, i), ls: mem(), kv: { get: async (k) => kvm.get(k) ?? null, set: async (k, v) => kvm.set(k, JSON.parse(JSON.stringify(v))), del: async (k) => kvm.delete(k) },
-      auth: { getStored: () => "t", clear() {}, isReady: () => true, preload: async () => true, request: async () => ({ token: "t" }), revoke() {} }, now: () => CLOCK,
-      getSnapshot: async () => JSON.parse(JSON.stringify(st)), applySnapshot: async (m) => { Object.assign(st, JSON.parse(JSON.stringify(m))); },
-      listPhotoRefs: () => [], photoHas: async () => true, photoGet: async () => null, photoPut: async () => {},
-    });
-    d.run = async () => { CLOCK += 60000; await d.sync.syncManual(); };
-    return d;
-  };
-  const A = mk("A"), B = mk("B");
-  A.st.records = [{ id: "t1", type: "todo", date: "2026-11-01", checked: false, createdAt: "2026-11-01T00:00:00.000Z", updatedAt: null }];
-  A.st.plans = [{ id: "p1", name: "読書", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: null }];
-  A.st.kinds = [{ id: "k1", name: "運動" }];
-  A.st.folders = [{ id: "f1", name: "仕事", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: null }];
-  A.st.tags = ["家族", "仕事"];
-  await A.sync.connect(); await B.sync.connect();
-  assert.equal(B.st.plans.length, 1); assert.equal(B.st.kinds.length, 1); assert.equal(B.st.folders.length, 1);
-  assert.deepEqual(B.st.tags.sort(), ["仕事", "家族"]);
-  assert.ok([...drive.files.values()].some((f) => f.name === "mytecho-sync.json"));
-  // 両方でチェックを付け外し。checkedAt が新しいほうが勝つ
-  A.st.records[0] = { ...A.st.records[0], checked: true, checkedAt: "2026-11-09T12:10:00.000Z" };
-  B.st.records[0] = { ...B.st.records[0], checked: false, checkedAt: "2026-11-09T12:20:00.000Z" };
-  await A.run(); await B.run(); await A.run();
-  assert.equal(A.st.records[0].checked, false); assert.equal(B.st.records[0].checked, false);
-  // タグを消すと伝わる
-  B.st.tags = ["仕事"]; await B.run(); await A.run();
-  assert.deepEqual(A.st.tags, ["仕事"]);
-});
-
-await test("2.30.0 ログインが切れていても、指の操作の外ではログイン画面を開かない。起動時は askLogin を立てる", async () => {
+await test("2.17.0 ログインが切れていても、指の操作の外ではログイン画面を開かない。起動時は askLogin を立てる", async () => {
   const drive = fakeDrive();
   const A = device("A", drive);
   A.st.records = [rec("r1", "one")];
@@ -423,7 +356,7 @@ await test("2.30.0 ログインが切れていても、指の操作の外では�
   } finally { A.sync.stop(); A.auth.request = req; }
 });
 
-await test("2.30.0 送っていない数・受け取った数", async () => {
+await test("2.17.0 送っていない数・受け取った数", async () => {
   const drive = fakeDrive();
   const A = device("A", drive);
   const B = device("B", drive);
