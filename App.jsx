@@ -2294,7 +2294,7 @@ function DateInput({ className, value, onChange, row }) {
   );
 }
 
-function TextArea({ value, onChange, className, minRows, bare, ...rest }) {
+function TextArea({ value, onChange, className, minRows, bare, style: extraStyle, ...rest }) {
   const ref = useRef(null);
   /* いまの高さを、どの中身で測ったか。同じ中身で二度測らない（2.13.0〜） */
   const sizedFor = useRef(null);
@@ -2338,7 +2338,7 @@ function TextArea({ value, onChange, className, minRows, bare, ...rest }) {
     if (window.scrollY !== winY) window.scrollTo(0, winY);
   };
   React.useLayoutEffect(() => { resize(); }, [value]);
-  const style = minRows ? { minHeight: `${minRows * 1.7 + 1.5}em` } : undefined;
+  const style = minRows ? { minHeight: `${minRows * 1.7 + 1.5}em`, ...(extraStyle || {}) } : extraStyle;
   /* rows={1} は必ず付けること。
      textarea は何も指定しないと「2行ぶん」の高さから始まるため、
      1行だけの欄が、となりの入力欄より2〜3割ほど背の高い箱に見えてしまう。
@@ -2792,6 +2792,26 @@ function RefBox({ children, inserter, refsText }) {
   );
 }
 
+/* 通読のメモ欄（2.18.0〜）。1行の小さな欄。左に鉛筆、右に聖書箇所を足す丸いボタン。
+   読み取れた聖書箇所の札は、あるときだけ下に出る（RefBox のように、いつも帯を敷かない） */
+function NoteLine({ children, inserter, refsText }) {
+  const has = useMemo(() => parseBibleRefs(refsText).length > 0, [refsText]);
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden focus-within:border-th-800 focus-within:ring-4 focus-within:ring-th-800/20">
+      <div className="flex items-start">
+        <span className="text-neutral-400 shrink-0 flex items-center" style={{ height: 48, paddingLeft: 14 }}><Pencil size={16} /></span>
+        <div className="flex-1 min-w-0">{children}</div>
+        <span className="shrink-0 flex items-center" style={{ height: 48, paddingRight: 6 }}>{inserter}</span>
+      </div>
+      {has && (
+        <div className="border-t border-neutral-100 bg-neutral-50 px-2.5 py-1.5 flex flex-wrap items-center gap-1.5">
+          <RecognizedRefs text={refsText} inline />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* テキスト中に含まれる聖句引用ごとに、その部分だけを聖句へ追加できるようにする */
 /* 本文と、そのあとに続く聖書箇所を「ひとつの引用」として切り出す。
    閲覧画面の縦線（引用ブロック）は、この範囲を使う。「〇〇を聖句に追加」の機能は、間違えて押しやすいので 2.1.0 で無くした（コードは、縦線の範囲を決める側だけ残してある）。
@@ -3080,10 +3100,17 @@ function useLockBackground() {
        ・❌ 押し上げに window.scrollTo のくり返しで対抗しない／offsetTop で画面を下へずらして相殺しない
          （2.16.2〜2.16.5 の「相殺」は、iOS が報告する量と実際の動きが食い違うと、画面ぜんたいを下げてしまう。やめた）
        ================================================================ */
-    const KB_WAIT_MS = 150;   /* タップからこれより前には持ち上げはじめない（キーボードを先に見せる） */
+    /* **2.18.0：押してからカーソルが出るまでを短くした**（「時差があって使いづらい」という声による）。
+       ・KB_WAIT_MS 150 → 90、KB_UP_MS 450 → 340、KB_EARLY_PX 3 → 5
+       ・持ち上げの要らない欄（見込みのキーボードより KB_FIT_SAFE 以上、上にある欄）は、キーボードの出た知らせを
+         待たずに KB_WAIT_MS で本物へフォーカスを移す（startSlide の "early"）。それまでは知らせ（0.3〜0.4秒）を待っていた
+       目安：持ち上げの要らない欄 約0.35〜0.42秒 → 約0.1秒／持ち上げる欄 約0.4秒 → 約0.27秒。
+       **iPhone 実機では未確認。** 見出しが動く・欄がキーボードに隠れるようなら、まず KB_FIT_SAFE を 9999 に
+       （＝知らせを待つ、2.17.0 までの動き）、次にこの3つの数を元へ戻して切り分けること */
+    const KB_WAIT_MS = 90;   /* タップからこれより前には持ち上げはじめない（キーボードを先に見せる） */
     const KB_FALLBACK_MS = 420; /* キーボードの出た知らせを、ここまで待つ */
     const KB_FALLBACK2_MS = 480; /* それでも来なければ、さらにここまで待つ。来なければ画面のキーボードは無いとみなす */
-    const KB_UP_MS = 450;     /* 持ち上げる時間。目に優しい遅さにしてある */
+    const KB_UP_MS = 340;     /* 持ち上げる時間。目に優しい遅さにしてある */
     const KB_DOWN_MS = 360;   /* 下ろす時間 */
     const KB_EASE_UP = "cubic-bezier(0.22,1,0.36,1)";   /* --ease-out と同じ */
     const KB_EASE_DOWN = "cubic-bezier(0.22,1,0.36,1)";
@@ -3092,7 +3119,10 @@ function useLockBackground() {
        その見えない残りを待たずにカーソルを出す。**残り（数 px）は GAP（12px）より小さくしておくこと。**
        フォーカスが入った時点で、欄の下端がキーボードの上端より上にあれば、iPhone は画面を押し上げない。
        0 にすると 2.10.0 までと同じ（持ち上げが終わってからフォーカス）。紙と全画面だけに使う */
-    const KB_EARLY_PX = 3;
+    const KB_EARLY_PX = 5;
+    /* 覚えているキーボードの高さより、これだけ余分に上にある欄は「持ち上げが要らない」とみなして、
+       知らせを待たずにフォーカスを移す（2.18.0〜）。覚えた高さと実際が少し違っても（予測変換の帯など）隠れない幅 */
+    const KB_FIT_SAFE = 56;
     /* KB_EASE_UP（cubic-bezier(0.22,1,0.36,1)）で、進み具合が prog に達する時点（0〜1）。二分探索 */
     const easeUpTimeAt = (prog) => {
         if (prog <= 0)
@@ -3694,8 +3724,18 @@ function useLockBackground() {
         const fitsNow = () => p.el.isConnected && Math.ceil(fieldBottom(p) + GAP - kbTopNow()) <= 0;
         /* 覚えている高さで先に動き出すのは、持ち上げが要るときだけ（2.10.1〜）。
            持ち上げの要らない欄は、これまでどおりキーボードの出た知らせを待ってからフォーカスする */
-        if (fromFallback === "early" && !kbOut && fitsNow())
+        if (fromFallback === "early" && !kbOut && fitsNow()) {
+            /* 2.18.0〜：見込みのキーボードより十分に上にある欄は、知らせを待たずに本物へ移す。
+               フォーカスの時点で、カーソルはキーボードの上端より KB_FIT_SAFE 以上、上にある＝iPhone は押し上げない。
+               余地・下の帯の合わせ直しは、あとから来る知らせ（measure）がこれまでどおり行う */
+            if (p.el.isConnected && Math.ceil(fieldBottom(p) + GAP + KB_FIT_SAFE - kbTopNow()) <= 0) {
+                p.started = true;
+                clearTimeout(p.fallback);
+                clearTimeout(p.early);
+                finishPending(true);
+            }
             return;
+        }
         /* キーボードの出た知らせがまだ来ていない。いちど待ち足す。それでも来なければ、画面のキーボードが
            出ない端末（外付けキーボードの iPad など）とみなし、持ち上げずに本物へ移す（2.16.7〜）。
            **欄が見込みのキーボードより上に収まっているときは、待ち足さない（2.10.1〜）。**
@@ -4334,120 +4374,374 @@ function keepPickedChapters(book, chapters, text) {
   return kept.length ? { book, chapters: kept } : { book: "", chapters: [] };
 }
 
-/* 書・章・節を選んでテキストへ挿入するミニピッカー */
-function RefInserter({ onInsert, onPickRange, label }) {
+/* ============================================================
+   書・章・節を「押して選ぶ」部品（2.18.0〜）
+   ----------------------------------------------------------------
+   2.17.0 までは、書・章・節をドラムで1つずつ回して選んでいた。何章も読んだ日や、
+   聖書箇所をいくつも挙げる学びでは、開く→回す→決定 のくり返しが多く、使いづらいという声があった。
+   ここからは、マス目を押すだけにする。
+   ・BookGrid   … 66巻を、まとまり（BOOK_GROUPS）ごとのマス目で
+   ・NumGrid    … 章・節の数字のマス目
+   ・ReadingPicker … 通読の入力（書＋読んだ章を、押して何章でも）
+   ・RefInserter   … 文に聖書箇所を足す紙（書→章→節。閉じずに続けて何か所でも足せる）
+   **ドラム（DrumSelect）へ戻さないこと。** 年・月・並べ替えなど、ほかの所のドラムはそのまま
+   ============================================================ */
+/* マス目に並べるときの、書の短い呼び名。**BOOKS と同じ並び・同じ数（66）にすること** */
+const BOOK_SHORT = [
+  "創世記", "出エジプト", "レビ記", "民数記", "申命記",
+  "ヨシュア", "士師記", "ルツ記", "Ⅰサムエル", "Ⅱサムエル", "Ⅰ列王", "Ⅱ列王", "Ⅰ歴代", "Ⅱ歴代", "エズラ", "ネヘミヤ", "エステル",
+  "ヨブ記", "詩篇", "箴言", "伝道者", "雅歌",
+  "イザヤ", "エレミヤ", "哀歌", "エゼキエル", "ダニエル",
+  "ホセア", "ヨエル", "アモス", "オバデヤ", "ヨナ", "ミカ", "ナホム", "ハバクク", "ゼパニヤ", "ハガイ", "ゼカリヤ", "マラキ",
+  "マタイ", "マルコ", "ルカ", "ヨハネ", "使徒",
+  "ローマ", "Ⅰコリント", "Ⅱコリント", "ガラテヤ", "エペソ", "ピリピ", "コロサイ", "Ⅰテサロニケ", "Ⅱテサロニケ", "Ⅰテモテ", "Ⅱテモテ", "テトス", "ピレモン",
+  "ヘブル", "ヤコブ", "Ⅰペテロ", "Ⅱペテロ", "Ⅰヨハネ", "Ⅱヨハネ", "Ⅲヨハネ", "ユダ", "黙示録",
+];
+
+/* 旧約・新約の切り替えと、書のマス目。marks（Set）に入っている書は、うすく色を付ける */
+function BookGrid({ value, onPick, marks, startTestament }) {
+  const idx = bookIndexOf(value);
+  const [testament, setTestament] = useState(idx < 9999 ? (idx >= OT_COUNT ? "new" : "old") : (startTestament || "old"));
+  const groups = BOOK_GROUPS.filter((g) => (testament === "old" ? g.from < OT_COUNT : g.from >= OT_COUNT));
+  return (
+    <div>
+      <div className="flex gap-1.5 mb-3">
+        {[["old", "旧約"], ["new", "新約"]].map(([k, label]) => (
+          <TapOnceButton key={k} onTap={() => setTestament(k)} aria-pressed={testament === k}
+            className={"flex-1 " + BTN_H + " ft-tap rounded-lg border-2 text-[13.5px] font-bold "
+              + (testament === k ? "border-th-700 bg-th-50 text-th-900" : "border-neutral-200 bg-white text-neutral-500")}>
+            {label}
+          </TapOnceButton>
+        ))}
+      </div>
+      {groups.map((g) => (
+        <div key={g.label} className="mb-3">
+          <p className="text-[11.5px] font-bold tracking-wider text-neutral-500 mb-1.5">{g.label}</p>
+          <div className="ft-bkgrid">
+            {BOOKS.slice(g.from, g.to + 1).map((b, i) => {
+              const on = b.name === value;
+              const mark = !on && marks && marks.has(b.name);
+              return (
+                <TapOnceButton key={b.name} onTap={() => onPick(b.name)} aria-pressed={on} aria-label={b.name}
+                  className={"ft-bk ft-tap rounded-xl border text-[13.5px] font-bold "
+                    + (on ? "border-th-800 bg-th-800 text-white" : mark ? "border-th-200 bg-th-50 text-th-800" : "border-neutral-200 bg-white text-neutral-700")}>
+                  {BOOK_SHORT[g.from + i] || b.name}
+                </TapOnceButton>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* 1〜count の数字のマス目。isOn(n) ＝選んでいる／isMark(n) ＝うすく色を付ける／isOff(n) ＝押せない */
+function NumGrid({ count, from = 1, isOn, isMark, isOff, onTap, unit, firstRef }) {
+  const cells = [];
+  for (let n = from; n <= count; n++) {
+    const on = !!(isOn && isOn(n));
+    const off = !on && !!(isOff && isOff(n));
+    const mark = !on && !!(isMark && isMark(n));
+    cells.push(
+      <TapOnceButton key={n} onTap={() => onTap(n)} disabled={off} aria-pressed={on} aria-label={`${n}${unit || ""}`}
+        data-ft-first={firstRef === n ? "" : undefined}
+        className={"ft-num ft-tap rounded-xl border text-[15.5px] font-bold tabular-nums disabled:opacity-30 "
+          + (on ? "border-th-800 bg-th-800 text-white ft-daypop" : mark ? "border-th-200 bg-th-50 text-th-800" : "border-neutral-200 bg-white text-neutral-700")}>
+        {n}
+      </TapOnceButton>
+    );
+  }
+  return <>{cells}</>;
+}
+
+/* 下から出る紙の、共通の外わく（見出し＋送れる中身＋足もとのボタン）。
+   **ft-sheet-wrap / ft-sheet-box / ft-sheet-body の3つをセットで使う決まりは、ここで守っている** */
+function PickSheet({ title, onClose, children, foot, zIndex = 2147483100, tall }) {
+  const [closing, close] = useClosing(onClose);
+  return (
+    <div data-ft-overlay="" className={"ft-sheet-wrap flex items-end justify-center " + (closing ? "anim-fade-out" : "anim-fade")}
+      style={{ zIndex }} onClick={close}>
+      <BackgroundLock />
+      <div className="absolute inset-0 bg-black/45" />
+      <div className={"relative w-full max-w-lg bg-white rounded-t-2xl border-t border-neutral-200 shadow-xl flex flex-col ft-sheet-box "
+        + (tall ? "ft-sheet-tall " : "") + (closing ? "anim-sheet-out" : "anim-sheet")}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between py-1.5 border-b border-neutral-200 shrink-0" style={{ paddingLeft: 16, paddingRight: 8 }}>
+          <span className="font-display text-[15.5px] text-neutral-900 min-w-0 truncate">{title}</span>
+          <button type="button" onClick={close} aria-label="閉じる"
+            className="min-w-[48px] min-h-[48px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={26} /></button>
+        </div>
+        {typeof children === "function" ? children(close) : children}
+        {foot ? foot(close) : <div className="shrink-0" style={{ height: "calc(env(safe-area-inset-bottom) + 12px)" }} />}
+      </div>
+    </div>
+  );
+}
+
+/* 通読の「読んだ箇所」の文字（passageText）を、選んだ書・章から作る。
+   通読の passageText は、入力画面の中でしか使っていない控え（一覧・閲覧・集計は book / chapters を見る）。
+   2.18.0 から入力欄そのものは無くしたが、**前の版で手で書かれていた文字は捨てない**
+   （選び直す前の書・章から作った文字だけを取りのぞき、残りは後ろへ付けて残す） */
+function readingPieces(book, chapters) {
+  if (!book) return [];
+  return chapterRanges((chapters || []).filter((c) => typeof c === "number"))
+    .map(([a, b]) => (a === b ? `${book} ${a}章` : `${book} ${a}章-${b}章`));
+}
+function readingPassage(book, chapters, prev) {
+  let extra = (prev && prev.passageText) || "";
+  if (extra) {
+    /* 長いものから取りのぞく（「1章-3章」より先に「1章」を消して、切れはしを残さないため） */
+    [...readingPieces(prev.book, prev.chapters)].sort((a, b) => b.length - a.length)
+      .forEach((p) => { extra = extra.split(p).join(" "); });
+    extra = extra.replace(/\s+/g, " ").trim();
+  }
+  return [readingPieces(book, chapters).join(" "), extra].filter(Boolean).join(" ");
+}
+
+/* 章のマス目を、ここより多い書では「送れる箱」に入れる（詩篇150・イザヤ66 など）。
+   そのまま並べると、メモ欄や保存のボタンまでが遠くなる */
+const READ_GRID_SCROLL_OVER = 56;
+
+/* 通読の入力：書をえらび、読んだ章を押していく。
+   ・うすい色のマス＝これまでに読んだ章（counts）。濃い色＝いま選んでいる章
+   ・離れた章を選んだときだけ「○〜○章をすべて」が出る（あいだを1回で埋める）
+   ・書の名前の下の棒は、この書をどこまで読んだか（いま選んでいる章もふくめる）。押すたびに伸びる */
+function ReadingPicker({ book, chapters, counts, onChange }) {
+  const [pickBook, setPickBook] = useState(false);
+  const info = bookByName(book);
+  const total = info ? info.chapters : 0;
+  const chosen = useMemo(() => [...new Set((chapters || []).filter((c) => typeof c === "number" && c >= 1 && c <= total))].sort((a, b) => a - b), [chapters, total]);
+  const chosenSet = useMemo(() => new Set(chosen), [chosen]);
+  const mine = (counts && counts[book]) || {};
+  const toggle = (n) => onChange({ book, chapters: chosenSet.has(n) ? chosen.filter((c) => c !== n) : [...chosen, n].sort((a, b) => a - b) });
+  const lo = chosen.length ? chosen[0] : 0;
+  const hi = chosen.length ? chosen[chosen.length - 1] : 0;
+  const hasGap = chosen.length >= 2 && hi - lo + 1 > chosen.length;
+  const fill = () => { const all = []; for (let c = lo; c <= hi; c++) all.push(c); onChange({ book, chapters: all }); };
+  let readN = 0;
+  for (let c = 1; c <= total; c++) if (mine[c] || chosenSet.has(c)) readN++;
+  /* 書ぜんたいを読み終えている書（書を選ぶ紙で、うすく色を付ける） */
+  const doneBooks = useMemo(() => {
+    const s = new Set();
+    BOOKS.forEach((b) => { const m = (counts && counts[b.name]) || {}; if (Object.keys(m).length >= b.chapters) s.add(b.name); });
+    return s;
+  }, [counts]);
+  /* 送れる箱のときは、選んでいる章（無ければ、まだ読んでいない最初の章）が見える所から始める */
+  const scrolls = total > READ_GRID_SCROLL_OVER;
+  let first = chosen[0] || 0;
+  if (!first) { for (let c = 1; c <= total; c++) if (!mine[c]) { first = c; break; } }
+  const boxRef = useRef(null);
+  React.useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box || !scrolls) return;
+    const el = box.querySelector("[data-ft-first]");
+    box.scrollTop = el ? Math.max(0, el.offsetTop - 48) : 0;
+  }, [book]); // eslint-disable-line
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-white overflow-hidden mb-4">
+      <button type="button" onClick={() => setPickBook(true)} aria-label="書を選ぶ"
+        className="w-full flex items-center gap-3 px-3.5 py-3 text-left ft-tap ft-tap-card">
+        <span className="w-11 h-11 rounded-xl bg-th-50 border border-th-200 flex items-center justify-center text-th-800 shrink-0"><BookOpen size={20} /></span>
+        <span className="flex-1 min-w-0">
+          <span className={"block font-display text-[18px] truncate " + (info ? "text-neutral-900" : "text-neutral-400")}>{info ? book : "書を選ぶ"}</span>
+          {info && (
+            <span className="flex items-center gap-2 mt-1">
+              <span className="flex-1 min-w-0"><MiniBar value={readN} total={total} /></span>
+              <span className="text-[11.5px] font-bold text-neutral-500 tabular-nums shrink-0">{readN}/{total}章</span>
+            </span>
+          )}
+        </span>
+        <ChevronDown size={18} className="text-neutral-400 shrink-0" />
+      </button>
+      {info && (
+        <div className="border-t border-neutral-100 px-3 pt-3 pb-2">
+          <div ref={boxRef} className={"ft-numgrid " + (scrolls ? "ft-numgrid-scroll" : "")}>
+            <NumGrid count={total} unit="章" onTap={toggle} firstRef={first}
+              isOn={(n) => chosenSet.has(n)} isMark={(n) => !!mine[n]} />
+          </div>
+          <div className="flex items-center gap-1.5 mt-2 min-h-[36px]">
+            <span className="flex-1 min-w-0 text-[14.5px] font-bold text-th-900 truncate">{chosen.length ? `${formatChapterList(chosen)}章` : ""}</span>
+            {hasGap && (
+              <TapOnceButton onTap={fill}
+                className="px-3 min-h-[32px] rounded-full border border-th-200 bg-white text-[12.5px] font-bold text-th-800 ft-tap shrink-0">{lo}〜{hi}章をすべて</TapOnceButton>
+            )}
+            {chosen.length > 0 && (
+              <TapOnceButton onTap={() => onChange({ book, chapters: [] })}
+                className="px-2.5 min-h-[32px] rounded-full text-[12.5px] font-bold text-neutral-500 ft-tap shrink-0">クリア</TapOnceButton>
+            )}
+          </div>
+        </div>
+      )}
+      {pickBook && (
+        <PickSheet title="書を選ぶ" tall onClose={() => setPickBook(false)}>
+          {(close) => (
+            <div className="ft-sheet-body overflow-y-auto px-4 py-3">
+              <BookGrid value={book} marks={doneBooks}
+                onPick={(name) => { if (name !== book) onChange({ book: name, chapters: [] }); close(); }} />
+            </div>
+          )}
+        </PickSheet>
+      )}
+    </div>
+  );
+}
+
+/* 聖書箇所を足す紙で、最後に使った書（アプリを開いているあいだだけ覚える。保存はしない） */
+let lastRefBook = "";
+/* 節のマス目に、はじめに出す数。足りないときは「もっと」で 176（詩篇119篇）まで */
+const VERSE_FIRST = 60;
+const VERSE_MAX = 176;
+
+/* 書・章・節を押して、文へ聖書箇所を足す。
+   ・書 → 章 → 節 の順に、同じ紙の中で進む（上の「書 › 章」を押すと戻れる）
+   ・節は、1つめを押すと「その節」、2つめを押すと「そこまでの範囲」。押さずに足せば「章ぜんたい」
+   ・**足しても紙は閉じない。** 同じ書の章のマス目へ戻るので、続けて何か所でも足せる（足したものは上に札で並ぶ）
+   ・near ＝ 近くの欄の文（配列）。そこに書かれている最後の箇所の書から始める（学びで同じ書を続けて引くことが多いため）
+   ・onPickRange は 2.18.0 で使わなくなった（通読は ReadingPicker が受け持つ）
+   ・icon ＝ ボタンを、しるしだけの小さな丸にする（通読のメモ欄） */
+function RefInserter({ onInsert, label, near, icon }) {
   const [open, setOpen] = useState(false);
+  const [step, setStep] = useState("book");
   const [book, setBook] = useState("");
-  const [chapter, setChapter] = useState(null);
-  const [chapterEnd, setChapterEnd] = useState("");
-  const [verse, setVerse] = useState("");
-  const [verseEnd, setVerseEnd] = useState("");
+  const [chapter, setChapter] = useState(0);
+  const [chapterEnd, setChapterEnd] = useState(0);
+  const [v1, setV1] = useState(0);
+  const [v2, setV2] = useState(0);
+  const [more, setMore] = useState(false);
+  const [added, setAdded] = useState([]);
+  const bodyRef = useRef(null);
+  const toTop = () => { if (bodyRef.current) bodyRef.current.scrollTop = 0; };
 
-  const reset = () => { setBook(""); setChapter(null); setChapterEnd(""); setVerse(""); setVerseEnd(""); };
-  const multiChapter = chapterEnd !== "" && Number(chapterEnd) > Number(chapter || 0);
-  const confirm = () => {
-    if (!book || !chapter) return;
-    let ref;
-    if (multiChapter) {
-      ref = `${book} ${chapter}章-${chapterEnd}章`;
-    } else if (verse) {
-      ref = `${book} ${chapter}:${verse}`;
-      if (verseEnd) ref += `-${verseEnd}`;
-    } else {
-      ref = `${book} ${chapter}章`;
-    }
-    if (onPickRange) {
-      /* 通読の「読んだ箇所」用。文字ではなく、書と章の並びを返す */
-      const from = Number(chapter);
-      const to = multiChapter ? Number(chapterEnd) : from;
-      const chapters = [];
-      for (let i = from; i <= to; i++) chapters.push(i);
-      onPickRange({ book, chapters, passageText: ref });
-    } else {
-      onInsert(ref);
-    }
-    reset();
-    setOpen(false);
+  const openSheet = () => {
+    let start = "";
+    (near || []).some((t) => {
+      const refs = typeof t === "string" ? parseBibleRefs(t) : [];
+      if (refs.length) start = refs[refs.length - 1].book;
+      else if (t && bookByName(t)) start = t;
+      return !!start;
+    });
+    if (!start) start = lastRefBook;
+    setBook(start); setStep(start ? "chapter" : "book");
+    setChapter(0); setChapterEnd(0); setV1(0); setV2(0); setMore(false); setAdded([]);
+    setOpen(true);
   };
-
-  const close = () => { reset(); setOpen(false); };
+  const info = bookByName(book);
+  const total = info ? info.chapters : 0;
+  let ref = "";
+  if (book && chapter) {
+    if (step === "range") ref = chapterEnd > chapter ? `${book} ${chapter}章-${chapterEnd}章` : "";
+    else if (v1) ref = `${book} ${chapter}:${v1}` + (v2 > v1 ? `-${v2}` : "");
+    else ref = `${book} ${chapter}章`;
+  }
+  const add = () => {
+    if (!ref) return;
+    onInsert(ref);
+    lastRefBook = book;
+    setAdded((p) => [...p, ref]);
+    setChapter(0); setChapterEnd(0); setV1(0); setV2(0); setMore(false);
+    setStep("chapter");
+    toTop();
+  };
+  const tapVerse = (n) => {
+    if (!v1) { setV1(n); return; }
+    if (!v2) {
+      if (n > v1) setV2(n);
+      else if (n === v1) setV1(0);
+      else setV1(n);
+      return;
+    }
+    setV1(n); setV2(0);
+  };
+  const crumb = "px-2.5 min-h-[36px] rounded-full border text-[13.5px] font-bold ft-tap shrink-0 max-w-full truncate ";
+  const crumbOn = "border-th-800 bg-th-800 text-white";
+  const crumbOff = "border-th-200 bg-white text-th-800";
 
   return (
     <>
-      {/* **この印は、対象の欄の「枠の中」に置くこと**（RefBox）。
-          欄の外に置くと、どの欄に入るのか分かりにくかった。
-          章・節の選び方は、ドラムを順に開く形が選びやすいので、この窓のままにしてある
-          （下から出る1枚の紙にまとめたものは取りやめた） */}
-      <button type="button" onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 px-3 min-h-[32px] rounded-full border border-th-200 bg-white text-[12.5px] font-bold text-th-800 ft-tap shrink-0">
-        <BookOpen size={14} /> {label || "聖書箇所を挿入"}
-      </button>
+      {icon ? (
+        <button type="button" onClick={openSheet} aria-label={label || "聖書箇所を挿入"}
+          className="w-9 h-9 flex items-center justify-center rounded-full border border-th-200 bg-white text-th-800 ft-tap ft-tap-icon shrink-0">
+          <BookOpen size={16} />
+        </button>
+      ) : (
+        <button type="button" onClick={openSheet}
+          className="inline-flex items-center gap-1.5 px-3 min-h-[32px] rounded-full border border-th-200 bg-white text-[12.5px] font-bold text-th-800 ft-tap shrink-0">
+          <BookOpen size={14} /> {label || "聖書箇所を挿入"}
+        </button>
+      )}
       {open && (
-        <div data-ft-overlay="" className="fixed inset-0 flex items-center justify-center px-5" style={{ zIndex: 2147483100 }} onClick={close}>
-      <BackgroundLock />
-          <div className="absolute inset-0 bg-black/45" />
-          <div className="relative w-full max-w-sm bg-white rounded-2xl border border-neutral-200 shadow-xl anim-pop max-h-[88vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200">
-              <span className="font-display text-[15.5px] text-neutral-900">聖書箇所を選ぶ</span>
-              <button type="button" onClick={close} aria-label="閉じる"
-                className="min-w-[52px] min-h-[52px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100"><X size={28} /></button>
+        <PickSheet title="聖書箇所" tall onClose={() => setOpen(false)}
+          foot={(close) => (
+            <div className="shrink-0 flex gap-2.5 px-4 py-3 border-t border-neutral-200"
+              style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+              <button type="button" onClick={close} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>{added.length ? "完了" : "閉じる"}</button>
+              <TapOnceButton onTap={add} disabled={!ref} style={{ flex: 1.6 }}
+                className={BTN_PRIMARY + " min-w-0 " + BTN_H + " text-[14.5px]"}>
+                <Plus size={16} className="shrink-0" /><span className="truncate">{ref ? `${formatRef(parseBibleRefs(ref)[0]) || ref} を追加` : "追加"}</span>
+              </TapOnceButton>
             </div>
-            <div className="p-4 space-y-2.5">
-      <BookSelect value={book} onChange={(v) => { setBook(v); setChapter(null); setVerse(""); setVerseEnd(""); }} />
-      {book && (
-              <div className="flex items-center gap-2">
-                <span className="w-8 shrink-0 text-[13.5px] font-bold text-neutral-600">章</span>
-                <DrumSelect
-                  value={chapter ?? ""}
-                  onChange={(v) => { setChapter(v === "" ? null : v); setChapterEnd(""); setVerse(""); setVerseEnd(""); }}
-                  placeholder="—"
-                  title="章を選択"
-                  options={Array.from({ length: bookByName(book)?.chapters || 0 }, (_, i) => ({ value: i + 1, label: `${i + 1}章` }))}
-                />
-                <span className="text-neutral-500 font-bold shrink-0">〜</span>
-                <DrumSelect
-                  value={chapterEnd === "" ? "" : Number(chapterEnd)}
-                  onChange={(v) => { setChapterEnd(v === "" ? "" : String(v)); if (v !== "") { setVerse(""); setVerseEnd(""); } }}
-                  placeholder="—"
-                  title="終わりの章を選択"
-                  disabled={!chapter}
-                  options={Array.from({ length: bookByName(book)?.chapters || 0 }, (_, i) => i + 1)
-                    .filter((n) => !chapter || n > Number(chapter))
-                    .map((n) => ({ value: n, label: `${n}章` }))}
-                />
+          )}>
+          <div ref={bodyRef} className="ft-sheet-body overflow-y-auto px-4 py-3">
+            {added.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                <Check size={15} className="text-th-800 shrink-0" />
+                {added.map((a, i) => (
+                  <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-th-50 text-th-800 border border-th-300 ft-chip">{formatRef(parseBibleRefs(a)[0]) || a}</span>
+                ))}
               </div>
             )}
-      {chapter && (
-              <div className={"flex items-center gap-2 " + (multiChapter ? "opacity-40 pointer-events-none" : "")}>
-                <span className="w-8 shrink-0 text-[13.5px] font-bold text-neutral-600">節</span>
-          <DrumSelect
-            value={verse === "" ? "" : Number(verse)}
-            onChange={(v) => { setVerse(v === "" ? "" : String(v)); setVerseEnd(""); }}
-            placeholder="—"
-            title="節を選択"
-            options={Array.from({ length: 176 }, (_, i) => ({ value: i + 1, label: `${i + 1}節` }))}
-          />
-          <span className="text-neutral-400 font-bold shrink-0">〜</span>
-          <DrumSelect
-            value={verseEnd === "" ? "" : Number(verseEnd)}
-            onChange={(v) => setVerseEnd(v === "" ? "" : String(v))}
-            placeholder="—"
-            title="終わりの節を選択"
-            disabled={!verse}
-            options={Array.from({ length: 176 }, (_, i) => i + 1)
-              .filter((n) => !verse || n > Number(verse))
-              .map((n) => ({ value: n, label: `${n}節` }))}
-          />
-        </div>
-      )}
-            <div className="flex gap-2 px-4 pb-4 pt-1">
-              <button type="button" onClick={close} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>閉じる</button>
-              <button type="button" onClick={confirm} disabled={!book || !chapter} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>挿入する</button>
-            </div>
-            </div>
+            {/* いまどこを選んでいるか。押すと、その段へ戻る */}
+            {book && (
+              <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                <TapOnceButton onTap={() => { setStep("book"); toTop(); }} aria-label="書を選び直す"
+                  className={crumb + "inline-flex items-center gap-1 " + (step === "book" ? crumbOn : crumbOff)}><span className="truncate">{book}</span><ChevronDown size={14} className="shrink-0" /></TapOnceButton>
+                {chapter > 0 && step !== "book" && (
+                  <>
+                    <ChevronRight size={14} className="text-neutral-400 shrink-0" />
+                    <TapOnceButton onTap={() => { setStep("chapter"); setChapterEnd(0); setV1(0); setV2(0); toTop(); }} aria-label="章を選び直す"
+                      className={crumb + (step === "chapter" ? crumbOn : crumbOff)}>{chapter}章</TapOnceButton>
+                  </>
+                )}
+              </div>
+            )}
+            {step === "book" && (
+              <BookGrid value={book} startTestament="new"
+                onPick={(name) => { setBook(name); setChapter(0); setChapterEnd(0); setV1(0); setV2(0); setStep("chapter"); toTop(); }} />
+            )}
+            {step === "chapter" && info && (
+              <div className="ft-numgrid">
+                <NumGrid count={total} unit="章" isOn={(n) => n === chapter}
+                  onTap={(n) => { setChapter(n); setChapterEnd(0); setV1(0); setV2(0); setMore(false); setStep("verse"); toTop(); }} />
+              </div>
+            )}
+            {step === "verse" && info && (
+              <>
+                <div className="ft-numgrid">
+                  <NumGrid count={more ? VERSE_MAX : VERSE_FIRST} unit="節" onTap={tapVerse}
+                    isOn={(n) => (v2 > v1 ? n >= v1 && n <= v2 : n === v1)} />
+                </div>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {!more && (
+                    <TapOnceButton onTap={() => setMore(true)}
+                      className="px-3 min-h-[36px] rounded-full border border-neutral-200 bg-white text-[12.5px] font-bold text-neutral-600 ft-tap">{VERSE_FIRST + 1}節から先</TapOnceButton>
+                  )}
+                  {chapter < total && (
+                    <TapOnceButton onTap={() => { setV1(0); setV2(0); setChapterEnd(0); setStep("range"); toTop(); }}
+                      className="px-3 min-h-[36px] rounded-full border border-neutral-200 bg-white text-[12.5px] font-bold text-neutral-600 ft-tap">章をまたぐ</TapOnceButton>
+                  )}
+                </div>
+              </>
+            )}
+            {step === "range" && info && (
+              <div className="ft-numgrid">
+                <NumGrid count={total} unit="章" onTap={(n) => setChapterEnd(n === chapterEnd ? 0 : n)}
+                  isOff={(n) => n < chapter}
+                  isOn={(n) => n === chapter || (chapterEnd > chapter && n > chapter && n <= chapterEnd)} />
+              </div>
+            )}
           </div>
-        </div>
+        </PickSheet>
       )}
     </>
   );
@@ -5708,6 +6002,10 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
       .slice(0, 6);
   }, [type, record.book, record.chapters, record.passageText, record.id, allRecords]);
 
+  /* 通読のマス目に「これまでに読んだ章」をうすく出すための数。いま書いている記録そのものは数えない */
+  const readCounts = useMemo(() => (type === "reading"
+    ? chapterCountsByBook((allRecords || []).filter((r) => r && r.id !== record.id)) : null), [type, allRecords, record.id]);
+
   const typeNames = useTypeName();
   const formTitle = initial ? "記録を編集" : (typeLocked ? `${typeNames[type] || TYPE_LABELS[type] || ""}を記録` : "新しい記録");
   const yearOptions = Array.from({ length: 7 }, (_, i) => curYear() - 3 + i);
@@ -5806,25 +6104,18 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
 
         {type === "reading" && (
           <>
-            <Field>
-              <RefBox refsText={record.passageText}
-                inserter={<RefInserter onPickRange={({ book, chapters, passageText }) => set({ book, chapters, passageText: appendRef(record.passageText, passageText) })} />}>
-                <TextInput bare value={record.passageText || ""} onChange={(e) => {
-                  /* 文字を消した・書き換えたら、選んだ書・章もそれに合わせる（keepPickedChapters）。
-                     変わったときだけ一緒に渡すこと。いつも渡すと、1文字ごとに
-                     「元に戻す」の区切りができてしまう */
-                  const v = e.target.value;
-                  const picked = keepPickedChapters(record.book, record.chapters, v);
-                  if (picked.chapters === record.chapters) set({ passageText: v });
-                  else set({ passageText: v, ...picked });
-                }} placeholder="読んだ箇所（例：ヨハネの福音書 3章）" />
-              </RefBox>
-            </Field>
+            {/* 通読は、ほかの種類と形を変えてある（2.18.0〜）。主役は「どこを読んだか」。
+                書と章を押して選ぶだけで保存できる。メモは書いても書かなくてもよいので、
+                1行の小さな欄にしてある（書けば、書いたぶんだけ伸びる）。
+                **メモ欄を、はじめから何行ぶんも空けておかないこと。** 空いた欄が「書いていない」ように見える（依頼による） */}
+            <ReadingPicker book={record.book} chapters={record.chapters} counts={readCounts}
+              onChange={({ book, chapters }) => set({ book, chapters, passageText: readingPassage(book, chapters, record) })} />
             <PastNotesPanel notes={pastNotes} />
             <Field>
-              <RefBox refsText={record.notes} inserter={<RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
-                <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={3} placeholder="気づいたこと、感じたこと" />
-              </RefBox>
+              <NoteLine refsText={record.notes}
+                inserter={<RefInserter icon near={[record.notes, record.book]} onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
+                <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="メモ" style={{ paddingLeft: 10 }} />
+              </NoteLine>
             </Field>
           </>
         )}
@@ -5837,18 +6128,18 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
               <TextInput value={record.theme || ""} onChange={(e) => set({ theme: e.target.value })} placeholder="テーマ" />
             </Field>
             <Field>
-              <RefBox refsText={record.passageText} inserter={<RefInserter onInsert={(ref) => set({ passageText: appendRef(record.passageText, ref) })} />}>
+              <RefBox refsText={record.passageText} inserter={<RefInserter near={[record.passageText, record.mainVerseText, record.notes]} onInsert={(ref) => set({ passageText: appendRef(record.passageText, ref) })} />}>
                 <TextInput bare value={record.passageText} onChange={(e) => set({ passageText: e.target.value })} placeholder="聖書箇所" />
               </RefBox>
             </Field>
             <PastNotesPanel notes={pastNotes} />
             <Field>
-              <RefBox refsText={record.mainVerseText} inserter={<RefInserter onInsert={(ref) => set({ mainVerseText: appendRef(record.mainVerseText, ref) })} />}>
+              <RefBox refsText={record.mainVerseText} inserter={<RefInserter near={[record.mainVerseText, record.passageText, record.notes]} onInsert={(ref) => set({ mainVerseText: appendRef(record.mainVerseText, ref) })} />}>
                 <TextArea bare value={record.mainVerseText} onChange={(e) => set({ mainVerseText: e.target.value })} minRows={2} placeholder="主題聖句" />
               </RefBox>
             </Field>
             <Field>
-              <RefBox refsText={record.notes} inserter={<RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
+              <RefBox refsText={record.notes} inserter={<RefInserter near={[record.notes, record.mainVerseText, record.passageText]} onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
                 <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="聞いたこと、心に残ったこと" />
               </RefBox>
             </Field>
@@ -5859,12 +6150,12 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
           <>
             <Field>
               {/* 学びの「主題聖句」と同じ高さ（2行ぶん）にそろえている */}
-              <RefBox refsText={record.text} inserter={<RefInserter onInsert={(ref) => set({ text: appendRef(record.text, ref) })} />}>
+              <RefBox refsText={record.text} inserter={<RefInserter near={[record.text, record.note]} onInsert={(ref) => set({ text: appendRef(record.text, ref) })} />}>
                 <TextArea bare value={record.text} onChange={(e) => set({ text: e.target.value })} minRows={2} placeholder="覚えたい聖書のことば" />
               </RefBox>
             </Field>
             <Field>
-              <RefBox refsText={record.note} inserter={<RefInserter onInsert={(ref) => set({ note: appendRef(record.note, ref) })} />}>
+              <RefBox refsText={record.note} inserter={<RefInserter near={[record.note, record.text]} onInsert={(ref) => set({ note: appendRef(record.note, ref) })} />}>
                 <TextArea bare value={record.note} onChange={(e) => set({ note: e.target.value })} minRows={2} placeholder="メモ" />
               </RefBox>
             </Field>
@@ -5908,7 +6199,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
         {type === "memo" && (
           <>
             <Field>
-              <RefBox refsText={record.notes} inserter={<RefInserter onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
+              <RefBox refsText={record.notes} inserter={<RefInserter near={[record.notes, record.mainVerseText, record.passageText]} onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
                 <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="書きとめておきたいこと" />
               </RefBox>
             </Field>
@@ -6385,10 +6676,14 @@ function computeNextReading(records) {
   return { book: nextBook.name, chapter: 1, newBook: true, finished: last.book };
 }
 
-/* 「ここから始めましょう」「続きから」の案内。記録画面のいちばん上に置く */
+/* 通読の「続きから」。ホームの木の下に置く（2.18.0〜）。
+   その書をどこまで読んだか（○/○章）を、細い棒といっしょに添える。
+   数えるのは事実だけ。呼びかけ・ほめ言葉は書かないこと */
 function ContinueCard({ records, onStart }) {
   const next = useMemo(() => computeNextReading(records), [records]);
+  const readN = useMemo(() => (next ? Object.keys(chapterCountsByBook(records)[next.book] || {}).length : 0), [records, next]);
   if (!next) return null;
+  const total = (bookByName(next.book) || {}).chapters || 0;
   return (
     <button
       onClick={() => onStart({ book: next.book, chapters: [next.chapter] })}
@@ -6402,6 +6697,12 @@ function ContinueCard({ records, onStart }) {
           {next.first ? "はじめから" : next.newBook ? `${next.finished} を読み終えました。次は` : "続きから"}
         </span>
         <span className="block font-display text-[18px] text-neutral-900 truncate">{next.book} {next.chapter}章</span>
+        {total > 0 && readN > 0 && (
+          <span className="flex items-center gap-2 mt-1.5">
+            <span className="flex-1 min-w-0"><MiniBar value={readN} total={total} /></span>
+            <span className="text-[11.5px] font-bold text-neutral-500 tabular-nums shrink-0">{readN}/{total}章</span>
+          </span>
+        )}
       </span>
       <ChevronRight size={20} className="text-neutral-400 shrink-0" />
     </button>
@@ -6690,7 +6991,7 @@ function DraftDialog({ draft, onResume, onDiscard, names }) {
   );
 }
 
-function HomeScreen({ records, prefs, onOpenBackup, garden, onStartCycle, onHarvest }) {
+function HomeScreen({ records, prefs, onOpenBackup, garden, onStartCycle, onHarvest, onStartReading }) {
   return (
     /* 下の帯（タブ）に隠れないための逃げ場。**数字を書かないこと。**
        ft-pad-nav が「帯の厚み＋切り欠き＋少しの余裕」を1か所で決めている。
@@ -6701,6 +7002,9 @@ function HomeScreen({ records, prefs, onOpenBackup, garden, onStartCycle, onHarv
       <div className="px-5 pt-4 ft-rise">
         <HighlightBanner records={records} />
         <TreeArea records={records} garden={garden} onStart={onStartCycle} onHarvest={onHarvest} />
+        {/* 通読のつづきは、木のすぐ下（2.18.0〜。それまでは記録画面のいちばん上）。
+            開いてすぐ、今日読むところから書き始められるように（依頼による） */}
+        <div className="mt-3"><ContinueCard records={records} onStart={onStartReading} /></div>
         <BackupReminder records={records} prefs={prefs} onOpenBackup={onOpenBackup} />
       </div>
     </div>
@@ -6710,7 +7014,7 @@ function HomeScreen({ records, prefs, onOpenBackup, garden, onStartCycle, onHarv
 /* ============================================================
    ② 記録画面
    ============================================================ */
-function RecordScreen({ records, onOpenDetail, onStartReading }) {
+function RecordScreen({ records, onOpenDetail }) {
   /* 直近で保存・編集したものから10件。
      作った日ではなく「最後に手を入れた日」で並べること。
      古い記録を書き直したときに、下のほうに埋もれてしまわないようにするため */
@@ -6721,8 +7025,6 @@ function RecordScreen({ records, onOpenDetail, onStartReading }) {
     <div className="ft-pad-fab">
       <TopChrome><ScreenHeader title="記録" /></TopChrome>
       <div className="px-5 pt-4 ft-rise">
-        {/* 通読のつづきは、記録画面のいちばん上に置く */}
-        <ContinueCard records={records} onStart={onStartReading} />
         <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-3">最近の記録</h3>
         {/* 記録がまだ無いときの案内は、2列の並びの中に入れない。
             中に入れると、横長の画面で左半分だけに寄ってしまう。
@@ -9163,7 +9465,8 @@ const HELP_SECTIONS = [
     items: [
       ["種類は4つ", "「通読」「学び」「聖句」「その他」から選んで書き始めます。"],
       ["書きかけでも消えない", "入力の途中でも下書きが自動で残ります。"],
-      ["聖書箇所を挿入", "正しい書き方で本文に足せます。章をまたぐ範囲も選べます。"],
+      ["通読の章", "うすい色のマスは、これまでに読んだ章です。何章でも続けて選べます。"],
+      ["聖書箇所を挿入", "書・章・節を押して本文に足せます。閉じずに、続けて何か所でも足せます。"],
     ],
   },
   {
@@ -10753,6 +11056,13 @@ function AppMain() {
     setTypePick(false);
     setIsNew(true);
     setTypeLocked(true);
+    /* 通読は、＋から開いたときも「続きから」と同じ書・章を入れておく（2.18.0〜）。
+       ちがう所を読んだ日は、書の名前かマス目を押して変えるだけ */
+    if (t === "reading") {
+      const next = computeNextReading(records);
+      setEditing({ ...emptyRecord(t), book: next.book, chapters: [next.chapter] });
+      return;
+    }
     setEditing(emptyRecord(t));
   };
   const closeForm = () => { setEditing(null); setIsNew(false); setTypeLocked(false); clearDraft(); setDraftSaved(null); };
@@ -10842,7 +11152,8 @@ function AppMain() {
     }
   };
 
-  const openNewReading = (patch) => { setIsNew(true); setTypeLocked(true); setEditing({ ...emptyRecord("reading"), ...patch }); setTab("record"); };
+  /* ホームの「続きから」。**タブは動かさない**（2.18.0〜。ホームに置いたので、保存したらホームへ戻る） */
+  const openNewReading = (patch) => { setIsNew(true); setTypeLocked(true); setEditing({ ...emptyRecord("reading"), ...patch }); };
   /* from を指定すると、その向きから画面が出てくる。
      指定しなければ、これまでどおり右から */
   const [viewingFrom, setViewingFrom] = useState("right");
@@ -11741,13 +12052,23 @@ function AppMain() {
         .from-th-700{--tw-gradient-from:var(--th-700);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}
         .to-th-900{--tw-gradient-to:var(--th-900)}
         .no-scrollbar::-webkit-scrollbar { display: none; }
+        /* --- 書・章・節のマス目（2.18.0〜。BookGrid / NumGrid） ---
+           色・字の大きさは、ふつうのクラス（text-[…]・bg-th-… など）で付ける。ここで決めるのは並びと大きさだけ
+           （字の大きさをここに書くと、「中・大」の設定に付いてこない） */
+        .ft-numgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+        .ft-num { height: 42px; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1; }
+        /* 章の多い書（詩篇など）だけ、送れる箱にする。5段半で切って、下に続きがあることを見せる */
+        .ft-numgrid-scroll { max-height: 258px; overflow-y: auto; position: relative; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+        .ft-bkgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+        .ft-bk { min-height: 44px; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+        @media (min-width: 520px) { .ft-numgrid { grid-template-columns: repeat(10, minmax(0, 1fr)); } .ft-bkgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
       `}</style>
 
       <div className="max-w-lg lg:max-w-5xl mx-auto min-h-screen relative ft-page">
         {/* 入れ物は透明度だけで切り替える。ここで位置を動かすと、中の sticky なヘッダがぶれる */}
         <div key={tab} className="ft-tabswap">
-        {tab === "home" && <HomeScreen records={records} prefs={prefs} onOpenBackup={() => setBackupOpen(true)} garden={garden} onStartCycle={() => setPickFruit(true)} onHarvest={harvestFruit} />}
-        {tab === "record" && <RecordScreen records={records} onOpenDetail={openDetail} onStartReading={openNewReading} />}
+        {tab === "home" && <HomeScreen records={records} prefs={prefs} onOpenBackup={() => setBackupOpen(true)} garden={garden} onStartCycle={() => setPickFruit(true)} onHarvest={harvestFruit} onStartReading={openNewReading} />}
+        {tab === "record" && <RecordScreen records={records} onOpenDetail={openDetail} />}
         {tab === "search" && <SearchScreen records={records} setRecords={setRecords} onDeleteMany={handleDeleteMany} openDetail={openDetail} allKnownTags={knownTags} defaultSort={prefs.sortMode} resetSig={searchReset} />}
         {tab === "folder" && <FolderScreen folders={folders} records={records} sort={prefs.folderSortOrder || "name"}
           onSort={(v) => savePrefs({ ...prefs, folderSortOrder: v })} onOpen={(f) => setOpenFolderId(f.id)}
