@@ -1,809 +1,1039 @@
-/* ============================================================
-   gsync.js — Googleドライブとの同期（2.15.0〜）
-
-   ・画面（React）にも、このアプリの保存まわりにも依存しない。必要なものは createGoogleSync に渡す。
-     （だから Node でも試験できる。試験は gsync.test.mjs）
-   ・Googleに預けるのは、ドライブの「Footprints-Sync」フォルダ1つだけ。
-     スコープは drive.file（このアプリが作ったファイルしか見えない）。ドライブの他のファイルは読めない。
-   ・フォルダの中身
-       footprints-sync.json      … 記録・フォルダ・設定など（写真の中身は除く）
-       photo_<番号>.txt          … 写真1枚ごと（data URL）
-       Footprints-backup-日付.txt … 1日1回の控え（メニューの「データを保存」と同じ形式。7日ぶん残す）
-
-   ■ 同期のしくみ（いちばん大事なところ）
-   端末ごとに「前回の同期のあとの姿（base）」を覚えておき、base・この端末・ドライブの3つを比べて混ぜる（3者マージ）。
-     - 片方だけ変わった　→ 変わったほうを採る
-     - 両方変わった　　　→ 更新時刻が新しいほうを採る（同じなら この端末）
-     - 片方で消した　　　→ 「消した」印（tombs）をドライブに残し、もう片方の端末で消す。
-                          ただし消したあとに別の端末で書き直されていたら、書き直したほうを残す（消さない）
-   消した印は「消したときの中身のハッシュ」を持つ。中身が違えば（＝書き直されていれば）消さない。
-   ドライブへの書き込みが途中で失われても、「相手に無い」だけでは消さない（印があるときだけ消す）。
-   **記録を失う方向には、印が無い限り動かさない。** これを崩さないこと。
-
-   ■ 認証
-   Google Identity Services のトークン方式（サーバー不要）。トークンは約1時間で切れる。
-   取り直すには、Googleの小さな画面（ポップアップ）が一瞬開く。これは指の操作の中でしか開けない。
-   **使っている途中に、勝手にこの画面を出さないこと（2.17.0〜）。**
-   以前は「切れたら、次にどこかをタップしたときに取り直す」形で、記録を書いている途中に
-   Googleの画面が一瞬はさまり、何が起きたのか分からなかった（依頼により廃止）。
-   いまは、起動したとき（と、しばらく離れてから戻ったとき）だけ askLogin を立て、
-   画面が「Googleとつなぎ直す」の小窓を出す。そこで押したときにだけ取り直す。
-   使っている途中で切れたときは、ヘッダーの雲のしるしが変わるだけ（押せばログインできる）。
-   ============================================================ */
-
-export const SYNC_FOLDER = "Footprints-Sync";
-export const DATA_FILE = "footprints-sync.json";
-export const PHOTO_PREFIX = "photo_";
-export const BACKUP_PREFIX = "Footprints-backup-";
-export const BACKUP_KEEP = 7;
-export const SCOPE = "https://www.googleapis.com/auth/drive.file";
-const FORMAT = 1;
-const TOMB_KEEP_MS = 180 * 24 * 3600 * 1000;
-const TOMB_MAX = 3000;
-const ORPHAN_GRACE_MS = 30 * 24 * 3600 * 1000;
-
-/* ------------------------------------------------------------
-   ハッシュ（中身が同じかどうかを見るだけ。暗号用ではない）
-   ------------------------------------------------------------ */
-export function stable(v) {
-  if (v === null || v === undefined) return "null";
-  if (typeof v !== "object") return JSON.stringify(v);
-  if (Array.isArray(v)) return "[" + v.map(stable).join(",") + "]";
-  const keys = Object.keys(v).filter((k) => v[k] !== undefined).sort();
-  return "{" + keys.map((k) => JSON.stringify(k) + ":" + stable(v[k])).join(",") + "}";
-}
-function cyrb53(str) {
-  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
-  for (let i = 0; i < str.length; i++) {
-    const ch = str.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
-}
-export const hashOf = (v) => cyrb53(stable(v));
-/* 並びに左右されないハッシュ（配列は要素ごとのハッシュを並べ替えて合わせる） */
-export const setHash = (arr) => cyrb53((arr || []).map(hashOf).sort().join("|"));
-
-/* ------------------------------------------------------------
-   混ぜる：番号つきの一覧（記録・フォルダ・イラスト・タグ・収穫）
-   ------------------------------------------------------------ */
-const stampOf = (x) => (x && typeof x === "object" ? String(x.updatedAt || x.createdAt || "") : "");
-
-export function mergeKeyed({ local, remote, base, tombs, getId, now }) {
-  const L = new Map();
-  const R = new Map();
-  for (const it of local || []) { const id = getId(it); if (id !== undefined && id !== null && id !== "" && !L.has(id)) L.set(id, it); }
-  for (const it of remote || []) { const id = getId(it); if (id !== undefined && id !== null && id !== "" && !R.has(id)) R.set(id, it); }
-  const B = base || {};
-  const T = { ...(tombs || {}) };
-  /* 前回あったのに、いまこの端末に無いもの ＝ この端末で消した。印を残す（古い印は上書き） */
-  for (const id of Object.keys(B)) if (!L.has(id)) T[id] = { h: B[id], t: now };
-
-  const order = [...L.keys(), ...[...R.keys()].filter((k) => !L.has(k))];
-  const items = [];
-  for (const id of order) {
-    const l = L.get(id);
-    const r = R.get(id);
-    let pick;
-    if (l !== undefined && r !== undefined) {
-      const hl = hashOf(l);
-      const hr = hashOf(r);
-      if (hl === hr) pick = l;
-      else if (hr === B[id]) pick = l;          // この端末だけ変わった
-      else if (hl === B[id]) pick = r;          // ドライブだけ変わった
-      else pick = stampOf(r) > stampOf(l) ? r : l; // 両方変わった
-    } else {
-      pick = l !== undefined ? l : r;
+var GSync = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
     }
-    const tomb = T[id];
-    if (tomb && tomb.h === hashOf(pick)) continue; // 消した時と同じ中身 → 消えたまま
-    delete T[id];                                  // 書き直されている → 生かす
-    items.push(pick);
-  }
-  const newBase = {};
-  for (const it of items) newBase[getId(it)] = hashOf(it);
-  /* 古い印を片づける */
-  let entries = Object.entries(T).filter(([, v]) => v && now - v.t < TOMB_KEEP_MS);
-  if (entries.length > TOMB_MAX) entries = entries.sort((a, b) => b[1].t - a[1].t).slice(0, TOMB_MAX);
-  return { items, base: newBase, tombs: Object.fromEntries(entries) };
-}
-
-/* 1つの値（設定など）を混ぜる。baseHash＝前回の同期のときのハッシュ */
-export function mergeValue({ local, remote, remoteExists, baseHash, hasBase }) {
-  const l = local === undefined ? null : local;
-  if (!remoteExists) return { value: l, hash: hashOf(l) };
-  const r = remote === undefined ? null : remote;
-  const hl = hashOf(l);
-  const hr = hashOf(r);
-  if (hl === hr) return { value: l, hash: hl };
-  /* この端末が初めての同期のときは、ドライブの設定を採る（新しい端末の初期値で、整えた設定を上書きしない） */
-  if (!hasBase) return { value: r, hash: hr };
-  if (hr === baseHash) return { value: l, hash: hl };
-  if (hl === baseHash) return { value: r, hash: hr };
-  return { value: l, hash: hl };
-}
-
-const COLLECTIONS = ["records", "folders", "artworks", "tags", "harvests"];
-const VALUES = ["prefs", "captions", "typeDesc", "headerBg", "cycle"];
-const idOf = {
-  records: (x) => (x && x.id) || null,
-  folders: (x) => (x && x.id) || null,
-  artworks: (x) => (x && x.id) || null,
-  tags: (x) => (typeof x === "string" && x ? x : null),
-  harvests: (x) => (x && (x.id || (x.date && x.fruit ? x.date + "|" + x.fruit : null))) || null,
-};
-
-/* 同期する中身の形（snapshot）
-   { records, folders, artworks, tags, garden:{cycle,harvests}, prefs, captions, typeDesc, headerBg } */
-export function contentHash(s) {
-  const g = (s && s.garden) || {};
-  return cyrb53([
-    setHash(s && s.records), setHash(s && s.folders), setHash(s && s.artworks), setHash(s && s.tags),
-    setHash(g.harvests), hashOf(g.cycle), hashOf(s && s.prefs), hashOf(s && s.captions),
-    hashOf(s && s.typeDesc), hashOf(s && s.headerBg),
-  ].join("/"));
-}
-/* 中身の目録（{ records: {番号: ハッシュ}, …, values: {prefs: ハッシュ, …} }）。前回の同期の姿（base）と同じ形 */
-export function indexOf(s) {
-  const g = (s && s.garden) || {};
-  const lists = { records: s && s.records, folders: s && s.folders, artworks: s && s.artworks, tags: s && s.tags, harvests: g.harvests };
-  const out = { values: {} };
-  for (const c of COLLECTIONS) {
-    const m = {};
-    for (const it of lists[c] || []) { const id = idOf[c](it); if (id !== null && id !== undefined && id !== "" && !(id in m)) m[id] = hashOf(it); }
-    out[c] = m;
-  }
-  const vals = { prefs: s && s.prefs, captions: s && s.captions, typeDesc: s && s.typeDesc, headerBg: s && s.headerBg, cycle: g.cycle };
-  for (const v of VALUES) out.values[v] = hashOf(vals[v] === undefined ? null : vals[v]);
-  return out;
-}
-/* 2つの目録のちがいの数（足した・変えた・消した、を1件ずつ）。b に values が無いときは、設定は数えない */
-export function diffCount(a, b) {
-  let n = 0;
-  for (const c of COLLECTIONS) {
-    const A = (a && a[c]) || {};
-    const B = (b && b[c]) || {};
-    for (const id of Object.keys(A)) if (A[id] !== B[id]) n++;
-    for (const id of Object.keys(B)) if (!(id in A)) n++;
-  }
-  if (a && a.values && b && b.values) for (const v of VALUES) if (b.values[v] !== undefined && a.values[v] !== b.values[v]) n++;
-  return n;
-}
-const tombsHash = (t) => hashOf(Object.fromEntries(COLLECTIONS.map((c) => [c, Object.keys((t && t[c]) || {}).sort()])));
-
-function unionTombs(a, b) {
-  const out = {};
-  for (const c of COLLECTIONS) {
-    const m = { ...((a && a[c]) || {}) };
-    const o = (b && b[c]) || {};
-    for (const id of Object.keys(o)) if (!m[id] || (o[id] && o[id].t > m[id].t)) m[id] = o[id];
-    out[c] = m;
-  }
-  return out;
-}
-
-/* local・remote は snapshot（remote は無いこともある）。ctx = { base, hasBase, tombs, now } */
-export function mergeSnapshots(local, remote, ctx) {
-  const now = ctx.now;
-  const baseAll = ctx.base || {};
-  const tombsAll = unionTombs(ctx.tombs, remote && remote.tombs);
-  const rg = (remote && remote.garden) || {};
-  const lg = local.garden || {};
-  const pick = {
-    records: [local.records, remote && remote.records],
-    folders: [local.folders, remote && remote.folders],
-    artworks: [local.artworks, remote && remote.artworks],
-    tags: [local.tags, remote && remote.tags],
-    harvests: [lg.harvests, rg.harvests],
+    return to;
   };
-  const out = {};
-  const newBase = { values: {} };
-  const newTombs = {};
-  for (const c of COLLECTIONS) {
-    const m = mergeKeyed({
-      local: pick[c][0] || [], remote: pick[c][1] || [], base: baseAll[c] || {}, tombs: tombsAll[c] || {},
-      getId: idOf[c], now,
-    });
-    out[c] = m.items;
-    newBase[c] = m.base;
-    newTombs[c] = m.tombs;
-  }
-  const vals = {};
-  const localVals = { prefs: local.prefs, captions: local.captions, typeDesc: local.typeDesc, headerBg: local.headerBg, cycle: lg.cycle };
-  const remoteVals = remote
-    ? { prefs: remote.prefs, captions: remote.captions, typeDesc: remote.typeDesc, headerBg: remote.headerBg, cycle: rg.cycle }
-    : {};
-  for (const v of VALUES) {
-    const exists = !!remote && Object.prototype.hasOwnProperty.call(remoteVals, v) && remoteVals[v] !== undefined;
-    const r = mergeValue({
-      local: localVals[v], remote: remoteVals[v], remoteExists: exists,
-      baseHash: (baseAll.values || {})[v], hasBase: !!ctx.hasBase,
-    });
-    vals[v] = r.value;
-    newBase.values[v] = r.hash;
-  }
-  const merged = {
-    records: out.records, folders: out.folders, artworks: out.artworks, tags: out.tags,
-    garden: { cycle: vals.cycle, harvests: out.harvests },
-    prefs: vals.prefs, captions: vals.captions, typeDesc: vals.typeDesc, headerBg: vals.headerBg,
-  };
-  const mh = contentHash(merged);
-  return {
-    merged, base: newBase, tombs: newTombs,
-    localChanged: mh !== contentHash(local),
-    remoteChanged: !remote || mh !== contentHash(remote) || tombsHash(newTombs) !== tombsHash(remote.tombs),
-  };
-}
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-/* ------------------------------------------------------------
-   エラー
-   ------------------------------------------------------------ */
-export class SyncError extends Error {
-  constructor(kind, message) { super(message); this.kind = kind; }
-}
-
-/* ------------------------------------------------------------
-   Googleドライブの窓口
-   ------------------------------------------------------------ */
-const API = "https://www.googleapis.com/drive/v3";
-const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
-const qs = (s) => String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-
-export function createDrive(fetchFn, getToken) {
-  async function call(url, init) {
-    let res;
-    try {
-      res = await fetchFn(url, { ...(init || {}), headers: { ...((init && init.headers) || {}), Authorization: "Bearer " + getToken() } });
-    } catch (e) {
-      throw new SyncError("network", "通信できませんでした");
-    }
-    if (res.ok) return res;
-    let reason = "";
-    try { const j = await res.clone().json(); reason = (j && j.error && (j.error.errors && j.error.errors[0] && j.error.errors[0].reason || j.error.status)) || ""; } catch (e) { /* 本文が無い */ }
-    if (res.status === 401) throw new SyncError("auth", "ログインの期限が切れました");
-    if (res.status === 404) throw new SyncError("notfound", "見つかりませんでした");
-    if (res.status === 403) {
-      if (/rate|quota/i.test(reason)) throw new SyncError("rate", "混雑中です。しばらく待ってください");
-      if (/accessNotConfigured|SERVICE_DISABLED/i.test(reason)) throw new SyncError("config", "Drive API が有効になっていません");
-      throw new SyncError("auth", "ドライブへのアクセスが許可されていません");
-    }
-    if (res.status === 429) throw new SyncError("rate", "混雑中です。しばらく待ってください");
-    throw new SyncError("drive", "Googleドライブでエラーが起きました（" + res.status + "）");
-  }
-  const json = async (url, init) => (await call(url, init)).json();
-  return {
-    async about() {
-      const j = await json(API + "/about?fields=user(emailAddress,displayName)");
-      return (j && j.user) || {};
-    },
-    async findFolder(name) {
-      const q = "mimeType='application/vnd.google-apps.folder' and name='" + qs(name) + "' and trashed=false";
-      const j = await json(API + "/files?q=" + encodeURIComponent(q) + "&orderBy=createdTime&pageSize=10&fields=files(id,name)");
-      return (j.files && j.files[0]) || null;
-    },
-    async createFolder(name) {
-      return json(API + "/files?fields=id,name", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder" }),
-      });
-    },
-    async folderAlive(id) {
-      try {
-        const j = await json(API + "/files/" + encodeURIComponent(id) + "?fields=id,trashed");
-        return !!j && !j.trashed;
-      } catch (e) { if (e instanceof SyncError && e.kind === "notfound") return false; throw e; }
-    },
-    async list(folderId) {
-      const files = [];
-      let pageToken = "";
-      do {
-        const q = "'" + qs(folderId) + "' in parents and trashed=false";
-        const j = await json(API + "/files?q=" + encodeURIComponent(q) + "&pageSize=1000&fields=nextPageToken,files(id,name,modifiedTime,createdTime)"
-          + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : ""));
-        files.push(...(j.files || []));
-        pageToken = j.nextPageToken || "";
-      } while (pageToken);
-      return files;
-    },
-    async download(id) {
-      return (await call(API + "/files/" + encodeURIComponent(id) + "?alt=media")).text();
-    },
-    async upload(name, text, mime, parentId, existingId) {
-      const b = "ftb" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-      const meta = existingId ? { name } : { name, parents: [parentId] };
-      const body = "--" + b + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + JSON.stringify(meta)
-        + "\r\n--" + b + "\r\nContent-Type: " + mime + "; charset=UTF-8\r\n\r\n" + text + "\r\n--" + b + "--";
-      const url = (existingId ? UPLOAD + "/files/" + encodeURIComponent(existingId) : UPLOAD + "/files") + "?uploadType=multipart&fields=id,modifiedTime";
-      return json(url, { method: existingId ? "PATCH" : "POST", headers: { "Content-Type": "multipart/related; boundary=" + b }, body });
-    },
-    async remove(id) { await call(API + "/files/" + encodeURIComponent(id), { method: "DELETE" }); },
-  };
-}
-
-/* ------------------------------------------------------------
-   Googleのログイン（Google Identity Services・トークン方式）
-   ------------------------------------------------------------ */
-const TOKEN_KEY = "ft-gsync-token";
-export function createGisAuth({ getClientId, ls, doc, win }) {
-  let client = null;
-  let clientFor = "";
-  let pending = null;
-  let scriptP = null;
-  const gis = () => (win && win.google && win.google.accounts && win.google.accounts.oauth2) || null;
-  const readTok = () => { try { return JSON.parse(ls.getItem(TOKEN_KEY) || "null"); } catch (e) { return null; } };
-  return {
-    getStored() {
-      const t = readTok();
-      return t && t.t && t.exp - 60000 > Date.now() ? t.t : null;
-    },
-    clear() { try { ls.removeItem(TOKEN_KEY); } catch (e) { /* noop */ } },
-    isReady: () => !!gis(),
-    /* 読み込んでおく。**ログインの操作より前に済ませること**
-       （指の操作の流れの中でしかポップアップは開けず、読み込みを待つとその流れが切れる） */
-    preload() {
-      if (gis()) return Promise.resolve(true);
-      if (scriptP) return scriptP;
-      scriptP = new Promise((resolve) => {
-        try {
-          const s = doc.createElement("script");
-          s.src = "https://accounts.google.com/gsi/client";
-          s.async = true;
-          s.onload = () => resolve(!!gis());
-          s.onerror = () => { scriptP = null; resolve(false); };
-          doc.head.appendChild(s);
-        } catch (e) { scriptP = null; resolve(false); }
-      });
-      return scriptP;
-    },
-    /* interactive：指の操作の中から呼ぶとき true。返り値はトークン。取れなければ null と理由 */
-    request({ interactive, hint }) {
-      const g = gis();
-      const clientId = getClientId();
-      if (!g || !clientId) return Promise.resolve({ token: null, why: !clientId ? "noclient" : "notready" });
-      if (pending) return pending.promise;
-      if (!client || clientFor !== clientId) {
-        clientFor = clientId;
-        client = g.initTokenClient({
-          client_id: clientId, scope: SCOPE,
-          callback: (resp) => {
-            const p = pending; if (!p) return;
-            if (!resp || resp.error || !resp.access_token) { p.done({ token: null, why: (resp && resp.error) || "denied" }); return; }
-            if (g.hasGrantedAllScopes && !g.hasGrantedAllScopes(resp, SCOPE)) { p.done({ token: null, why: "scope" }); return; }
-            const exp = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
-            try { ls.setItem(TOKEN_KEY, JSON.stringify({ t: resp.access_token, exp })); } catch (e) { /* noop */ }
-            p.done({ token: resp.access_token, why: "" });
-          },
-          error_callback: (err) => { const p = pending; if (p) p.done({ token: null, why: (err && err.type) || "popup" }); },
-        });
-      }
-      let done;
-      const promise = new Promise((resolve) => { done = (r) => { clearTimeout(timer); pending = null; resolve(r); }; });
-      const timer = setTimeout(() => { if (pending) pending.done({ token: null, why: "timeout" }); }, 120000);
-      pending = { promise, done };
-      try {
-        const opt = { prompt: interactive ? "" : "none" };
-        if (hint) opt.login_hint = hint;
-        client.requestAccessToken(opt);
-      } catch (e) { pending.done({ token: null, why: "popup" }); }
-      return promise;
-    },
-    revoke(token) { try { const g = gis(); if (g && token) g.revoke(token, () => {}); } catch (e) { /* noop */ } },
-  };
-}
-
-/* ------------------------------------------------------------
-   同期の本体
-   opts:
-     fetch, ls（localStorage互換）, kv（{get,set,del} 非同期。大きい控えの置き場）, doc, win
-     defaultClientId … index.html の window.__FT_GOOGLE_CLIENT_ID
-     getSnapshot() / applySnapshot(merged) / listPhotoRefs(snapshot)
-     photoHas(id) / photoGet(id) / photoPut(id, dataUrl)
-     buildBackupText()  … 控えファイルの中身（無ければ控えは作らない）
-     onBackedUp()       … 控えをドライブに置けたとき
-     auth（試験用に差し替え可）, now()
-   ------------------------------------------------------------ */
-const CFG_KEY = "ft-gsync-cfg";
-const STATE_KEY = "state";
-const AUTO_MIN_GAP_MS = 20000;   // 自動の同期の最短の間隔
-const DEBOUNCE_MS = 6000;        // 書きかえてから同期するまで
-const PERIOD_MS = 5 * 60 * 1000; // 開いたままのときの定期確認
-
-export function createGoogleSync(opts) {
-  const now = opts.now || (() => Date.now());
-  const ls = opts.ls;
-  const fetchFn = opts.fetch;
-  const listeners = new Set();
-  const dayStr = (t) => { const d = new Date(t); const p = (n) => String(n).padStart(2, "0"); return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()); };
-
-  let cfg = { enabled: false, clientId: "", email: "", folderId: "", autoBackup: true, lastBackupDay: "", lastSyncAt: 0,
-    sentN: 0, sentAt: 0, recvN: 0, recvAt: 0 };
-  try { Object.assign(cfg, JSON.parse(ls.getItem(CFG_KEY) || "{}")); } catch (e) { /* 初回 */ }
-  const saveCfg = () => { try { ls.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) { /* noop */ } };
-
-  const clientId = () => cfg.clientId || opts.defaultClientId || "";
-  const auth = opts.auth || createGisAuth({ getClientId: clientId, ls, doc: opts.doc, win: opts.win });
-
-  /* pending … この端末で書きかえて、まだドライブへ送っていない数（前回の同期の姿とのちがい）
-     askLogin … 起動したときにログインが切れていた。画面が「Googleとつなぎ直す」の小窓を出す
-     （最後に送った数・時刻、受け取った数・時刻は cfg の sentN/sentAt・recvN/recvAt。何も動かなかった同期では変えない） */
-  let status = { phase: cfg.enabled ? "idle" : "off", message: "", pending: 0, askLogin: false };
-  const setStatus = (patch) => { status = { ...status, ...patch }; listeners.forEach((fn) => { try { fn(); } catch (e) { /* noop */ } }); };
-  const publicStatus = () => ({
-    ...status, enabled: cfg.enabled, email: cfg.email, lastSyncAt: cfg.lastSyncAt, autoBackup: cfg.autoBackup,
-    lastBackupDay: cfg.lastBackupDay, clientId: cfg.clientId,
-    sentN: cfg.sentN, sentAt: cfg.sentAt, recvN: cfg.recvN, recvAt: cfg.recvAt, hasClientId: !!clientId(), clientIdFixed: !!opts.defaultClientId && !cfg.clientId,
-    ready: auth.isReady ? auth.isReady() : true,
+  // gsync.src.mjs
+  var gsync_src_exports = {};
+  __export(gsync_src_exports, {
+    BACKUP_KEEP: () => BACKUP_KEEP,
+    BACKUP_PREFIX: () => BACKUP_PREFIX,
+    DATA_FILE: () => DATA_FILE,
+    FOOTPRINTS_SCHEMA: () => FOOTPRINTS_SCHEMA,
+    MYTECHO_SCHEMA: () => MYTECHO_SCHEMA,
+    PHOTO_PREFIX: () => PHOTO_PREFIX,
+    SCOPE: () => SCOPE,
+    SYNC_FOLDER: () => SYNC_FOLDER,
+    SyncError: () => SyncError,
+    contentHash: () => contentHash,
+    createDrive: () => createDrive,
+    createGisAuth: () => createGisAuth,
+    createGoogleSync: () => createGoogleSync,
+    createKV: () => createKV,
+    diffCount: () => diffCount,
+    hashOf: () => hashOf,
+    indexOf: () => indexOf,
+    mergeKeyed: () => mergeKeyed,
+    mergeSnapshots: () => mergeSnapshots,
+    mergeValue: () => mergeValue,
+    setHash: () => setHash,
+    stable: () => stable
   });
-  let statusCache = null;
-
-  let running = null;
-  let queued = false;
-  let timer = null;
-  let periodic = null;
-  let lastAuto = 0;
-  let folderVerified = false;
-  let started = false;
-  let memBase = undefined; // 前回の同期の姿（目録）。undefined＝まだ読んでいない、null＝一度も同期していない
-  let hiddenAt = 0;
-
-  async function loadState() { try { return (await opts.kv.get(STATE_KEY)) || {}; } catch (e) { return {}; } }
-  async function saveState(s) { memBase = s && s.base ? s.base : null; try { await opts.kv.set(STATE_KEY, s); } catch (e) { /* noop */ } }
-
-  /* まだ送っていない数を数え直す。一度も同期していないときは、端末にあるもの全部 */
-  async function refreshPending() {
-    if (!cfg.enabled) return;
+  var SYNC_FOLDER = "Footprints-Sync";
+  var DATA_FILE = "footprints-sync.json";
+  var PHOTO_PREFIX = "photo_";
+  var BACKUP_PREFIX = "Footprints-backup-";
+  var BACKUP_KEEP = 7;
+  var SCOPE = "https://www.googleapis.com/auth/drive.file";
+  var FORMAT = 1;
+  var TOMB_KEEP_MS = 180 * 24 * 3600 * 1e3;
+  var TOMB_MAX = 3e3;
+  var ORPHAN_GRACE_MS = 30 * 24 * 3600 * 1e3;
+  function stable(v) {
+    if (v === null || v === void 0) return "null";
+    if (typeof v !== "object") return JSON.stringify(v);
+    if (Array.isArray(v)) return "[" + v.map(stable).join(",") + "]";
+    const keys = Object.keys(v).filter((k) => v[k] !== void 0).sort();
+    return "{" + keys.map((k) => JSON.stringify(k) + ":" + stable(v[k])).join(",") + "}";
+  }
+  function cyrb53(str) {
+    let h1 = 3735928559, h2 = 1103547991;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ h1 >>> 16, 2246822507) ^ Math.imul(h2 ^ h2 >>> 13, 3266489909);
+    h2 = Math.imul(h2 ^ h2 >>> 16, 2246822507) ^ Math.imul(h1 ^ h1 >>> 13, 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  }
+  var hashOf = (v) => cyrb53(stable(v));
+  var setHash = (arr) => cyrb53((arr || []).map(hashOf).sort().join("|"));
+  var stampOf = (x) => {
+    if (!x || typeof x !== "object") return "";
+    let m = "";
+    for (const k of ["createdAt", "updatedAt", "checkedAt"]) {
+      const v = x[k];
+      if (typeof v === "string" && v > m) m = v;
+    }
+    return m;
+  };
+  var stampMs = (x) => {
+    const t = Date.parse(stampOf(x));
+    return Number.isFinite(t) ? t : 0;
+  };
+  function mergeKeyed({ local, remote, base, baseAt, tombs, getId, now }) {
+    const L = /* @__PURE__ */ new Map();
+    const R = /* @__PURE__ */ new Map();
+    for (const it of local || []) {
+      const id = getId(it);
+      if (id !== void 0 && id !== null && id !== "" && !L.has(id)) L.set(id, it);
+    }
+    for (const it of remote || []) {
+      const id = getId(it);
+      if (id !== void 0 && id !== null && id !== "" && !R.has(id)) R.set(id, it);
+    }
+    const B = base || {};
+    const T = { ...tombs || {} };
+    for (const id of Object.keys(B)) if (!L.has(id)) T[id] = { h: B[id], t: now, since: baseAt || now };
+    const order = [...L.keys(), ...[...R.keys()].filter((k) => !L.has(k))];
+    const items = [];
+    for (const id of order) {
+      const l = L.get(id);
+      const r = R.get(id);
+      let pick;
+      if (l !== void 0 && r !== void 0) {
+        const hl = hashOf(l);
+        const hr = hashOf(r);
+        if (hl === hr) pick = l;
+        else if (hr === B[id]) pick = l;
+        else if (hl === B[id]) pick = r;
+        else pick = stampOf(r) > stampOf(l) ? r : l;
+      } else {
+        pick = l !== void 0 ? l : r;
+      }
+      const tomb = T[id];
+      if (tomb) {
+        const same = tomb.h === hashOf(pick);
+        const untouched = typeof tomb.since === "number" && stampMs(pick) > 0 && stampMs(pick) <= tomb.since;
+        if (same || untouched) continue;
+        delete T[id];
+      }
+      items.push(pick);
+    }
+    const newBase = {};
+    for (const it of items) newBase[getId(it)] = hashOf(it);
+    let entries = Object.entries(T).filter(([, v]) => v && now - v.t < TOMB_KEEP_MS);
+    if (entries.length > TOMB_MAX) entries = entries.sort((a, b) => b[1].t - a[1].t).slice(0, TOMB_MAX);
+    return { items, base: newBase, tombs: Object.fromEntries(entries) };
+  }
+  function mergeValue({ local, remote, remoteExists, baseHash, hasBase }) {
+    const l = local === void 0 ? null : local;
+    if (!remoteExists) return { value: l, hash: hashOf(l) };
+    const r = remote === void 0 ? null : remote;
+    const hl = hashOf(l);
+    const hr = hashOf(r);
+    if (hl === hr) return { value: l, hash: hl };
+    if (!hasBase) return { value: r, hash: hr };
+    if (hr === baseHash) return { value: l, hash: hl };
+    if (hl === baseHash) return { value: r, hash: hr };
+    return { value: l, hash: hl };
+  }
+  var byId = (x) => x && x.id || null;
+  var byName = (x) => typeof x === "string" && x ? x : null;
+  var FOOTPRINTS_SCHEMA = {
+    collections: [
+      { key: "records", get: (s) => s.records, id: byId },
+      { key: "folders", get: (s) => s.folders, id: byId },
+      { key: "artworks", get: (s) => s.artworks, id: byId },
+      { key: "tags", get: (s) => s.tags, id: byName },
+      { key: "harvests", get: (s) => (s.garden || {}).harvests, id: (x) => x && (x.id || (x.date && x.fruit ? x.date + "|" + x.fruit : null)) || null }
+    ],
+    values: [
+      { key: "prefs", get: (s) => s.prefs },
+      { key: "captions", get: (s) => s.captions },
+      { key: "typeDesc", get: (s) => s.typeDesc },
+      { key: "headerBg", get: (s) => s.headerBg },
+      { key: "cycle", get: (s) => (s.garden || {}).cycle }
+    ],
+    build: (c, v) => ({
+      records: c.records,
+      folders: c.folders,
+      artworks: c.artworks,
+      tags: c.tags,
+      garden: { cycle: v.cycle, harvests: c.harvests },
+      prefs: v.prefs,
+      captions: v.captions,
+      typeDesc: v.typeDesc,
+      headerBg: v.headerBg
+    })
+  };
+  var MYTECHO_SCHEMA = {
+    collections: [
+      { key: "records", get: (s) => s.records, id: byId },
+      { key: "plans", get: (s) => s.plans, id: byId },
+      { key: "kinds", get: (s) => s.kinds, id: byId },
+      { key: "folders", get: (s) => s.folders, id: byId },
+      { key: "tags", get: (s) => s.tags, id: byName }
+    ],
+    values: [{ key: "prefs", get: (s) => s.prefs }],
+    build: (c, v) => ({ records: c.records, plans: c.plans, kinds: c.kinds, folders: c.folders, tags: c.tags, prefs: v.prefs })
+  };
+  function contentHash(s, schema) {
+    const sc = schema || FOOTPRINTS_SCHEMA;
+    const x = s || {};
+    return cyrb53([
+      ...sc.collections.map((c) => setHash(c.get(x))),
+      ...sc.values.map((v) => hashOf(v.get(x)))
+    ].join("/"));
+  }
+  function indexOf(s, schema) {
+    const sc = schema || FOOTPRINTS_SCHEMA;
+    const x = s || {};
+    const out = { values: {} };
+    for (const c of sc.collections) {
+      const m = {};
+      for (const it of c.get(x) || []) {
+        const id = c.id(it);
+        if (id !== null && id !== void 0 && id !== "" && !(id in m)) m[id] = hashOf(it);
+      }
+      out[c.key] = m;
+    }
+    for (const v of sc.values) {
+      const val = v.get(x);
+      out.values[v.key] = hashOf(val === void 0 ? null : val);
+    }
+    return out;
+  }
+  function diffCount(a, b, schema) {
+    const sc = schema || FOOTPRINTS_SCHEMA;
+    let n = 0;
+    for (const c of sc.collections) {
+      const A = a && a[c.key] || {};
+      const B = b && b[c.key] || {};
+      for (const id of Object.keys(A)) if (A[id] !== B[id]) n++;
+      for (const id of Object.keys(B)) if (!(id in A)) n++;
+    }
+    if (a && a.values && b && b.values) {
+      for (const v of sc.values) if (b.values[v.key] !== void 0 && a.values[v.key] !== b.values[v.key]) n++;
+    }
+    return n;
+  }
+  var tombsHash = (sc, t) => hashOf(Object.fromEntries(sc.collections.map((c) => [c.key, Object.keys(t && t[c.key] || {}).sort()])));
+  function unionTombs(sc, a, b) {
+    const out = {};
+    for (const c of sc.collections) {
+      const m = { ...a && a[c.key] || {} };
+      const o = b && b[c.key] || {};
+      for (const id of Object.keys(o)) if (!m[id] || o[id] && o[id].t > m[id].t) m[id] = o[id];
+      out[c.key] = m;
+    }
+    return out;
+  }
+  function mergeSnapshots(local, remote, ctx) {
+    const sc = ctx.schema || FOOTPRINTS_SCHEMA;
+    const now = ctx.now;
+    const baseAll = ctx.base || {};
+    const tombsAll = unionTombs(sc, ctx.tombs, remote && remote.tombs);
+    const cols = {};
+    const newBase = { values: {} };
+    const newTombs = {};
+    for (const c of sc.collections) {
+      const m = mergeKeyed({
+        local: c.get(local) || [],
+        remote: remote && c.get(remote) || [],
+        base: baseAll[c.key] || {},
+        baseAt: ctx.baseAt,
+        tombs: tombsAll[c.key] || {},
+        getId: c.id,
+        now
+      });
+      cols[c.key] = m.items;
+      newBase[c.key] = m.base;
+      newTombs[c.key] = m.tombs;
+    }
+    const vals = {};
+    for (const v of sc.values) {
+      const rv = remote ? v.get(remote) : void 0;
+      const r = mergeValue({
+        local: v.get(local),
+        remote: rv,
+        remoteExists: !!remote && rv !== void 0,
+        baseHash: (baseAll.values || {})[v.key],
+        hasBase: !!ctx.hasBase
+      });
+      vals[v.key] = r.value;
+      newBase.values[v.key] = r.hash;
+    }
+    const merged = sc.build(cols, vals);
+    const mh = contentHash(merged, sc);
+    return {
+      merged,
+      base: newBase,
+      tombs: newTombs,
+      localChanged: mh !== contentHash(local, sc),
+      remoteChanged: !remote || mh !== contentHash(remote, sc) || tombsHash(sc, newTombs) !== tombsHash(sc, remote.tombs)
+    };
+  }
+  var SyncError = class extends Error {
+    constructor(kind, message) {
+      super(message);
+      this.kind = kind;
+    }
+  };
+  var API = "https://www.googleapis.com/drive/v3";
+  var UPLOAD = "https://www.googleapis.com/upload/drive/v3";
+  var qs = (s) => String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  function createDrive(fetchFn, getToken) {
+    async function call(url, init) {
+      let res;
+      try {
+        res = await fetchFn(url, { ...init || {}, headers: { ...init && init.headers || {}, Authorization: "Bearer " + getToken() } });
+      } catch (e) {
+        throw new SyncError("network", "\u901A\u4FE1\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F");
+      }
+      if (res.ok) return res;
+      let reason = "";
+      try {
+        const j = await res.clone().json();
+        reason = j && j.error && (j.error.errors && j.error.errors[0] && j.error.errors[0].reason || j.error.status) || "";
+      } catch (e) {
+      }
+      if (res.status === 401) throw new SyncError("auth", "\u30ED\u30B0\u30A4\u30F3\u306E\u671F\u9650\u304C\u5207\u308C\u307E\u3057\u305F");
+      if (res.status === 404) throw new SyncError("notfound", "\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3067\u3057\u305F");
+      if (res.status === 403) {
+        if (/rate|quota/i.test(reason)) throw new SyncError("rate", "\u6DF7\u96D1\u4E2D\u3067\u3059\u3002\u3057\u3070\u3089\u304F\u5F85\u3063\u3066\u304F\u3060\u3055\u3044");
+        if (/accessNotConfigured|SERVICE_DISABLED/i.test(reason)) throw new SyncError("config", "Drive API \u304C\u6709\u52B9\u306B\u306A\u3063\u3066\u3044\u307E\u305B\u3093");
+        throw new SyncError("auth", "\u30C9\u30E9\u30A4\u30D6\u3078\u306E\u30A2\u30AF\u30BB\u30B9\u304C\u8A31\u53EF\u3055\u308C\u3066\u3044\u307E\u305B\u3093");
+      }
+      if (res.status === 429) throw new SyncError("rate", "\u6DF7\u96D1\u4E2D\u3067\u3059\u3002\u3057\u3070\u3089\u304F\u5F85\u3063\u3066\u304F\u3060\u3055\u3044");
+      throw new SyncError("drive", "Google\u30C9\u30E9\u30A4\u30D6\u3067\u30A8\u30E9\u30FC\u304C\u8D77\u304D\u307E\u3057\u305F\uFF08" + res.status + "\uFF09");
+    }
+    const json = async (url, init) => (await call(url, init)).json();
+    return {
+      async about() {
+        const j = await json(API + "/about?fields=user(emailAddress,displayName)");
+        return j && j.user || {};
+      },
+      async findFolder(name) {
+        const q = "mimeType='application/vnd.google-apps.folder' and name='" + qs(name) + "' and trashed=false";
+        const j = await json(API + "/files?q=" + encodeURIComponent(q) + "&orderBy=createdTime&pageSize=10&fields=files(id,name)");
+        return j.files && j.files[0] || null;
+      },
+      async createFolder(name) {
+        return json(API + "/files?fields=id,name", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder" })
+        });
+      },
+      async folderAlive(id) {
+        try {
+          const j = await json(API + "/files/" + encodeURIComponent(id) + "?fields=id,trashed");
+          return !!j && !j.trashed;
+        } catch (e) {
+          if (e instanceof SyncError && e.kind === "notfound") return false;
+          throw e;
+        }
+      },
+      async list(folderId) {
+        const files = [];
+        let pageToken = "";
+        do {
+          const q = "'" + qs(folderId) + "' in parents and trashed=false";
+          const j = await json(API + "/files?q=" + encodeURIComponent(q) + "&pageSize=1000&fields=nextPageToken,files(id,name,modifiedTime,createdTime)" + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : ""));
+          files.push(...j.files || []);
+          pageToken = j.nextPageToken || "";
+        } while (pageToken);
+        return files;
+      },
+      async download(id) {
+        return (await call(API + "/files/" + encodeURIComponent(id) + "?alt=media")).text();
+      },
+      async upload(name, text, mime, parentId, existingId) {
+        const b = "ftb" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        const meta = existingId ? { name } : { name, parents: [parentId] };
+        const body = "--" + b + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + JSON.stringify(meta) + "\r\n--" + b + "\r\nContent-Type: " + mime + "; charset=UTF-8\r\n\r\n" + text + "\r\n--" + b + "--";
+        const url = (existingId ? UPLOAD + "/files/" + encodeURIComponent(existingId) : UPLOAD + "/files") + "?uploadType=multipart&fields=id,modifiedTime";
+        return json(url, { method: existingId ? "PATCH" : "POST", headers: { "Content-Type": "multipart/related; boundary=" + b }, body });
+      },
+      async remove(id) {
+        await call(API + "/files/" + encodeURIComponent(id), { method: "DELETE" });
+      }
+    };
+  }
+  function createGisAuth({ getClientId, ls, doc, win, tokenKey }) {
+    const TOKEN_KEY = tokenKey || "ft-gsync-token";
+    let client = null;
+    let clientFor = "";
+    let pending = null;
+    let scriptP = null;
+    const gis = () => win && win.google && win.google.accounts && win.google.accounts.oauth2 || null;
+    const readTok = () => {
+      try {
+        return JSON.parse(ls.getItem(TOKEN_KEY) || "null");
+      } catch (e) {
+        return null;
+      }
+    };
+    return {
+      getStored() {
+        const t = readTok();
+        return t && t.t && t.exp - 6e4 > Date.now() ? t.t : null;
+      },
+      clear() {
+        try {
+          ls.removeItem(TOKEN_KEY);
+        } catch (e) {
+        }
+      },
+      isReady: () => !!gis(),
+      /* 読み込んでおく。**ログインの操作より前に済ませること**
+         （指の操作の流れの中でしかポップアップは開けず、読み込みを待つとその流れが切れる） */
+      preload() {
+        if (gis()) return Promise.resolve(true);
+        if (scriptP) return scriptP;
+        scriptP = new Promise((resolve) => {
+          try {
+            const s = doc.createElement("script");
+            s.src = "https://accounts.google.com/gsi/client";
+            s.async = true;
+            s.onload = () => resolve(!!gis());
+            s.onerror = () => {
+              scriptP = null;
+              resolve(false);
+            };
+            doc.head.appendChild(s);
+          } catch (e) {
+            scriptP = null;
+            resolve(false);
+          }
+        });
+        return scriptP;
+      },
+      /* interactive：指の操作の中から呼ぶとき true。返り値はトークン。取れなければ null と理由 */
+      request({ interactive, hint }) {
+        const g = gis();
+        const clientId = getClientId();
+        if (!g || !clientId) return Promise.resolve({ token: null, why: !clientId ? "noclient" : "notready" });
+        if (pending) return pending.promise;
+        if (!client || clientFor !== clientId) {
+          clientFor = clientId;
+          client = g.initTokenClient({
+            client_id: clientId,
+            scope: SCOPE,
+            callback: (resp) => {
+              const p = pending;
+              if (!p) return;
+              if (!resp || resp.error || !resp.access_token) {
+                p.done({ token: null, why: resp && resp.error || "denied" });
+                return;
+              }
+              if (g.hasGrantedAllScopes && !g.hasGrantedAllScopes(resp, SCOPE)) {
+                p.done({ token: null, why: "scope" });
+                return;
+              }
+              const exp = Date.now() + (Number(resp.expires_in) || 3600) * 1e3;
+              try {
+                ls.setItem(TOKEN_KEY, JSON.stringify({ t: resp.access_token, exp }));
+              } catch (e) {
+              }
+              p.done({ token: resp.access_token, why: "" });
+            },
+            error_callback: (err) => {
+              const p = pending;
+              if (p) p.done({ token: null, why: err && err.type || "popup" });
+            }
+          });
+        }
+        let done;
+        const promise = new Promise((resolve) => {
+          done = (r) => {
+            clearTimeout(timer);
+            pending = null;
+            resolve(r);
+          };
+        });
+        const timer = setTimeout(() => {
+          if (pending) pending.done({ token: null, why: "timeout" });
+        }, 12e4);
+        pending = { promise, done };
+        try {
+          const opt = { prompt: interactive ? "" : "none" };
+          if (hint) opt.login_hint = hint;
+          client.requestAccessToken(opt);
+        } catch (e) {
+          pending.done({ token: null, why: "popup" });
+        }
+        return promise;
+      },
+      revoke(token) {
+        try {
+          const g = gis();
+          if (g && token) g.revoke(token, () => {
+          });
+        } catch (e) {
+        }
+      }
+    };
+  }
+  var STATE_KEY = "state";
+  var AUTO_MIN_GAP_MS = 2e4;
+  var DEBOUNCE_MS = 6e3;
+  var PERIOD_MS = 5 * 60 * 1e3;
+  function createGoogleSync(opts) {
+    const PREFIX = opts.storagePrefix || "ft-gsync";
+    const CFG_KEY = PREFIX + "-cfg";
+    const now = opts.now || (() => Date.now());
+    const ls = opts.ls;
+    const fetchFn = opts.fetch;
+    const listeners = /* @__PURE__ */ new Set();
+    const dayStr = (t) => {
+      const d = new Date(t);
+      const p = (n) => String(n).padStart(2, "0");
+      return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+    };
+    let cfg = {
+      enabled: false,
+      clientId: "",
+      email: "",
+      folderId: "",
+      autoBackup: true,
+      lastBackupDay: "",
+      lastSyncAt: 0,
+      sentN: 0,
+      sentAt: 0,
+      recvN: 0,
+      recvAt: 0
+    };
     try {
-      if (memBase === undefined) { const st = await loadState(); if (memBase === undefined) memBase = st.base || null; }
-      const snap = await opts.getSnapshot();
-      const n = diffCount(indexOf(snap), memBase || {});
-      if (n !== status.pending) setStatus({ pending: n });
-    } catch (e) { /* 数えられなくても同期には差し支えない */ }
-  }
-
-  async function ensureFolder(drive) {
-    if (cfg.folderId && folderVerified) return cfg.folderId;
-    if (cfg.folderId) {
-      if (await drive.folderAlive(cfg.folderId)) { folderVerified = true; return cfg.folderId; }
-      cfg.folderId = "";
+      Object.assign(cfg, JSON.parse(ls.getItem(CFG_KEY) || "{}"));
+    } catch (e) {
     }
-    const found = await drive.findFolder(SYNC_FOLDER);
-    const f = found || (await drive.createFolder(SYNC_FOLDER));
-    cfg.folderId = f.id; folderVerified = true; saveCfg();
-    return f.id;
-  }
-
-  const photoIdOfName = (n) => (n.startsWith(PHOTO_PREFIX) && n.endsWith(".txt") ? n.slice(PHOTO_PREFIX.length, -4) : null);
-
-  function parseRemote(text) {
-    let d;
-    try { d = JSON.parse(text); } catch (e) { throw new SyncError("drive", "同期データを読めません。上書きはしません"); }
-    if (!d || typeof d !== "object" || d.format !== FORMAT || !Array.isArray(d.records)) {
-      throw new SyncError("drive", "同期データの形式が新しすぎます。アプリを更新してください");
-    }
-    return d;
-  }
-
-  let lastMoved = { sent: 0, received: 0 };
-  /* 1回ぶん。中で書きかえが見つかったら false（やり直し） */
-  async function cycle(drive, token) {
-    const folderId = await ensureFolder(drive);
-    const files = await drive.list(folderId);
-    const dataFiles = files.filter((f) => f.name === DATA_FILE).sort((a, b) => String(b.modifiedTime).localeCompare(String(a.modifiedTime)));
-    const dataFile = dataFiles[0] || null;
-    const st = await loadState();
-    const local0 = await opts.getSnapshot();
-    const localHash = contentHash(local0);
-    const hasBase = !!st.base;
-
-    if (dataFile && hasBase && st.lastRemoteModified === dataFile.modifiedTime && st.lastLocalHash === localHash) {
-      await maybeBackup(drive, folderId, files, local0);
-      lastMoved = { sent: 0, received: 0 };
-      return true; // どちらも変わっていない
-    }
-
-    let remote = null;
-    if (dataFile) remote = parseRemote(await drive.download(dataFile.id));
-    const res = mergeSnapshots(local0, remote, { base: st.base, hasBase, tombs: st.tombs, now: now() });
-    const localIdx = indexOf(local0);
-    const mergedIdx = indexOf(res.merged);
-    const received = res.localChanged ? diffCount(mergedIdx, localIdx) : 0;
-    const sent = res.remoteChanged ? (remote ? diffCount(mergedIdx, indexOf(remote)) : diffCount(mergedIdx, {})) : 0;
-
-    /* 写真：足りないものをドライブから取る（記録を反映する前に） */
-    const refs = Array.from(new Set(opts.listPhotoRefs(res.merged)));
-    const onDrive = new Map();
-    for (const f of files) { const id = photoIdOfName(f.name); if (id) onDrive.set(id, f); }
-    for (const id of refs) {
-      if (await opts.photoHas(id)) continue;
-      const f = onDrive.get(id);
-      if (!f) continue;
-      const data = await drive.download(f.id);
-      if (data) await opts.photoPut(id, data);
-    }
-
-    if (res.localChanged) {
-      /* 通信しているあいだに書きかえられていたら、上書きせずやり直す */
-      const again = await opts.getSnapshot();
-      if (contentHash(again) !== localHash) return false;
-      await opts.applySnapshot(res.merged);
-    }
-
-    /* 写真：ドライブに無いものを上げる（記録のデータより先に） */
-    for (const id of refs) {
-      if (onDrive.has(id)) continue;
-      const data = await opts.photoGet(id);
-      if (typeof data === "string" && data) {
-        const up = await drive.upload(PHOTO_PREFIX + id + ".txt", data, "text/plain", folderId);
-        onDrive.set(id, { id: up.id, name: PHOTO_PREFIX + id + ".txt", modifiedTime: up.modifiedTime });
+    const saveCfg = () => {
+      try {
+        ls.setItem(CFG_KEY, JSON.stringify(cfg));
+      } catch (e) {
+      }
+    };
+    const schema = opts.schema || FOOTPRINTS_SCHEMA;
+    const NAMES = { folder: SYNC_FOLDER, data: DATA_FILE, backup: BACKUP_PREFIX, ...opts.names || {} };
+    const clientId = () => cfg.clientId || opts.defaultClientId || "";
+    const auth = opts.auth || createGisAuth({ getClientId: clientId, ls, doc: opts.doc, win: opts.win, tokenKey: PREFIX + "-token" });
+    let status = { phase: cfg.enabled ? "idle" : "off", message: "", pending: 0, askLogin: false };
+    const setStatus = (patch) => {
+      status = { ...status, ...patch };
+      listeners.forEach((fn) => {
+        try {
+          fn();
+        } catch (e) {
+        }
+      });
+    };
+    const publicStatus = () => ({
+      ...status,
+      enabled: cfg.enabled,
+      email: cfg.email,
+      lastSyncAt: cfg.lastSyncAt,
+      autoBackup: cfg.autoBackup,
+      lastBackupDay: cfg.lastBackupDay,
+      clientId: cfg.clientId,
+      sentN: cfg.sentN,
+      sentAt: cfg.sentAt,
+      recvN: cfg.recvN,
+      recvAt: cfg.recvAt,
+      hasClientId: !!clientId(),
+      clientIdFixed: !!opts.defaultClientId && !cfg.clientId,
+      ready: auth.isReady ? auth.isReady() : true
+    });
+    let statusCache = null;
+    let running = null;
+    let queued = false;
+    let timer = null;
+    let periodic = null;
+    let lastAuto = 0;
+    let folderVerified = false;
+    let started = false;
+    let memBase = void 0;
+    let hiddenAt = 0;
+    let lastMoved = { sent: 0, received: 0 };
+    async function loadState() {
+      try {
+        return await opts.kv.get(STATE_KEY) || {};
+      } catch (e) {
+        return {};
       }
     }
-
-    let modified = dataFile ? dataFile.modifiedTime : "";
-    if (res.remoteChanged || !dataFile) {
-      const payload = { app: "bible-tracker-sync", format: FORMAT, updatedAt: new Date(now()).toISOString(), ...res.merged, tombs: res.tombs };
-      const up = await drive.upload(DATA_FILE, JSON.stringify(payload), "application/json", folderId, dataFile ? dataFile.id : undefined);
-      modified = up.modifiedTime;
-      /* 同じ名前が2つできていたら（2台が同時に初回同期した場合）、古いほうを片づける */
-      for (const extra of dataFiles.slice(1)) { try { await drive.remove(extra.id); } catch (e) { /* 消せなくてもよい */ } }
+    async function saveState(s) {
+      memBase = s && s.base ? s.base : null;
+      try {
+        await opts.kv.set(STATE_KEY, s);
+      } catch (e) {
+      }
     }
-
-    await saveState({ base: res.base, tombs: res.tombs, lastRemoteModified: modified, lastLocalHash: contentHash(res.merged) });
-    lastMoved = { sent, received };
-    await cleanOrphans(drive, files, refs, res.merged);
-    await maybeBackup(drive, folderId, files, res.merged);
-    return true;
-  }
-
-  /* 使われなくなった写真（30日以上たったもの）をドライブから片づける。
-     記録が空のとき・半分以上が対象になるときは、何かおかしいので何もしない */
-  async function cleanOrphans(drive, files, refs, merged) {
-    try {
-      if (!merged.records.length) return;
-      const used = new Set(refs);
-      const photoFiles = files.filter((f) => photoIdOfName(f.name));
-      const stale = photoFiles.filter((f) => !used.has(photoIdOfName(f.name)) && now() - Date.parse(f.modifiedTime || f.createdTime || 0) > ORPHAN_GRACE_MS);
-      if (!stale.length || stale.length * 2 > photoFiles.length) return;
-      for (const f of stale.slice(0, 50)) await drive.remove(f.id);
-    } catch (e) { /* 片づけは失敗しても構わない */ }
-  }
-
-  async function maybeBackup(drive, folderId, files, merged) {
-    if (!cfg.autoBackup || !opts.buildBackupText) return;
-    const today = dayStr(now());
-    if (cfg.lastBackupDay === today) return;
-    try {
-      const text = await opts.buildBackupText();
-      if (!text) return;
-      const name = BACKUP_PREFIX + today + ".txt";
-      const same = files.find((f) => f.name === name);
-      await drive.upload(name, text, "text/plain", folderId, same ? same.id : undefined);
-      const names = files.filter((f) => f.name.startsWith(BACKUP_PREFIX) && f.name !== name)
-        .sort((a, b) => b.name.localeCompare(a.name));
-      for (const old of names.slice(BACKUP_KEEP - 1)) { try { await drive.remove(old.id); } catch (e) { /* noop */ } }
-      cfg.lastBackupDay = today; saveCfg();
-      if (opts.onBackedUp) opts.onBackedUp();
-    } catch (e) {
-      if (e instanceof SyncError && (e.kind === "auth" || e.kind === "network")) throw e;
-      /* 控えが作れなくても同期は成功として扱う */
-    }
-  }
-
-  /* **ログインが切れても、次のタップで勝手にログイン画面を開かないこと（2.17.0で廃止）。**
-     使っている途中に Google の画面が一瞬はさまり、何が起きたのか分からなかった。
-     取り直すのは、画面のボタン（起動時の小窓・ヘッダーの雲・バックアップのカード）を押したときだけ */
-
-  function classify(e) {
-    if (e instanceof SyncError) return e;
-    return new SyncError("drive", (e && e.message) || "同期に失敗しました");
-  }
-
-  async function runOnce(reason, interactive) {
-    let token = auth.getStored();
-    if (!token && !interactive) {
-      /* 指の操作の外では取りにいかない（Googleの画面がだしぬけに開くのを防ぐ）。しるしを変えるだけ */
-      setStatus({ phase: "needsAuth", message: "ログインが必要です" });
-      return;
-    }
-    if (!token) {
-      /* 起動の直後は、Googleの部品がまだ読み込み中のことがある。読み終わるのを待ってから取りにいく
-         （指の操作の直後なら、数秒はポップアップを開ける） */
-      if (auth.preload && auth.isReady && !auth.isReady()) await auth.preload();
-      const r = await auth.request({ interactive, hint: cfg.email });
-      token = r && r.token;
-      if (!token) {
-        const why = (r && r.why) || "";
-        if (why === "noclient") { setStatus({ phase: "error", message: "クライアントIDが設定されていません" }); return; }
-        if (why === "scope") { setStatus({ phase: "error", message: "Googleドライブへのアクセスを許可してください" }); return; }
-        const denied = why === "access_denied" || why === "denied";
-        /* 一度もログインできていない（初めての連携）ときに失敗したら、連携していない状態に戻す */
-        if (interactive && !cfg.email && why !== "notready") {
-          cfg.enabled = false; saveCfg();
-          setStatus({ phase: "off", message: denied
-            ? "Googleにログインを拒否されました。アプリのGoogle設定（公開状態）を確認してください"
-            : "ログインできませんでした" });
-          return;
+    async function refreshPending() {
+      if (!cfg.enabled) return;
+      try {
+        if (memBase === void 0) {
+          const st = await loadState();
+          if (memBase === void 0) memBase = st.base || null;
         }
-        setStatus({ phase: "needsAuth", message: why === "notready" ? "準備中です。もう一度押してください" : "ログインが完了しませんでした" });
+        const snap = await opts.getSnapshot();
+        const n = diffCount(indexOf(snap, schema), memBase || {}, schema);
+        if (n !== status.pending) setStatus({ pending: n });
+      } catch (e) {
+      }
+    }
+    async function ensureFolder(drive) {
+      if (cfg.folderId && folderVerified) return cfg.folderId;
+      if (cfg.folderId) {
+        if (await drive.folderAlive(cfg.folderId)) {
+          folderVerified = true;
+          return cfg.folderId;
+        }
+        cfg.folderId = "";
+      }
+      const found = await drive.findFolder(NAMES.folder);
+      const f = found || await drive.createFolder(NAMES.folder);
+      cfg.folderId = f.id;
+      folderVerified = true;
+      saveCfg();
+      return f.id;
+    }
+    const photoIdOfName = (n) => n.startsWith(PHOTO_PREFIX) && n.endsWith(".txt") ? n.slice(PHOTO_PREFIX.length, -4) : null;
+    function parseRemote(text) {
+      let d;
+      try {
+        d = JSON.parse(text);
+      } catch (e) {
+        throw new SyncError("drive", "\u540C\u671F\u30C7\u30FC\u30BF\u3092\u8AAD\u3081\u307E\u305B\u3093\u3002\u4E0A\u66F8\u304D\u306F\u3057\u307E\u305B\u3093");
+      }
+      if (!d || typeof d !== "object" || d.format !== FORMAT || !Array.isArray(schema.collections[0].get(d))) {
+        throw new SyncError("drive", "\u540C\u671F\u30C7\u30FC\u30BF\u306E\u5F62\u5F0F\u304C\u65B0\u3057\u3059\u304E\u307E\u3059\u3002\u30A2\u30D7\u30EA\u3092\u66F4\u65B0\u3057\u3066\u304F\u3060\u3055\u3044");
+      }
+      return d;
+    }
+    async function cycle(drive, token) {
+      const folderId = await ensureFolder(drive);
+      const files = await drive.list(folderId);
+      const dataFiles = files.filter((f) => f.name === NAMES.data).sort((a, b) => String(b.modifiedTime).localeCompare(String(a.modifiedTime)));
+      const dataFile = dataFiles[0] || null;
+      const st = await loadState();
+      const local0 = await opts.getSnapshot();
+      const localHash = contentHash(local0, schema);
+      const hasBase = !!st.base;
+      if (dataFile && hasBase && st.lastRemoteModified === dataFile.modifiedTime && st.lastLocalHash === localHash) {
+        await maybeBackup(drive, folderId, files, local0);
+        lastMoved = { sent: 0, received: 0 };
+        return true;
+      }
+      let remote = null;
+      if (dataFile) remote = parseRemote(await drive.download(dataFile.id));
+      const res = mergeSnapshots(local0, remote, { schema, base: st.base, baseAt: st.baseAt, hasBase, tombs: st.tombs, now: now() });
+      const localIdx = indexOf(local0, schema);
+      const mergedIdx = indexOf(res.merged, schema);
+      const received = res.localChanged ? diffCount(mergedIdx, localIdx, schema) : 0;
+      const sent = res.remoteChanged ? diffCount(mergedIdx, remote ? indexOf(remote, schema) : {}, schema) : 0;
+      const refs = Array.from(new Set(opts.listPhotoRefs(res.merged)));
+      const onDrive = /* @__PURE__ */ new Map();
+      for (const f of files) {
+        const id = photoIdOfName(f.name);
+        if (id) onDrive.set(id, f);
+      }
+      for (const id of refs) {
+        if (await opts.photoHas(id)) continue;
+        const f = onDrive.get(id);
+        if (!f) continue;
+        const data = await drive.download(f.id);
+        if (data) await opts.photoPut(id, data);
+      }
+      if (res.localChanged) {
+        const again = await opts.getSnapshot();
+        if (contentHash(again, schema) !== localHash) return false;
+        await opts.applySnapshot(res.merged);
+      }
+      for (const id of refs) {
+        if (onDrive.has(id)) continue;
+        const data = await opts.photoGet(id);
+        if (typeof data === "string" && data) {
+          const up = await drive.upload(PHOTO_PREFIX + id + ".txt", data, "text/plain", folderId);
+          onDrive.set(id, { id: up.id, name: PHOTO_PREFIX + id + ".txt", modifiedTime: up.modifiedTime });
+        }
+      }
+      let modified = dataFile ? dataFile.modifiedTime : "";
+      if (res.remoteChanged || !dataFile) {
+        const payload = { app: "bible-tracker-sync", format: FORMAT, updatedAt: new Date(now()).toISOString(), ...res.merged, tombs: res.tombs };
+        const up = await drive.upload(NAMES.data, JSON.stringify(payload), "application/json", folderId, dataFile ? dataFile.id : void 0);
+        modified = up.modifiedTime;
+        for (const extra of dataFiles.slice(1)) {
+          try {
+            await drive.remove(extra.id);
+          } catch (e) {
+          }
+        }
+      }
+      await saveState({ base: res.base, tombs: res.tombs, lastRemoteModified: modified, lastLocalHash: contentHash(res.merged, schema), baseAt: now() });
+      lastMoved = { sent, received };
+      await cleanOrphans(drive, files, refs, res.merged);
+      await maybeBackup(drive, folderId, files, res.merged);
+      return true;
+    }
+    async function cleanOrphans(drive, files, refs, merged) {
+      try {
+        if (!merged.records.length) return;
+        const used = new Set(refs);
+        const photoFiles = files.filter((f) => photoIdOfName(f.name));
+        const stale = photoFiles.filter((f) => !used.has(photoIdOfName(f.name)) && now() - Date.parse(f.modifiedTime || f.createdTime || 0) > ORPHAN_GRACE_MS);
+        if (!stale.length || stale.length * 2 > photoFiles.length) return;
+        for (const f of stale.slice(0, 50)) await drive.remove(f.id);
+      } catch (e) {
+      }
+    }
+    async function maybeBackup(drive, folderId, files, merged) {
+      if (!cfg.autoBackup || !opts.buildBackupText) return;
+      const today = dayStr(now());
+      if (cfg.lastBackupDay === today) return;
+      try {
+        const text = await opts.buildBackupText();
+        if (!text) return;
+        const name = NAMES.backup + today + (NAMES.backupExt || ".txt");
+        const same = files.find((f) => f.name === name);
+        await drive.upload(name, text, "text/plain", folderId, same ? same.id : void 0);
+        const names = files.filter((f) => f.name.startsWith(NAMES.backup) && f.name !== name).sort((a, b) => b.name.localeCompare(a.name));
+        for (const old of names.slice(BACKUP_KEEP - 1)) {
+          try {
+            await drive.remove(old.id);
+          } catch (e) {
+          }
+        }
+        cfg.lastBackupDay = today;
+        saveCfg();
+        if (opts.onBackedUp) opts.onBackedUp();
+      } catch (e) {
+        if (e instanceof SyncError && (e.kind === "auth" || e.kind === "network")) throw e;
+      }
+    }
+    function classify(e) {
+      if (e instanceof SyncError) return e;
+      return new SyncError("drive", e && e.message || "\u540C\u671F\u306B\u5931\u6557\u3057\u307E\u3057\u305F");
+    }
+    async function runOnce(reason, interactive) {
+      let token = auth.getStored();
+      if (!token && !interactive) {
+        setStatus({ phase: "needsAuth", message: "\u30ED\u30B0\u30A4\u30F3\u304C\u5FC5\u8981\u3067\u3059" });
         return;
       }
-    }
-    const drive = createDrive(fetchFn, () => auth.getStored() || token);
-    setStatus({ phase: "syncing", message: "", askLogin: false });
-    try {
-      if (!cfg.email) {
-        try { const u = await drive.about(); cfg.email = u.emailAddress || ""; saveCfg(); } catch (e) { if (e instanceof SyncError && e.kind === "auth") throw e; }
+      if (!token) {
+        if (auth.preload && auth.isReady && !auth.isReady()) await auth.preload();
+        const r = await auth.request({ interactive, hint: cfg.email });
+        token = r && r.token;
+        if (!token) {
+          const why = r && r.why || "";
+          if (why === "noclient") {
+            setStatus({ phase: "error", message: "\u30AF\u30E9\u30A4\u30A2\u30F3\u30C8ID\u304C\u8A2D\u5B9A\u3055\u308C\u3066\u3044\u307E\u305B\u3093" });
+            return;
+          }
+          if (why === "scope") {
+            setStatus({ phase: "error", message: "Google\u30C9\u30E9\u30A4\u30D6\u3078\u306E\u30A2\u30AF\u30BB\u30B9\u3092\u8A31\u53EF\u3057\u3066\u304F\u3060\u3055\u3044" });
+            return;
+          }
+          const denied = why === "access_denied" || why === "denied";
+          if (interactive && !cfg.email && why !== "notready") {
+            cfg.enabled = false;
+            saveCfg();
+            setStatus({ phase: "off", message: denied ? "Google\u306B\u30ED\u30B0\u30A4\u30F3\u3092\u62D2\u5426\u3055\u308C\u307E\u3057\u305F\u3002\u30A2\u30D7\u30EA\u306EGoogle\u8A2D\u5B9A\uFF08\u516C\u958B\u72B6\u614B\uFF09\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044" : "\u30ED\u30B0\u30A4\u30F3\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F" });
+            return;
+          }
+          setStatus({ phase: "needsAuth", message: why === "notready" ? "\u6E96\u5099\u4E2D\u3067\u3059\u3002\u3082\u3046\u4E00\u5EA6\u62BC\u3057\u3066\u304F\u3060\u3055\u3044" : "\u30ED\u30B0\u30A4\u30F3\u304C\u5B8C\u4E86\u3057\u307E\u305B\u3093\u3067\u3057\u305F" });
+          return;
+        }
       }
-      let ok = false;
-      for (let i = 0; i < 3 && !ok; i++) ok = await cycle(drive, token);
-      cfg.lastSyncAt = now();
-      if (lastMoved.sent > 0) { cfg.sentN = lastMoved.sent; cfg.sentAt = cfg.lastSyncAt; }
-      if (lastMoved.received > 0) { cfg.recvN = lastMoved.received; cfg.recvAt = cfg.lastSyncAt; }
-      saveCfg();
-      setStatus({ phase: "idle", message: "" });
-      await refreshPending();
-      if (!ok) scheduleSoon(); // 通信中に書きかえがあり続けた。少し置いてやり直す
-    } catch (e) {
-      const err = classify(e);
-      if (err.kind === "auth") {
-        auth.clear();
-        setStatus({ phase: "needsAuth", message: err.message });
-      } else if (err.kind === "network") {
-        setStatus({ phase: "offline", message: "通信できません。つながれば自動で再開します" });
-      } else {
-        setStatus({ phase: "error", message: err.message });
-      }
-    }
-  }
-
-  function syncNow({ reason, interactive } = {}) {
-    if (!cfg.enabled) return Promise.resolve();
-    if (running) { queued = true; return running; }
-    if (!interactive && now() - lastAuto < AUTO_MIN_GAP_MS && reason !== "manual") return Promise.resolve();
-    if (!interactive) lastAuto = now();
-    running = (async () => {
-      try { await runOnce(reason || "auto", !!interactive); }
-      finally {
-        running = null;
-        if (queued) { queued = false; scheduleSoon(); }
-      }
-    })();
-    return running;
-  }
-
-  function scheduleSoon(ms) {
-    clearTimeout(timer);
-    timer = setTimeout(() => { syncNow({ reason: "auto" }); }, ms === undefined ? DEBOUNCE_MS : ms);
-  }
-
-  /* しばらく離れてから戻ったときは「開き直した」とみなし、ログインが切れていれば小窓を出す。
-     すぐ戻ったとき（ほかのアプリをちらっと見ただけ）は出さない */
-  const RESUME_ASK_MS = 3 * 60 * 1000;
-  function onVisible(ev) {
-    if (!opts.doc || opts.doc.visibilityState !== "visible") return;
-    const away = hiddenAt ? now() - hiddenAt : 0;
-    hiddenAt = 0;
-    if (!cfg.enabled) return;
-    if (!auth.getStored()) {
-      if (away >= RESUME_ASK_MS) setStatus({ phase: "needsAuth", message: "ログインが必要です", askLogin: true });
-      return;
-    }
-    if (now() - cfg.lastSyncAt > 30000 || (ev && ev.type === "online")) syncNow({ reason: "visible" });
-  }
-  function onHidden() {
-    if (!opts.doc || opts.doc.visibilityState !== "hidden") return;
-    hiddenAt = now();
-    if (cfg.enabled && timer && auth.getStored()) { clearTimeout(timer); timer = null; syncNow({ reason: "hidden" }); }
-  }
-
-  return {
-    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    /* 画面に出す状態。**同じ中身のあいだは同じ object を返すこと**（useSyncExternalStore 向け） */
-    getStatus() {
-      const next = publicStatus();
-      if (statusCache && stable(statusCache) === stable(next)) return statusCache;
-      statusCache = next; return next;
-    },
-    /* Googleの部品を先に読んでおく。読み終わったら画面に知らせる（「接続」を押せる状態になる） */
-    preload() { return auth.preload ? auth.preload().then((ok) => { setStatus({}); return ok; }) : Promise.resolve(true); },
-    setClientId(id) { cfg.clientId = String(id || "").trim(); saveCfg(); setStatus({}); },
-    setAutoBackup(on) { cfg.autoBackup = !!on; saveCfg(); setStatus({}); },
-    /* 「接続」ボタンの中から呼ぶ。**awaitを挟まずに呼ぶこと**（ポップアップは指の操作の流れの中でしか開かない） */
-    connect() {
-      cfg.enabled = true; saveCfg();
-      memBase = undefined;
-      setStatus({ phase: "idle", message: "", askLogin: false });
-      return syncNow({ reason: "manual", interactive: true });
-    },
-    syncManual() { return syncNow({ reason: "manual", interactive: !auth.getStored() }); },
-    /* 起動時の小窓の「つなぎ直す」。指の操作の中から、await を挟まずに呼ぶこと */
-    loginNow() { setStatus({ askLogin: false }); return syncNow({ reason: "manual", interactive: true }); },
-    /* 起動時の小窓の「あとで」 */
-    dismissLogin() { setStatus({ askLogin: false }); },
-    /* 解除はログインなしでできること（Googleへは何も問い合わせない） */
-    async disconnect() {
-      memBase = undefined;
-      cfg.enabled = false; cfg.email = ""; cfg.folderId = ""; cfg.lastSyncAt = 0; cfg.lastBackupDay = "";
-      cfg.sentN = 0; cfg.sentAt = 0; cfg.recvN = 0; cfg.recvAt = 0; saveCfg();
-      folderVerified = false; clearTimeout(timer); timer = null;
-      const t = auth.getStored(); if (t) auth.revoke(t);
-      auth.clear();
-      try { await opts.kv.del(STATE_KEY); } catch (e) { /* noop */ }
-      setStatus({ phase: "off", message: "", pending: 0, askLogin: false });
-    },
-    /* 端末の中の記録が書きかわったとき。まだ送っていない数をすぐ数え直す（ヘッダーの雲に出る） */
-    notifyChange() {
-      if (!cfg.enabled || !started) return;
-      refreshPending();
-      if (auth.getStored()) scheduleSoon();
-      else if (status.phase !== "needsAuth") setStatus({ phase: "needsAuth", message: "ログインが必要です" });
-    },
-    start() {
-      if (started) return;
-      started = true;
-      if (cfg.enabled && auth.preload) auth.preload();
-      if (opts.doc) opts.doc.addEventListener("visibilitychange", onVisible);
-      if (opts.doc) opts.doc.addEventListener("visibilitychange", onHidden);
-      if (opts.win) opts.win.addEventListener("online", onVisible);
-      periodic = setInterval(() => { if (!opts.doc || opts.doc.visibilityState === "visible") { if (cfg.enabled && auth.getStored() && now() - cfg.lastSyncAt > PERIOD_MS - 1000) syncNow({ reason: "period" }); } }, 60000);
-      if (cfg.enabled) {
-        refreshPending();
-        /* 起動したときにログインが切れていたら、ここで（起動の流れの中で）小窓を出してもらう */
-        if (auth.getStored()) syncNow({ reason: "start" });
-        else setStatus({ phase: "needsAuth", message: "ログインが必要です", askLogin: true });
-      }
-    },
-    stop() {
-      started = false; clearTimeout(timer); clearInterval(periodic);
-      if (opts.doc) { opts.doc.removeEventListener("visibilitychange", onVisible); opts.doc.removeEventListener("visibilitychange", onHidden); }
-      if (opts.win) opts.win.removeEventListener("online", onVisible);
-    },
-  };
-}
-
-/* 大きい控えの置き場（IndexedDB）。使えない端末では localStorage に置く */
-export function createKV(ls) {
-  const DB = "footprints-sync-meta";
-  let dbP = null;
-  const open = () => {
-    if (dbP) return dbP;
-    dbP = new Promise((resolve) => {
+      const drive = createDrive(fetchFn, () => auth.getStored() || token);
+      setStatus({ phase: "syncing", message: "", askLogin: false });
       try {
-        if (typeof indexedDB === "undefined") { resolve(null); return; }
-        const req = indexedDB.open(DB, 1);
-        const t = setTimeout(() => resolve(null), 4000);
-        req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains("kv")) req.result.createObjectStore("kv"); };
-        req.onsuccess = () => { clearTimeout(t); resolve(req.result); };
-        req.onerror = () => { clearTimeout(t); resolve(null); };
-        req.onblocked = () => { clearTimeout(t); resolve(null); };
-      } catch (e) { resolve(null); }
-    });
-    return dbP;
-  };
-  const tx = (mode, fn) => open().then((db) => new Promise((resolve, reject) => {
-    if (!db) { reject(new Error("nodb")); return; }
-    try {
-      const t = db.transaction("kv", mode);
-      const r = fn(t.objectStore("kv"));
-      t.oncomplete = () => resolve(r && "result" in r ? r.result : true);
-      t.onerror = () => reject(t.error); t.onabort = () => reject(t.error);
-    } catch (e) { reject(e); }
-  }));
-  const LK = "ft-gsync-kv-";
-  return {
-    async get(k) {
-      try { const v = await tx("readonly", (s) => s.get(k)); return v === undefined ? null : v; }
-      catch (e) { try { return JSON.parse(ls.getItem(LK + k) || "null"); } catch (e2) { return null; } }
-    },
-    async set(k, v) {
-      try { await tx("readwrite", (s) => s.put(v, k)); }
-      catch (e) { try { ls.setItem(LK + k, JSON.stringify(v)); } catch (e2) { /* noop */ } }
-    },
-    async del(k) {
-      try { await tx("readwrite", (s) => s.delete(k)); } catch (e) { /* noop */ }
-      try { ls.removeItem(LK + k); } catch (e) { /* noop */ }
-    },
-  };
-}
+        if (!cfg.email) {
+          try {
+            const u = await drive.about();
+            cfg.email = u.emailAddress || "";
+            saveCfg();
+          } catch (e) {
+            if (e instanceof SyncError && e.kind === "auth") throw e;
+          }
+        }
+        let ok = false;
+        for (let i = 0; i < 3 && !ok; i++) ok = await cycle(drive, token);
+        cfg.lastSyncAt = now();
+        if (lastMoved.sent > 0) {
+          cfg.sentN = lastMoved.sent;
+          cfg.sentAt = cfg.lastSyncAt;
+        }
+        if (lastMoved.received > 0) {
+          cfg.recvN = lastMoved.received;
+          cfg.recvAt = cfg.lastSyncAt;
+        }
+        saveCfg();
+        setStatus({ phase: "idle", message: "" });
+        await refreshPending();
+        if (!ok) scheduleSoon();
+      } catch (e) {
+        const err = classify(e);
+        if (err.kind === "auth") {
+          auth.clear();
+          setStatus({ phase: "needsAuth", message: err.message });
+        } else if (err.kind === "network") {
+          setStatus({ phase: "offline", message: "\u901A\u4FE1\u3067\u304D\u307E\u305B\u3093\u3002\u3064\u306A\u304C\u308C\u3070\u81EA\u52D5\u3067\u518D\u958B\u3057\u307E\u3059" });
+        } else {
+          setStatus({ phase: "error", message: err.message });
+        }
+      }
+    }
+    function syncNow({ reason, interactive } = {}) {
+      if (!cfg.enabled) return Promise.resolve();
+      if (running) {
+        queued = true;
+        return running;
+      }
+      if (!interactive && now() - lastAuto < AUTO_MIN_GAP_MS && reason !== "manual") return Promise.resolve();
+      if (!interactive) lastAuto = now();
+      running = (async () => {
+        try {
+          await runOnce(reason || "auto", !!interactive);
+        } finally {
+          running = null;
+          if (queued) {
+            queued = false;
+            scheduleSoon();
+          }
+        }
+      })();
+      return running;
+    }
+    function scheduleSoon(ms) {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        syncNow({ reason: "auto" });
+      }, ms === void 0 ? DEBOUNCE_MS : ms);
+    }
+    const RESUME_ASK_MS = 3 * 60 * 1e3;
+    function onVisible(ev) {
+      if (!opts.doc || opts.doc.visibilityState !== "visible") return;
+      const away = hiddenAt ? now() - hiddenAt : 0;
+      hiddenAt = 0;
+      if (!cfg.enabled) return;
+      if (!auth.getStored()) {
+        if (away >= RESUME_ASK_MS) setStatus({ phase: "needsAuth", message: "\u30ED\u30B0\u30A4\u30F3\u304C\u5FC5\u8981\u3067\u3059", askLogin: true });
+        return;
+      }
+      if (now() - cfg.lastSyncAt > 3e4 || ev && ev.type === "online") syncNow({ reason: "visible" });
+    }
+    function onHidden() {
+      if (!opts.doc || opts.doc.visibilityState !== "hidden") return;
+      hiddenAt = now();
+      if (cfg.enabled && timer && auth.getStored()) {
+        clearTimeout(timer);
+        timer = null;
+        syncNow({ reason: "hidden" });
+      }
+    }
+    return {
+      subscribe(fn) {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+      /* 画面に出す状態。**同じ中身のあいだは同じ object を返すこと**（useSyncExternalStore 向け） */
+      getStatus() {
+        const next = publicStatus();
+        if (statusCache && stable(statusCache) === stable(next)) return statusCache;
+        statusCache = next;
+        return next;
+      },
+      /* Googleの部品を先に読んでおく。読み終わったら画面に知らせる（「接続」を押せる状態になる） */
+      preload() {
+        return auth.preload ? auth.preload().then((ok) => {
+          setStatus({});
+          return ok;
+        }) : Promise.resolve(true);
+      },
+      setClientId(id) {
+        cfg.clientId = String(id || "").trim();
+        saveCfg();
+        setStatus({});
+      },
+      setAutoBackup(on) {
+        cfg.autoBackup = !!on;
+        saveCfg();
+        setStatus({});
+      },
+      /* 「接続」ボタンの中から呼ぶ。**awaitを挟まずに呼ぶこと**（ポップアップは指の操作の流れの中でしか開かない） */
+      connect() {
+        cfg.enabled = true;
+        saveCfg();
+        memBase = void 0;
+        setStatus({ phase: "idle", message: "", askLogin: false });
+        return syncNow({ reason: "manual", interactive: true });
+      },
+      syncManual() {
+        return syncNow({ reason: "manual", interactive: !auth.getStored() });
+      },
+      /* 起動時の小窓の「ログインして同期」。指の操作の中から、await を挟まずに呼ぶこと */
+      loginNow() {
+        setStatus({ askLogin: false });
+        return syncNow({ reason: "manual", interactive: true });
+      },
+      /* 起動時の小窓の「あとで」 */
+      dismissLogin() {
+        setStatus({ askLogin: false });
+      },
+      /* 解除はログインなしでできること（Googleへは何も問い合わせない） */
+      async disconnect() {
+        memBase = void 0;
+        cfg.enabled = false;
+        cfg.email = "";
+        cfg.folderId = "";
+        cfg.lastSyncAt = 0;
+        cfg.lastBackupDay = "";
+        cfg.sentN = 0;
+        cfg.sentAt = 0;
+        cfg.recvN = 0;
+        cfg.recvAt = 0;
+        saveCfg();
+        folderVerified = false;
+        clearTimeout(timer);
+        timer = null;
+        const t = auth.getStored();
+        if (t) auth.revoke(t);
+        auth.clear();
+        try {
+          await opts.kv.del(STATE_KEY);
+        } catch (e) {
+        }
+        setStatus({ phase: "off", message: "", pending: 0, askLogin: false });
+      },
+      /* 端末の中の記録が書きかわったとき。まだ送っていない数をすぐ数え直す（ヘッダーの雲に出る） */
+      notifyChange() {
+        if (!cfg.enabled || !started) return;
+        refreshPending();
+        if (auth.getStored()) scheduleSoon();
+        else if (status.phase !== "needsAuth") setStatus({ phase: "needsAuth", message: "\u30ED\u30B0\u30A4\u30F3\u304C\u5FC5\u8981\u3067\u3059" });
+      },
+      start() {
+        if (started) return;
+        started = true;
+        if (cfg.enabled && auth.preload) auth.preload();
+        if (opts.doc) opts.doc.addEventListener("visibilitychange", onVisible);
+        if (opts.doc) opts.doc.addEventListener("visibilitychange", onHidden);
+        if (opts.win) opts.win.addEventListener("online", onVisible);
+        periodic = setInterval(() => {
+          if (!opts.doc || opts.doc.visibilityState === "visible") {
+            if (cfg.enabled && auth.getStored() && now() - cfg.lastSyncAt > PERIOD_MS - 1e3) syncNow({ reason: "period" });
+          }
+        }, 6e4);
+        if (cfg.enabled) {
+          refreshPending();
+          if (auth.getStored()) syncNow({ reason: "start" });
+          else setStatus({ phase: "needsAuth", message: "\u30ED\u30B0\u30A4\u30F3\u304C\u5FC5\u8981\u3067\u3059", askLogin: true });
+        }
+      },
+      stop() {
+        started = false;
+        clearTimeout(timer);
+        clearInterval(periodic);
+        if (opts.doc) {
+          opts.doc.removeEventListener("visibilitychange", onVisible);
+          opts.doc.removeEventListener("visibilitychange", onHidden);
+        }
+        if (opts.win) opts.win.removeEventListener("online", onVisible);
+      }
+    };
+  }
+  function createKV(ls, dbName, lsPrefix) {
+    const DB = dbName || "footprints-sync-meta";
+    let dbP = null;
+    const open = () => {
+      if (dbP) return dbP;
+      dbP = new Promise((resolve) => {
+        try {
+          if (typeof indexedDB === "undefined") {
+            resolve(null);
+            return;
+          }
+          const req = indexedDB.open(DB, 1);
+          const t = setTimeout(() => resolve(null), 4e3);
+          req.onupgradeneeded = () => {
+            if (!req.result.objectStoreNames.contains("kv")) req.result.createObjectStore("kv");
+          };
+          req.onsuccess = () => {
+            clearTimeout(t);
+            resolve(req.result);
+          };
+          req.onerror = () => {
+            clearTimeout(t);
+            resolve(null);
+          };
+          req.onblocked = () => {
+            clearTimeout(t);
+            resolve(null);
+          };
+        } catch (e) {
+          resolve(null);
+        }
+      });
+      return dbP;
+    };
+    const tx = (mode, fn) => open().then((db) => new Promise((resolve, reject) => {
+      if (!db) {
+        reject(new Error("nodb"));
+        return;
+      }
+      try {
+        const t = db.transaction("kv", mode);
+        const r = fn(t.objectStore("kv"));
+        t.oncomplete = () => resolve(r && "result" in r ? r.result : true);
+        t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error);
+      } catch (e) {
+        reject(e);
+      }
+    }));
+    const LK = lsPrefix || "ft-gsync-kv-";
+    return {
+      async get(k) {
+        try {
+          const v = await tx("readonly", (s) => s.get(k));
+          return v === void 0 ? null : v;
+        } catch (e) {
+          try {
+            return JSON.parse(ls.getItem(LK + k) || "null");
+          } catch (e2) {
+            return null;
+          }
+        }
+      },
+      async set(k, v) {
+        try {
+          await tx("readwrite", (s) => s.put(v, k));
+        } catch (e) {
+          try {
+            ls.setItem(LK + k, JSON.stringify(v));
+          } catch (e2) {
+          }
+        }
+      },
+      async del(k) {
+        try {
+          await tx("readwrite", (s) => s.delete(k));
+        } catch (e) {
+        }
+        try {
+          ls.removeItem(LK + k);
+        } catch (e) {
+        }
+      }
+    };
+  }
+  return __toCommonJS(gsync_src_exports);
+})();
