@@ -1413,6 +1413,16 @@ linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))
 
 **キーボード跡（`pollDown` / `releaseKb`、installKeyboardInset の中）**：My手帳 8.1.1 をそのまま移した。❌ 引っ込みきった知らせを待つだけに戻さないこと。❌ 見に行っている途中で回数を数え直さないこと。iPhone 実機では未確認。
 
+### 2.22.1 ぶどうの房
+- 房は `GRAPE_BEADS`（14粒の位置）＋うしろに一段濃い粒。❌ 粒を少なく・規則正しく並べないこと（三角に見えると言われた）。軸のつけねは `grapeTop(y, r)`。
+
+### 2.22.0 ぶどうは「つる」で育てる
+
+- `FruitTree` は `vine`（`shape === "grape"`）のとき、4段階め以降を `GrapeVine` で描く（支柱 → `Trellis` ＋太いつる＋`VineLeaves` → 棚の下に房 `GRAPE_SPOTS`）。❌ ぶどうに `Trunk` / `Canopy` / `Blossom` を使わないこと（持ち主の指示：ぶどうは木にならない）。
+- 段階の名前は `stageNameFor(st, fruit)`（ぶどうだけ `GRAPE_STAGE_NAMES`）。**段階の名前を画面に出すときは、st.name を直に出さず stageNameFor を通すこと。** 呼び名は `plantWordFor`（ぶどう＝つる、ほか＝木）。
+- 進む条件（STAGE_PACES）・みことば（STAGES の verse）は共通のまま。
+- 試し方：App.jsx の写しの末尾に `export { FruitTree }` を足し、react-dom/server で stage 1〜10 を並べて描いて目で見る（配る App.jsx には残さないこと）。
+
 ### 2.21.0 ぶどう・実を並べるところを1列に
 
 - `FRUITS` に grape（`shape: "grape"`）。`Fruit` に房の描き方を足した（粒を 3・2・1 の逆三角）。小さな絵は `FruitIcon`（木と同じ `Fruit` で描く）。

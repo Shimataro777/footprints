@@ -5529,24 +5529,37 @@ function Canopy({ full = true }) {
 /* 実のなる位置 */
 const SPOTS = [[44, 62], [72, 54], [60, 84], [84, 74], [36, 80], [64, 66]];
 
+/* ぶどうの房の粒の並び（粒の大きさを1とした位置）。上が広く丸い肩、下へ細くなり、先は少し右へ流れる */
+const GRAPE_BEADS = [
+  [-1.95, 0.25], [-0.65, -0.05], [0.65, 0.1], [1.9, 0.3],
+  [-2.05, 1.75], [-0.75, 1.5], [0.6, 1.65], [1.85, 1.9],
+  [-1.3, 3.15], [0.05, 3.05], [1.35, 3.3],
+  [-0.5, 4.55], [0.85, 4.6],
+  [0.35, 5.95],
+];
+/* 房のいちばん上（軸のつけね）。棚から下げる軸の長さを決めるのにも使う */
+const grapeTop = (y, r) => y - r * 0.85;
 function Fruit({ x, y, r, color, shape, stem = true }) {
   if (shape === "grape") {
-    /* ぶどう：小さな粒を 3・2・1 の逆三角に並べた房。上に軸と葉（2.21.0〜） */
-    const g = r * 0.4;
-    const top = y - r * 0.55;
-    const beads = [
-      [x - g * 1.9, top], [x, top], [x + g * 1.9, top],
-      [x - g * 0.95, top + g * 1.65], [x + g * 0.95, top + g * 1.65],
-      [x, top + g * 3.3],
-    ];
+    /* ぶどう（2.22.1 で描き直し）：小さな粒をたくさん、肩の丸い房に寄せ集める。
+       2.21.0〜2.22.0 は大きな粒6つを 3・2・1 の逆三角に並べていて、三角に見えて不自然だった（持ち主の指摘）。
+       ・粒は14。列ごとに少しずつずらし、上下にも揺らして、きっちり並んで見えないようにする
+       ・うしろに一段濃い粒を重ねて、すき間を埋め、ふくらみを出す
+       ・先は真下ではなく、少し横へ流す */
+    const g = r * 0.27;
+    const top = grapeTop(y, r);
+    const B = GRAPE_BEADS.map(([bx, by]) => [x + bx * g, top + g + by * g]);
+    const back = blend(color, "#000000", 0.2);
     return (
       <g>
         {stem && <>
-          <path d={`M${x} ${top - g * 0.9} L${x + 0.5} ${top - g * 0.9 - r * 0.45}`} stroke="#8A6B4F" strokeWidth="1.8" strokeLinecap="round" />
-          <path d={`M${x + 1} ${top - g * 0.9 - r * 0.3} q6 -3 8 1 q-6 3 -8 -1 Z`} fill={LEAF_L} />
+          <path d={`M${x} ${top} L${x + 0.5} ${top - r * 0.45}`} stroke="#8A6B4F" strokeWidth="1.8" strokeLinecap="round" />
+          <path d={`M${x + 1} ${top - r * 0.3} q6 -3 8 1 q-6 3 -8 -1 Z`} fill={LEAF_L} />
         </>}
-        {beads.map(([bx, by], i) => <circle key={i} cx={bx} cy={by} r={g * 1.02} fill={color} />)}
-        {beads.map(([bx, by], i) => <circle key={"h" + i} cx={bx - g * 0.35} cy={by - g * 0.35} r={g * 0.28} fill="#FFFFFF" opacity="0.45" />)}
+        {B.map(([bx, by], i) => <circle key={"k" + i} cx={bx + g * 0.35} cy={by + g * 0.45} r={g * 0.98} fill={back} />)}
+        {B.map(([bx, by], i) => <circle key={i} cx={bx} cy={by} r={g} fill={color} />)}
+        {B.map(([bx, by], i) => (i % 3 === 1 ? null
+          : <circle key={"h" + i} cx={bx - g * 0.35} cy={by - g * 0.35} r={g * 0.3} fill="#FFFFFF" opacity="0.4" />))}
       </g>
     );
   }
@@ -5591,7 +5604,7 @@ function FruitIcon({ f, size = 26, dim = false }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true"
       style={dim ? { filter: "grayscale(1)", opacity: 0.45 } : undefined}>
-      <Fruit x={12} y={f.shape === "grape" ? 13 : 14} r={f.shape === "grape" ? 8 : 7} color={f.ripe} shape={f.shape} />
+      <Fruit x={12} y={f.shape === "grape" ? 12 : 14} r={f.shape === "grape" ? 8 : 7} color={f.ripe} shape={f.shape} />
     </svg>
   );
 }
@@ -5617,10 +5630,125 @@ function Sparkle({ x, y, s = 4, color = "#F2C14E", twinkle = false, delay = 0 })
   );
 }
 
+
+/* ============================================================
+   ぶどう（2.22.0〜）
+   ぶどうは木にならない。つるが支柱をのぼり、ぶどう棚に広がって、棚の下に房が下がる。
+   段階1〜3（土・芽・双葉）はほかの実と同じ。4から先をここで描く。
+   4 支柱にからむつる → 5 棚にのびるつる → 6 棚いっぱいの葉と小さなつぼみ → 7 ぶどうの花
+   → 8 青くて小さな房 → 9 ふくらんだ房 → 10 熟した房
+   **ぶどうに木の幹・こんもりした葉（Trunk / Canopy）を使わないこと**（依頼：ぶどうは木にならない）
+   ============================================================ */
+const WOOD = "#C9A27E", WOOD_D = "#A9825F", VINE = "#8E6A4E";
+/* ぶどうの葉：切れ込みのある丸い葉を、3つの丸の重なりで描く */
+function GrapeLeaf({ x, y, s = 9, color = LEAF_L, rot = 0 }) {
+  return (
+    <g transform={`translate(${x} ${y}) rotate(${rot})`}>
+      <circle cx="0" cy={-s * 0.5} r={s * 0.56} fill={color} />
+      <circle cx={-s * 0.52} cy={-s * 0.12} r={s * 0.42} fill={color} />
+      <circle cx={s * 0.52} cy={-s * 0.12} r={s * 0.42} fill={color} />
+      <path d={`M0 ${s * 0.15} L0 ${-s * 0.75} M0 ${-s * 0.2} L${-s * 0.6} ${-s * 0.35} M0 ${-s * 0.2} L${s * 0.6} ${-s * 0.35}`}
+        stroke="#FFFFFF" strokeWidth="0.9" opacity="0.45" strokeLinecap="round" fill="none" />
+    </g>
+  );
+}
+/* 巻きひげ（くるっと巻いた細いつる） */
+function Tendril({ x, y, flip = false }) {
+  const k = flip ? -1 : 1;
+  return <path d={`M${x} ${y} q${4 * k} -2 ${5 * k} -6 q${1 * k} -4 ${-2 * k} -4 q${-2 * k} 0 ${-1 * k} 2`}
+    stroke={YOUNG} strokeWidth="1.2" fill="none" strokeLinecap="round" />;
+}
+/* ぶどう棚：両はしの柱と、上の横木・格子 */
+function Trellis() {
+  return (
+    <g>
+      <rect x="15" y="38" width="3.4" height="76" rx="1.2" fill={WOOD_D} />
+      <rect x="101.6" y="38" width="3.4" height="76" rx="1.2" fill={WOOD_D} />
+      <rect x="11" y="36" width="98" height="4" rx="2" fill={WOOD} />
+      {[24, 38, 52, 66, 80, 94].map((x) => <rect key={x} x={x} y="33" width="2.4" height="9" rx="1" fill={WOOD_D} opacity="0.7" />)}
+    </g>
+  );
+}
+/* 房が下がる位置（棚の下）。[x, y]。8は4つ、9は5つ、10は6つ使う */
+const GRAPE_SPOTS = [[28, 60], [92, 60], [45, 66], [76, 66], [36, 84], [86, 84]];
+/* 棚の上の葉。full ＝ 棚いっぱい（6〜）、そうでなければ真ん中から少し広がっただけ（5） */
+function VineLeaves({ full }) {
+  const xs = full ? [16, 27, 38, 49, 60, 71, 82, 93, 104] : [42, 52, 63, 74];
+  return (
+    <g>
+      {xs.map((x, i) => <GrapeLeaf key={"a" + x} x={x} y={38} s={full ? 10 : 8.5} color={i % 2 ? LEAF_D : LEAF_L} rot={i % 2 ? 12 : -10} />)}
+      {full && xs.slice(0, -1).map((x, i) => <GrapeLeaf key={"b" + x} x={x + 5.5} y={47} s={8} color={i % 2 ? LEAF_L : LEAF_D} rot={180 + (i % 2 ? 10 : -10)} />)}
+    </g>
+  );
+}
+function GrapeVine({ s, f }) {
+  /* 4：支柱を1本立て、つるが巻きつきながらのぼる */
+  if (s === 4) {
+    return (
+      <g>
+        <rect x="64" y="58" width="3" height="56" rx="1.2" fill={WOOD_D} />
+        <path d="M60 112 Q57 104 63 98 Q69 92 62 86 Q56 80 63 74 Q68 69 64 64" stroke={YOUNG} strokeWidth="2.6" fill="none" strokeLinecap="round" />
+        <GrapeLeaf x={58} y={100} s={8} color={LEAF_D} rot={-40} />
+        <GrapeLeaf x={70} y={90} s={8.5} color={LEAF_L} rot={35} />
+        <GrapeLeaf x={57} y={80} s={7.5} color={LEAF_L} rot={-35} />
+        <GrapeLeaf x={66} y={66} s={6.5} color={LEAF_D} rot={20} />
+        <Tendril x={66} y={74} />
+        <Tendril x={60} y={92} flip />
+      </g>
+    );
+  }
+  /* 5〜：ぶどう棚。根もとから太いつる（茶色）が棚へのぼり、棚の上を左右へのびる */
+  const full = s >= 6;
+  return (
+    <g>
+      <Trellis />
+      <path d="M60 114 Q57 100 61 88 Q64 76 59 64 Q56 52 60 41" stroke={VINE} strokeWidth="3.6" fill="none" strokeLinecap="round" />
+      <path d={full ? "M60 41 Q40 37 14 40" : "M60 41 Q50 38 40 40"} stroke={VINE} strokeWidth="2.4" fill="none" strokeLinecap="round" />
+      <path d={full ? "M60 41 Q82 37 106 40" : "M60 41 Q71 38 80 40"} stroke={VINE} strokeWidth="2.4" fill="none" strokeLinecap="round" />
+      <VineLeaves full={full} />
+      {!full && <><Tendril x={40} y={41} flip /><Tendril x={80} y={41} /></>}
+      {/* 6：小さなつぼみ（緑の粒の房の赤ちゃん） */}
+      {s === 6 && GRAPE_SPOTS.slice(0, 4).map(([x, y], i) => (
+        <g key={i}>
+          <path d={`M${x} 50 L${x} ${y - 8}`} stroke={VINE} strokeWidth="1" />
+          <Fruit x={x} y={y - 4} r={4.2} color={blend(YOUNG, f.blossom, 0.35)} shape="grape" stem={false} />
+        </g>
+      ))}
+      {/* 7：ぶどうの花。小さく、黄緑の泡のような房（ほかの実の5枚の花びらとは違う） */}
+      {s === 7 && GRAPE_SPOTS.slice(0, 5).map(([x, y], i) => (
+        <g key={i}>
+          <path d={`M${x} 50 L${x} ${y - 8}`} stroke={VINE} strokeWidth="1" />
+          <Fruit x={x} y={y - 3} r={6} color={f.blossom} shape="grape" stem={false} />
+          {[[-2.5, -5], [2.5, -4], [0, -1], [-1.5, 2], [1.8, 1]].map(([dx, dy], k) => (
+            <circle key={k} cx={x + dx} cy={y - 3 + dy} r="0.9" fill="#D9C95A" />
+          ))}
+        </g>
+      ))}
+      {/* 8〜10：棚の下に房が下がる。細い軸で棚とつなぐ */}
+      {/* 軸を先にまとめて描き、房をあとから重ねる（下の房の軸が、上の房の手前を横切らないように） */}
+      {s >= 8 && (() => {
+        const n = s === 8 ? 4 : s === 9 ? 5 : 6;
+        const r = s === 8 ? 6 : s === 9 ? 8.4 : 10;
+        const list = GRAPE_SPOTS.slice(0, n);
+        return (
+          <g>
+            {list.map(([x, y], i) => <path key={"s" + i} d={`M${x} 49 L${x} ${grapeTop(y, r)}`} stroke={VINE} strokeWidth="1.2" />)}
+            {list.map(([x, y], i) => (
+              <Fruit key={i} x={x} y={y} r={r} shape="grape" stem={false}
+                color={s === 8 ? blend(YOUNG, f.ripe, 0.18) : s === 9 ? (i % 2 ? f.mid : YOUNG) : f.ripe} />
+            ))}
+          </g>
+        );
+      })()}
+    </g>
+  );
+}
+
 /* 10段階の果樹。stage は 1〜10 */
 function FruitTree({ stage = 1, fruit = "apple", size = 150, className = "", sparkle = false }) {
   const f = fruitByKey(fruit);
   const s = Math.min(10, Math.max(1, stage));
+  const vine = f.shape === "grape";
   return (
     <svg viewBox="0 0 120 132" width={size} height={size * 132 / 120} className={className} aria-hidden="true">
       <Soil />
@@ -5661,7 +5789,18 @@ function FruitTree({ stage = 1, fruit = "apple", size = 150, className = "", spa
         </g>
       )}
 
-      {s === 4 && (
+      {/* ぶどうは4段階めから、つると棚で描く（GrapeVine）。下の木の絵は通らない */}
+      {vine && s >= 4 && <GrapeVine s={s} f={f} />}
+      {vine && s === 10 && (
+        <g>
+          <Sparkle x={8} y={24} s={5} twinkle delay={0.2} />
+          <Sparkle x={112} y={22} s={6} twinkle delay={0.8} />
+          <Sparkle x={60} y={100} s={4} twinkle delay={1.2} />
+          <Sparkle x={20} y={100} s={4} twinkle delay={1.7} />
+        </g>
+      )}
+
+      {!vine && s === 4 && (
         <g>
           <path d="M60 112 Q58 96 60 80" stroke={TRUNK} strokeWidth="4" fill="none" strokeLinecap="round" />
           <path d="M60 94 L50 87" stroke={TRUNK} strokeWidth="2.6" strokeLinecap="round" />
@@ -5673,28 +5812,28 @@ function FruitTree({ stage = 1, fruit = "apple", size = 150, className = "", spa
         </g>
       )}
 
-      {s === 5 && (<g><Trunk /><Canopy full={false} /></g>)}
+      {!vine && s === 5 && (<g><Trunk /><Canopy full={false} /></g>)}
 
-      {s >= 6 && (<g><Trunk /><Canopy /></g>)}
+      {!vine && s >= 6 && (<g><Trunk /><Canopy /></g>)}
 
-      {s === 6 && SPOTS.slice(0, 5).map(([x, y], i) => (
+      {!vine && s === 6 && SPOTS.slice(0, 5).map(([x, y], i) => (
         <g key={i}>
           <circle cx={x} cy={y} r="4.6" fill={f.blossom} />
           <circle cx={x} cy={y} r="2.4" fill={f.mid} opacity="0.7" />
         </g>
       ))}
 
-      {s === 7 && SPOTS.map(([x, y], i) => <Blossom key={i} x={x} y={y} r={i % 2 ? 7 : 8.4} color={f.blossom} />)}
+      {!vine && s === 7 && SPOTS.map(([x, y], i) => <Blossom key={i} x={x} y={y} r={i % 2 ? 7 : 8.4} color={f.blossom} />)}
 
-      {s === 8 && SPOTS.slice(0, 4).map(([x, y], i) => (
+      {!vine && s === 8 && SPOTS.slice(0, 4).map(([x, y], i) => (
         <Fruit key={i} x={x} y={y} r={5} color={blend(YOUNG, f.ripe, 0.18)} shape={f.shape} stem={false} />
       ))}
 
-      {s === 9 && SPOTS.slice(0, 5).map(([x, y], i) => (
+      {!vine && s === 9 && SPOTS.slice(0, 5).map(([x, y], i) => (
         <Fruit key={i} x={x} y={y} r={7.6} color={i % 2 ? f.mid : YOUNG} shape={f.shape} />
       ))}
 
-      {s === 10 && (
+      {!vine && s === 10 && (
         <g>
           {SPOTS.map(([x, y], i) => <Fruit key={i} x={x} y={y} r={9.4} color={f.ripe} shape={f.shape} />)}
           <Sparkle x={22} y={54} s={5} twinkle delay={0.2} />
@@ -5730,6 +5869,13 @@ const STAGES = [
   { n: 10, name: "熟した美味しそうな実",
     verse: "ですから、私の愛する兄弟たち。堅く立って、動かされることなく、いつも主のわざに励みなさい。あなたがたは、自分たちの労苦が主にあって無駄でないことを知っているのですから。", ref: "コリント人への手紙 第一 15:58" },
 ];
+
+/* ぶどうの段階の名前（2.22.0〜）。ぶどうは木にならないので、4から先の呼び名を変える。
+   みことば（verse / ref）はほかの実と同じものを出す */
+const GRAPE_STAGE_NAMES = { 4: "支柱にからむつる", 5: "棚にのびるつる", 6: "小さなつぼみ", 7: "ぶどうの花（満開）", 8: "青くて小さな房", 9: "大きく膨らんだ房", 10: "熟した美味しそうな房" };
+const stageNameFor = (st, fruit) => (fruitByKey(fruit).shape === "grape" && GRAPE_STAGE_NAMES[st.n]) || st.name;
+/* 育てているものの呼び名。ぶどうは「つる」、ほかは「木」 */
+const plantWordFor = (fruit) => (fruitByKey(fruit).shape === "grape" ? "つる" : "木");
 
 /* 記録の日付。無ければ作成日を使う */
 const recDate = (r) => (r && (r.date || (r.createdAt || "").slice(0, 10))) || "";
@@ -7087,9 +7233,10 @@ function ConfirmReplantDialog({ fruit, onConfirm, onCancel }) {
     <div data-ft-overlay="" className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center px-6">
       <BackgroundLock />
       <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-neutral-200 shadow-xl anim-pop">
-        <h3 className="font-display text-[17px] text-neutral-900 mb-2">木を植え直します</h3>
+        {/* 今育てているのが、ぶどう（つる）のこともあるので「木」と決めつけない（2.22.0〜） */}
+        <h3 className="font-display text-[17px] text-neutral-900 mb-2">植え直します</h3>
         <p className="text-[13.5px] text-neutral-700 leading-relaxed mb-2">
-          {fruitByKey(fruit).label}の種を新しく蒔きます。今の木は土からのやり直しになり、
+          {fruitByKey(fruit).label}の種を新しく蒔きます。今育てているものは土からのやり直しになり、
           <span className="font-bold">育ってきた日数と件数は0から数え直し</span>になります。
         </p>
         <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-5">
@@ -9801,7 +9948,7 @@ const HELP_SECTIONS = [
     title: "実績と実り",
     items: [
       ["読んだところが色づく", "通読の記録から、66巻それぞれの読んだ回数が色で分かります。"],
-      ["続けるほど実る", "ホームの木は、記録を重ねるほど育ちます。"],
+      ["続けるほど実る", "ホームで育てている実は、記録を重ねるほど育ちます。"],
     ],
   },
   {
@@ -9900,8 +10047,8 @@ function GardenScreen({ garden, records, onClose, onChangeFruit , zIndex}) {
           <div className="rounded-2xl border border-th-700/25 bg-white p-4 mb-4 flex items-center gap-4">
             <FruitTree stage={cur.n} fruit={cycle.fruit} size={86} />
             <div className="flex-1 min-w-0">
-              <p className="text-[11.5px] font-bold tracking-wider text-th-800/70">育てている木</p>
-              <p className="text-[14.5px] font-bold text-neutral-900">{fruitByKey(cycle.fruit).label}・{cur.name}</p>
+              <p className="text-[11.5px] font-bold tracking-wider text-th-800/70">育てている{plantWordFor(cycle.fruit)}</p>
+              <p className="text-[14.5px] font-bold text-neutral-900">{fruitByKey(cycle.fruit).label}・{stageNameFor(cur, cycle.fruit)}</p>
               <button onClick={() => setPick(true)} className={BTN_SECONDARY + " mt-2 " + BTN_H + " px-3 text-[13.5px]"}>育てる実を変える</button>
             </div>
           </div>
