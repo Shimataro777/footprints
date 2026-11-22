@@ -5447,7 +5447,15 @@ const FRUITS = [
   { key: "peach",  label: "桃",       ripe: "#F0A0AA", mid: "#F4C6CA", blossom: "#F9CBD3", shape: "round" },
   { key: "orange", label: "オレンジ", ripe: "#E8994A", mid: "#EDC08D", blossom: "#FFF6E4", shape: "round" },
   { key: "cherry", label: "さくらんぼ", ripe: "#D8556B", mid: "#E294A2", blossom: "#FBDEE5", shape: "cherry" },
+  /* 2.21.0〜。ぶどうの花は小さく目立たない黄緑なので、花の色も淡い黄緑にしてある */
+  { key: "grape",  label: "ぶどう",   ripe: "#7D5BA6", mid: "#B9A6D3", blossom: "#EEF4D6", shape: "grape" },
 ];
+/* 実を並べるところ（種を選ぶ紙・収穫した実の数）は、**実の数ぶんの1列にすること**（2.21.0〜）。
+   名前の札を並べていたときは、5つでも「オレン/ジ」「さくら/んぼ」と名前が2行に折れ、
+   ぶどうを足すと6つめが2段めへ落ちた。いまは実の絵だけを1列に並べ（grid の列数＝FRUITS.length）、
+   名前は選んだものだけを大きく出す。**実を増やすときは FRUITS に1行足すだけでよい**（列数は自動で増える）。
+   ただし iPhone SE（幅320）では6つで1マス33px（絵は28px）。7つ以上にするなら、絵を小さくするか紙の余白を詰めること */
+const fruitCols = () => ({ gridTemplateColumns: `repeat(${FRUITS.length}, minmax(0, 1fr))` });
 const fruitByKey = (k) => FRUITS.find((f) => f.key === k) || FRUITS[0];
 
 const SOIL_D = "#C9A883", SOIL_L = "#DCC0A0";
@@ -5522,6 +5530,26 @@ function Canopy({ full = true }) {
 const SPOTS = [[44, 62], [72, 54], [60, 84], [84, 74], [36, 80], [64, 66]];
 
 function Fruit({ x, y, r, color, shape, stem = true }) {
+  if (shape === "grape") {
+    /* ぶどう：小さな粒を 3・2・1 の逆三角に並べた房。上に軸と葉（2.21.0〜） */
+    const g = r * 0.4;
+    const top = y - r * 0.55;
+    const beads = [
+      [x - g * 1.9, top], [x, top], [x + g * 1.9, top],
+      [x - g * 0.95, top + g * 1.65], [x + g * 0.95, top + g * 1.65],
+      [x, top + g * 3.3],
+    ];
+    return (
+      <g>
+        {stem && <>
+          <path d={`M${x} ${top - g * 0.9} L${x + 0.5} ${top - g * 0.9 - r * 0.45}`} stroke="#8A6B4F" strokeWidth="1.8" strokeLinecap="round" />
+          <path d={`M${x + 1} ${top - g * 0.9 - r * 0.3} q6 -3 8 1 q-6 3 -8 -1 Z`} fill={LEAF_L} />
+        </>}
+        {beads.map(([bx, by], i) => <circle key={i} cx={bx} cy={by} r={g * 1.02} fill={color} />)}
+        {beads.map(([bx, by], i) => <circle key={"h" + i} cx={bx - g * 0.35} cy={by - g * 0.35} r={g * 0.28} fill="#FFFFFF" opacity="0.45" />)}
+      </g>
+    );
+  }
   if (shape === "cherry") {
     return (
       <g>
@@ -5554,6 +5582,17 @@ function Fruit({ x, y, r, color, shape, stem = true }) {
       <ellipse cx={x - r * 0.34} cy={y - r * 0.32} rx={r * 0.22} ry={r * 0.3} fill="#FFFFFF" opacity="0.5" transform={`rotate(-25 ${x - r * 0.34} ${y - r * 0.32})`} />
       {stem && <path d={`M${x + 1} ${y - r - 2} q6 -3 8 1 q-6 3 -8 -1 Z`} fill={LEAF_L} />}
     </g>
+  );
+}
+
+/* 実の小さな絵（種を選ぶ紙・収穫した実の数）。木に生る実と同じ形で描く（2.21.0〜）。
+   dim ＝ まだ収穫していない（灰色にする） */
+function FruitIcon({ f, size = 26, dim = false }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true"
+      style={dim ? { filter: "grayscale(1)", opacity: 0.45 } : undefined}>
+      <Fruit x={12} y={f.shape === "grape" ? 13 : 14} r={f.shape === "grape" ? 8 : 7} color={f.ripe} shape={f.shape} />
+    </svg>
   );
 }
 
@@ -7019,20 +7058,17 @@ function FruitPickDialog({ title, note, current, onPick, onCancel }) {
         <h3 className="font-display text-[17px] text-neutral-900 mb-1.5">{title}</h3>
         {note && <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-3">{note}</p>}
         {/* 実を選び直すたびに、木がふわっと差し替わる */}
-        <div key={sel} className="flex justify-center mb-2 ft-grow">
+        <div key={sel} className="flex justify-center mb-1 ft-grow">
           <FruitTree stage={10} fruit={sel} size={150} />
         </div>
-        <div className="grid grid-cols-5 gap-1.5 mb-5">
+        {/* 選んでいる実の名前。マスには名前を書かない（6つ以上を1列に収めるため。fruitCols の説明） */}
+        <p className="text-center font-display text-[17px] text-neutral-900 mb-2.5">{fruitByKey(sel).label}</p>
+        <div className="grid gap-1.5 mb-5" style={fruitCols()}>
           {FRUITS.map((f) => (
-            <button key={f.key} onClick={() => setSel(f.key)}
-              className={"rounded-xl border-2 py-2 px-1 text-[11.5px] font-bold ft-tap " + (sel === f.key ? "border-th-700 bg-th-50 text-th-900" : "border-neutral-200 bg-white text-neutral-500")}>
-              <span className="block w-full flex justify-center mb-0.5">
-                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                  <circle cx="12" cy="14" r="8" fill={f.ripe} />
-                  <path d="M12 6 L12 3" stroke="#8A6B4F" strokeWidth="1.8" strokeLinecap="round" />
-                </svg>
-              </span>
-              {f.label}
+            <button key={f.key} type="button" onClick={() => setSel(f.key)} aria-label={f.label} aria-pressed={sel === f.key}
+              className={"rounded-xl border-2 flex items-center justify-center ft-tap " + (sel === f.key ? "border-th-700 bg-th-50" : "border-neutral-200 bg-white")}
+              style={{ height: 48 }}>
+              <FruitIcon f={f} size={28} />
             </button>
           ))}
         </div>
@@ -9871,17 +9907,13 @@ function GardenScreen({ garden, records, onClose, onChangeFruit , zIndex}) {
           </div>
         )}
 
-        <div className="grid grid-cols-5 gap-2 mb-5">
+        {/* 実ごとの収穫数。実の数ぶんの1列（fruitCols の説明）。名前は絵で見分け、読み上げには名前を渡す */}
+        <div className="grid gap-1.5 mb-5" style={fruitCols()}>
           {tally.map(({ f, n }) => (
-            <div key={f.key} className={"rounded-xl border-2 py-2.5 text-center " + (n > 0 ? "border-th-700/25 bg-white" : "border-neutral-200 bg-neutral-100/60")}>
-              <span className="flex justify-center mb-1">
-                <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-                  <circle cx="12" cy="14" r="8" fill={n > 0 ? f.ripe : "#D6D3D1"} />
-                  <path d="M12 6 L12 3" stroke={n > 0 ? "#8A6B4F" : "#D6D3D1"} strokeWidth="1.8" strokeLinecap="round" />
-                </svg>
-              </span>
-              <span className="block text-[11.5px] font-bold text-neutral-700 leading-tight">{f.label}</span>
-              <span className={"block text-[12.5px] font-bold " + (n > 0 ? "text-th-900" : "text-neutral-500")}>{n}</span>
+            <div key={f.key} role="img" aria-label={`${f.label} ${n}個`}
+              className={"rounded-xl border-2 py-2 flex flex-col items-center " + (n > 0 ? "border-th-700/25 bg-white" : "border-neutral-200 bg-neutral-100/60")}>
+              <FruitIcon f={f} size={26} dim={n === 0} />
+              <span className={"block text-[12.5px] font-bold tabular-nums mt-0.5 " + (n > 0 ? "text-th-900" : "text-neutral-500")}>{n}</span>
             </div>
           ))}
         </div>

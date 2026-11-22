@@ -1413,6 +1413,12 @@ linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))
 
 **キーボード跡（`pollDown` / `releaseKb`、installKeyboardInset の中）**：My手帳 8.1.1 をそのまま移した。❌ 引っ込みきった知らせを待つだけに戻さないこと。❌ 見に行っている途中で回数を数え直さないこと。iPhone 実機では未確認。
 
+### 2.21.0 ぶどう・実を並べるところを1列に
+
+- `FRUITS` に grape（`shape: "grape"`）。`Fruit` に房の描き方を足した（粒を 3・2・1 の逆三角）。小さな絵は `FruitIcon`（木と同じ `Fruit` で描く）。
+- 種を選ぶ紙（`FruitPickDialog`）と収穫した実の数（`GardenScreen`）は、`fruitCols()`（列数＝FRUITS.length）の1列。❌ `grid-cols-5` のような決め打ちに戻さないこと（実を足すと2段になる）。マスに名前を書かないこと（6つでは1マス 45px〈幅390〉・33px〈幅320〉で、名前が入らない）。
+- app.css に `grid-cols-6` は無い（作り直していない）ので、列数は style で渡している。
+
 ### 2.20.0 iPad の起動画面・メニューの出方・書きかえの数え方
 
 **起動画面（index.html）**：`.splash-inner` の top を、横向きは短い辺・縦向きは長い辺の半分へ（向きは `screen.orientation` → `window.orientation` → 本体の縦横）。
