@@ -18,7 +18,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>Footprints</title>
     <!-- **版数はここ1か所で決めること。** 起動の画面にも、アプリの中にも同じ値が出る -->
-    <script>window.__FT_VERSION = "2.18.2";</script>
+    <script>window.__FT_VERSION = "2.20.0";</script>
     <!-- Google連携のクライアントID（手順は SETUP-GOOGLE.md）。空のあいだは、Google連携の画面は出ない。公開されて困る値ではない -->
     <script>window.__FT_GOOGLE_CLIENT_ID = "319961278001-9o51h19lgo0mgh2idf3m12eor2t237qt.apps.googleusercontent.com";</script>
     <!-- 見た目（app.css）は「?v=版数」を付けて読む。
@@ -136,14 +136,37 @@
          ブラウザのタブで開いたとき（standalone でない）は、なにもしない
          （画面の上下に出る帯の分だけ、画面のまん中と本体のまん中が食い違うため、
          従来どおり本体の高さのまん中に置いたままにする） */
+      /* **iPad・横向きのときは、画面の「短いほうの辺」を高さとして使うこと（2.20.0〜。My手帳 4.0.0 と同じ直し）。**
+         症状：iPad で開くと、しるしが画面のまん中より下（横向きで上から約 67%）に出る。
+         原因：iPhone・iPad の screen.height は、向きを変えても入れ替わらない（いつも縦向きのときの高さ）。
+         横向きの画面の高さは短いほうの辺なのに、長いほうの辺の半分の位置へ留めていた。
+         ・向きは screen.orientation → window.orientation → 本体の縦横、の順に見る
+         ・短い辺・長い辺は min / max で取る（向きで入れ替わる端末でも、入れ替わらない端末でも同じ答えになる）
+         ・本体の高さが画面の高さと 120px より違うとき（iPad で画面を分けて使っている・ウインドウにしている）は留めない。
+           画面のまん中と、本体のまん中が食い違うため。中央寄せのまま出す
+         ・起動の画面が出ているあいだに向きを変えたら、留め直す */
       (function () {
-        var standalone = window.navigator.standalone === true
-          || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
-        if (!standalone) return;
-        var h = window.screen && window.screen.height;
-        if (!h) return;
-        var inner = document.querySelector("#splash .splash-inner");
-        if (inner) inner.style.top = (h / 2) + "px";
+        try {
+          var inner = document.querySelector("#splash .splash-inner");
+          if (!inner) return;
+          var standalone = window.navigator.standalone === true
+            || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+          var isLand = function () {
+            var so = window.screen && window.screen.orientation && window.screen.orientation.type;
+            if (typeof so === "string" && so) return so.indexOf("landscape") === 0;
+            if (typeof window.orientation === "number") return Math.abs(window.orientation) === 90;
+            return window.innerWidth > window.innerHeight;
+          };
+          var pin = function () {
+            var a = (window.screen && window.screen.width) || 0, b = (window.screen && window.screen.height) || 0;
+            var sh = isLand() ? Math.min(a, b) : Math.max(a, b);
+            var ih = window.innerHeight || 0;
+            if (standalone && sh > 0 && !(ih > 0 && Math.abs(sh - ih) > 120)) inner.style.top = (sh / 2) + "px";
+            else inner.style.top = "";
+          };
+          pin();
+          window.addEventListener("orientationchange", function () { pin(); setTimeout(pin, 250); });
+        } catch (e) { /* 留められなくても、中央寄せのまま出る */ }
       })();
 
       /* 起動の画面を外す手だて。アプリの読み込みが終わったときに呼ばれる。

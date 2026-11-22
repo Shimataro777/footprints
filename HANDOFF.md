@@ -1385,6 +1385,58 @@ linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))
 イラストの見出し（`mascotGroupLabel`）もこの名前から組み立てているので、
 `nameDraft` を渡す道すじは残してある。
 
+### 2.19.0 聖書箇所を直す・認識のゆれ・画像の解像度・字の色・キーボード跡
+
+**聖書箇所の読み取り（`normRefText` / `findRefSpans`）**
+- 読む前に `normRefText` で全角数字・「：」「．」・横棒類を半角にそろえる。**1文字を1文字に置きかえるだけにすること（長さを変えない）。**
+  位置（start/end）をそのまま元の文の位置として使っている（引用の縦線・札で直す）。`String.normalize("NFKC")` に替えないこと（Ⅰ→I などで長さも書名も変わる）。
+- 読み取りは `findRefSpans`（位置つき）1か所。`parseBibleRefs` はこれを通して重なりを落とすだけ。`splitByCitations` も、読むのはそろえた文（`nt`）、切り出すのは元の文。
+- `REF_REGEX` は「第」「篇」「節」「.」を受ける。分かれ道の順番は前と同じ（章の範囲 → 節 → 章だけ）。
+- その書に無い章は捨てる（`chapter > maxCh`）。逆向きの節の範囲（3:18-16）は範囲にしない。
+- 「時々認識されない」の主な原因は全角数字だった（iPhone の日本語キーボード）。
+- 試験のしかた：App.jsx から `const BOOKS` 〜 `function chipRefs(` の手前までを切り出して node で読み込み、いろいろな書き方を `findRefSpans` に読ませる
+
+**挿入した箇所を直す（`RecognizedRefs` の `onPick` / `useRefEditing` / `RefInserter` の `editReq`）**
+- `RefBox` / `NoteLine` は `useRefEditing(inserter)` で、挿入ボタンに `caret`（カーソルの覚え）と `editReq`（この札を直して）を `cloneElement` で渡す。
+- 札を押すと `editReq = { start, end, ref, n }`。`RefInserter` がその箇所を選んだ状態で紙を開く（`editing`）。足もとは「外す」「○○に変更」。
+- 置きかえは `replaceRefSpan`。紙を開いているあいだに文が変わっていたら、同じ start の箇所を探し直す（`spanNow`）。
+- 押して直せるのは、`RefInserter` に `value` と `onText` を渡した欄だけ（今は入力画面の7か所すべて）。**新しく挿入つきの欄を足すときは、`value` / `onText` も渡すこと。** 渡さないと札は押せない（ただの札のまま）。
+- カーソルの位置へ入れる：`useCaretMemo` が欄の blur / select / keyup / input で `{ pos, end, len }` を覚える。**いまの文の長さと len が違えば使わない**（最後に足す）。続けて足すと、入れた箇所のうしろへ並ぶ。
+
+**画像の大きさ**（`PHOTO_SIDE` 1600 / `PHOTO_Q` 0.8 / `DECO_Q` 0.85、CropSheet の `outW` 800・2000、下絵 2400、`shrinkImage` 400）
+- 依頼で上げた。写真入りのバックアップとドライブの控えは大きくなる。軽くしたくなったら、My手帳 2.20.4 のように gzip（`.json.gz`）で書き出す道がある（まだ入れていない）。
+- イラストは localStorage に入る（IndexedDB ではない）。上限 `ART_TOTAL_LIMIT` に収まるよう、1枚の上限を 200K〜220K 字にしてある。**イラストをこれ以上大きくするなら、先に写真の置き場（IndexedDB）へ移すこと。**
+
+**字の色のマスター（`--tx-*`）**：`<style>` の `:root`。`text-neutral-900〜300` はここを通る。400 だけ #8C8C8C に濃くした。My手帳 10.4.0 と同じ考え。
+
+**消した記録の数え方**：`noteDeleted(n)` が `prefs.folderDeletes` に消した時刻を足す（名前はフォルダ用のまま。前の版の設定・バックアップと食い違わないように）。
+
+**キーボード跡（`pollDown` / `releaseKb`、installKeyboardInset の中）**：My手帳 8.1.1 をそのまま移した。❌ 引っ込みきった知らせを待つだけに戻さないこと。❌ 見に行っている途中で回数を数え直さないこと。iPhone 実機では未確認。
+
+### 2.20.0 iPad の起動画面・メニューの出方・書きかえの数え方
+
+**起動画面（index.html）**：`.splash-inner` の top を、横向きは短い辺・縦向きは長い辺の半分へ（向きは `screen.orientation` → `window.orientation` → 本体の縦横）。
+本体の高さが画面と 120px より違う（画面を分けている）ときは留めない。`orientationchange` で留め直す。
+❌ `screen.height` をそのまま使わないこと（iPad・iPhone は向きを変えても入れ替わらない）。
+確かめ方：Chromium で `screen.width/height/orientation` と `navigator.standalone` を差し替えて、中身の中心が画面の高さの 50% に来ること（直す前は iPad 横で 66.7%）。実機では未確認。
+
+**メニュー（`menuStore` / `useMenuState` / `SideMenu`）**：My手帳 10.1.0 と同じ。
+- 開け閉めは `menuStore`（`open` / `under`）。AppMain は `menuStore.set` を呼ぶだけ。❌ AppMain の state に戻さないこと（押すたびに全画面を描き直す）。
+- 板は `anim-right`、暗がりは `anim-fade` で出る。閉じるときだけ transition（`closing` は描き直しの中で決める）。
+- `closeMenu` はモジュールの関数。❌ AppMain の中で useCallback にしないこと（早めの return より後ろに置くとフックの数が変わって起動しなくなる。一度そうなった）。
+- `instant`（その場で消す）は使っていなかったので外した。
+- メニューから移ってくる画面（`OverlayScreen` の zIndex が `MENU_LIFT_Z`）は、暗がりを入りきるまで出さない（`anim-fade-lift`）。
+
+**書きかえの数え方（`noteChange` / `bible-tracker-changes` / `unsavedCount` の4つめの引数）**
+- タグ（追加・名前・並べ替え・削除）、設定（`PREF_NOT_CONTENT` の並び順などを除く）、ひとこと、種類の説明、ヘッダーの絵、イラストを `{ キー: 時刻 }` で控え、前回の書き出しより新しいものを数える。
+- 読み込み・同期の最中（`quietRef` の時刻まで、10秒）は数えない。書き出したあとは lastBackup のほうが新しくなるので、消さなくてよい。
+- **保存する中身を増やしたら、noteChange を通すこと。**
+
+**見送ったもの（理由）**
+- バックアップの gzip：このアプリのバックアップは「読める文＋復元用データ」の1つの .txt で、そのまま読めるようにしてある（Androidの共有先のため text/plain にしている）。写真は圧縮済みなので gzip でも2〜3割しか縮まず、読める形を失うほうが大きい。
+- イラストを IndexedDB へ：`sweepPhotos` / 書き出し / 同期（`collectPhotoRefs` の3か所）と、古い版の本体が片づけを走らせたときに消える危険（My手帳 6-⑤ のヘッダーと同じ）を全部ふさぐ必要がある。やるなら、ヘッダーと同じく `DECO_PHOTO_KEY` に控えを写す形で。
+- 文字の大きさを `fs-*` の名前へ：見た目は変わらず、`HighlightedText` が `text-[◯px]` から字の大きさを読んでいるので、置きかえると引用の空きがずれる。
+
 ### 直近で直した不具合
 - **ブックマークから開いた記録で三本線 →「ブックマーク」を選ぶと、パッと切り替わっていた（2.11.2）。**
   上の「メニューから画面へ移るとき」を参照。

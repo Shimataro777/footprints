@@ -118,16 +118,45 @@ const BOOK_PATTERN = BOOK_NAME_TABLE.map((b) => escapeRegExp(b.n)).join("|");
    ④ 章だけ「3章」
    なお「創世記 2-5」のように「章」がどこにも無い書き方は、
    節なのか章なのか決められないため、これまでどおり章2として扱う */
+/* 2.19.0〜：書き方のゆれを広く受ける（手で直したときに「認識されなくなる」を防ぐため）。
+   ・数字・記号のゆれ（全角数字、～ － ‐ – — − など）は、先に normRefText で半角にそろえてから読む
+   ・「第3章」の「第」、詩篇の「23篇」、「3章16節」の「節」、「3.16」のピリオドも受ける */
 const REF_REGEX = new RegExp(
-  `(${BOOK_PATTERN})\\s*(\\d+)\\s*` +
+  `(${BOOK_PATTERN})\\s*第?\\s*(\\d+)\\s*` +
   `(?:` +
-    `章?\\s*[-〜~]\\s*(\\d+)\\s*章` +
-    `|章\\s*[-〜~]\\s*(\\d+)` +
-    `|[:：章]\\s*(\\d+)(?:\\s*[-〜~]\\s*(\\d+))?` +
-    `|章` +
+    `[章篇]?\\s*[-〜~]\\s*第?\\s*(\\d+)\\s*[章篇]` +
+    `|[章篇]\\s*[-〜~]\\s*(\\d+)` +
+    `|(?:[:：.]|[章篇]\\s*第?)\\s*(\\d+)\\s*節?(?:\\s*[-〜~]\\s*(\\d+)\\s*節?)?` +
+    `|[章篇]` +
   `)?`,
   "g"
 );
+
+/* 聖書箇所を読む前に、数字と記号のゆれを半角にそろえる（2.19.0〜）。
+   **1文字を1文字に置きかえるだけにすること（長さを変えない）。** 見つけた位置を、
+   そのまま元の文の位置として使う（引用の縦線・札を押して直す、が元の文を切り出すため）。
+   ・全角数字 → 半角、全角の「：」「．」→「:」「.」
+   ・範囲の記号（～ 〜 ~ － ‐ ‑ ‒ – — ― − ﹣）→「-」
+   ・長音「ー」「ｰ」は、数字にはさまれているときだけ「-」（「3:16ー18」。ローマ・ピレモンなどの書名は変えない）
+   iPhone の日本語キーボードで数字を打つと全角になりやすく、これが「時々認識されない」の主な原因だった */
+const REF_DASHES = "～〜~－‐‑‒–—―−﹣";
+function normRefText(text) {
+  if (!text) return "";
+  const t = String(text);
+  let out = "";
+  const isDigit = (c) => (c >= "0" && c <= "9") || (c >= "０" && c <= "９");
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    const code = c.charCodeAt(0);
+    if (code >= 0xFF10 && code <= 0xFF19) out += String.fromCharCode(code - 0xFF10 + 48);
+    else if (c === "：") out += ":";
+    else if (c === "．") out += ".";
+    else if (REF_DASHES.indexOf(c) >= 0) out += "-";
+    else if ((c === "ー" || c === "ｰ") && i > 0 && isDigit(t[i - 1]) && i + 1 < t.length && isDigit(t[i + 1])) out += "-";
+    else out += c;
+  }
+  return out;
+}
 
 /* 短い略称（「創」「出」「民」「申」「詩」「レビ」「使徒」など）は、
    ふつうの日本語の中にたまたま現れることがある。
@@ -145,46 +174,71 @@ function bookNameOkAt(text, index, matched, name) {
   if (!name || name.length > SHORT_NAME_MAX) return true;
   const before = index > 0 ? text[index - 1] : "";
   if (before && WORDY_CHAR.test(before)) return false;
-  if (name.length === 1 && !/[章:：]/.test(matched)) return false;
+  if (name.length === 1 && !/[章篇:：]/.test(matched)) return false;
   return true;
 }
 
-function parseBibleRefs(text) {
+/* 文の中の聖書箇所を、位置つきで前から順に返す（2.19.0〜）。
+   { start, end, ref }。start〜end は元の文の位置（normRefText は長さを変えないため、そのまま使える）。
+   札を押して箇所を直すとき、どこを置きかえるかをこれで決める。
+   **読み取りの決まりはここ1か所。** parseBibleRefs もこれを通す */
+function findRefSpans(text) {
   if (!text) return [];
-  const refs = []; const seen = new Set(); let match;
+  const src = normRefText(text);
+  const out = []; let match;
+  /* 末尾の空白は箇所に含めない（置きかえたとき、うしろの空白が消えないように） */
   REF_REGEX.lastIndex = 0;
-  while ((match = REF_REGEX.exec(text)) !== null) {
+  while ((match = REF_REGEX.exec(src)) !== null) {
+    if (match[0] === "") { REF_REGEX.lastIndex++; continue; }
     const found = BOOK_NAME_TABLE.find((b) => b.n === match[1]);
     if (!found) continue;
-    if (!bookNameOkAt(text, match.index, match[0], match[1])) continue;
+    if (!bookNameOkAt(src, match.index, match[0], match[1])) continue;
     const chapter = parseInt(match[2], 10);
     /* ①と②のどちらで拾えても、終わりの章は同じ意味 */
     const endRaw = match[3] || match[4];
     let chapterEnd = endRaw ? parseInt(endRaw, 10) : undefined;
     /* 逆向き（5章-2章）や、その書に無い章数は範囲として扱わない */
     const maxCh = (bookByName(found.canonical) || {}).chapters || 0;
+    /* その書に無い章（「ルカ 100人」など）は、聖書箇所として扱わない（2.19.0〜） */
+    if (!chapter || (maxCh && chapter > maxCh)) continue;
     if (chapterEnd !== undefined && (chapterEnd <= chapter || (maxCh && chapterEnd > maxCh))) chapterEnd = undefined;
-    const ref = {
-      book: found.canonical,
-      chapter,
-      chapterEnd,
-      verse: match[5] ? parseInt(match[5], 10) : undefined,
-      verseEnd: match[6] ? parseInt(match[6], 10) : undefined,
-    };
+    const verse = match[5] ? parseInt(match[5], 10) : undefined;
+    let verseEnd = match[6] ? parseInt(match[6], 10) : undefined;
+    /* 逆向き（3:18-16）は範囲として扱わない */
+    if (verseEnd !== undefined && verse !== undefined && verseEnd <= verse) verseEnd = undefined;
+    const ref = { book: found.canonical, chapter, chapterEnd, verse, verseEnd };
+    const raw = match[0].replace(/\s+$/, "");
+    out.push({ start: match.index, end: match.index + raw.length, ref });
+  }
+  return out;
+}
+function parseBibleRefs(text) {
+  if (!text) return [];
+  const refs = []; const seen = new Set();
+  findRefSpans(text).forEach(({ ref }) => {
     const key = `${ref.book}-${ref.chapter}-${ref.chapterEnd || ""}-${ref.verse || ""}-${ref.verseEnd || ""}`;
     if (!seen.has(key)) { seen.add(key); refs.push(ref); }
-  }
+  });
   return refs;
 }
 function formatRef(ref) {
   if (!ref || !ref.book) return "";
   let s = ref.book;
-  if (ref.chapter) s += ` ${ref.chapter}`;
-  /* 章をまたぐときは「創世記 2-5」と続けて見せる */
-  if (ref.chapterEnd && ref.chapterEnd > ref.chapter) s += `-${ref.chapterEnd}`;
-  if (ref.verse) s += `:${ref.verse}`;
-  if (ref.verseEnd) s += `-${ref.verseEnd}`;
+  if (!ref.chapter) return s;
+  /* 2.19.0〜：節が無いときは「章」を付ける（「創世記 2-5」は節のように読めてしまうため）。
+     章をまたぐときは「創世記 2-5章」 */
+  if (ref.chapterEnd && ref.chapterEnd > ref.chapter) return `${s} ${ref.chapter}-${ref.chapterEnd}章`;
+  if (!ref.verse) return `${s} ${ref.chapter}章`;
+  s += ` ${ref.chapter}:${ref.verse}`;
+  if (ref.verseEnd && ref.verseEnd > ref.verse) s += `-${ref.verseEnd}`;
   return s;
+}
+/* 文に書き入れる形（挿入・札で直すとき）。読み返して同じ箇所になる形にすること */
+function refToText(ref) {
+  if (!ref || !ref.book || !ref.chapter) return "";
+  if (ref.chapterEnd && ref.chapterEnd > ref.chapter) return `${ref.book} ${ref.chapter}章-${ref.chapterEnd}章`;
+  if (!ref.verse) return `${ref.book} ${ref.chapter}章`;
+  return `${ref.book} ${ref.chapter}:${ref.verse}` + (ref.verseEnd && ref.verseEnd > ref.verse ? `-${ref.verseEnd}` : "");
 }
 function sameRef(a, b) { if (!a || !b) return false; return a.book === b.book && a.chapter === b.chapter && (a.verse || null) === (b.verse || null); }
 /* 2つの聖書箇所が「同じところ」を指しているか。
@@ -864,13 +918,31 @@ function fmtJpDate(iso) {
 
 /* 前回の書き出しのあとに書きかえた数。記録に加えて、フォルダの作成・変更・削除も数える（2.8.0〜）。
    **保存する中身を増やしたら、ここにも数えること。** 数えないと、書き出しを促す丸に出ない */
-function unsavedCount(records, prefs, folders) {
+function unsavedCount(records, prefs, folders, changes) {
   const last = prefs && prefs.lastBackup ? prefs.lastBackup : null;
   const fl = folders || [];
   if (!last) return records.length + fl.length;
   return records.filter((r) => (r.updatedAt || r.createdAt || "") > last).length
     + fl.filter((f) => (f.updatedAt || f.createdAt || "") > last).length
-    + ((prefs && prefs.folderDeletes) || []).filter((t) => t > last).length;
+    + ((prefs && prefs.folderDeletes) || []).filter((t) => t > last).length
+    + Object.values(changes || {}).filter((t) => typeof t === "string" && t > last).length;
+}
+/* 記録・フォルダ以外の書きかえ（2.20.0〜。My手帳 6-⑦ と同じ考え）。
+   タグの追加・名前の変更・並べ替え・削除、画面の設定、ひとこと、種類の説明、ヘッダーの絵、イラストは、
+   これまで「まだ書き出していない変更」に数えていなかった。書きかえた時刻を { tags: 時刻, … } で控え、
+   前回の書き出しより新しいものを1つずつ数える（同じものを何度変えても1つ）。
+   書き出し・読み込みのあとは lastBackup のほうが新しくなるので、消さなくても数えなくなる。
+   **保存する中身を増やしたら、noteChange を通すこと。** 通さないと書き出しを促す丸に出ない。
+   並び順のような「見かたの好み」は数えない（PREF_NOT_CONTENT） */
+const CHANGE_KEY = "bible-tracker-changes";
+const PREF_NOT_CONTENT = ["lastBackup", "folderDeletes", "sortMode", "folderSortOrder"];
+function loadChanges() {
+  try { const d = JSON.parse(localStorage.getItem(CHANGE_KEY) || "{}"); return d && typeof d === "object" && !Array.isArray(d) ? d : {}; }
+  catch (e) { return {}; }
+}
+function prefsContentChanged(a, b) {
+  const pick = (p) => { const o = { ...(p || {}) }; PREF_NOT_CONTENT.forEach((k) => { delete o[k]; }); return JSON.stringify(o, Object.keys(o).sort()); };
+  return pick(a) !== pick(b);
 }
 async function loadPrefs() {
   try {
@@ -1076,11 +1148,19 @@ async function persistCaptions(map) {
      **WebP と JPEG で同じ画質を使うこと。** JPEG のほうだけ高くすると、iPhone の写真だけ重くなる（実際そうなっていた）。
    - ヘッダーとフォルダの絵：大きさはそのまま、画質だけ0.65（DECO_Q）。
      ⚠️ フォルダの絵を480pxより小さくしないこと。
-   - 切り抜きの下絵（CropSheet の shrinkPhoto(file, 1600, 0.92)）は画質を落とさない。
+   - 切り抜きの下絵（CropSheet の shrinkPhoto(file, 2400, 0.92)。2.18.2 までは 1600）は画質を落とさない。
      ここを落とすと、切り抜いた絵が二重に荒れる */
-const PHOTO_SIDE = 720;
-const PHOTO_Q = 0.6;
-const DECO_Q = 0.65;
+/* 2.19.0〜：画質を上げた（依頼：「保存される画像の解像度をもっと高く」）。
+   - 記録の写真：長辺1600px・画質0.8。720px・0.6 では、閲覧画面で拡大したときに字や細部がつぶれていた。
+     iPhone（JPEG）で1枚およそ250〜450KB。置き場は IndexedDB なので記録の保存は圧迫しないが、
+     写真入りのバックアップとGoogleドライブの控えは、そのぶん大きくなる。
+   - ヘッダーの帯：横2000px、フォルダの絵：800px角、画質0.85（CropSheet の outW）。
+   - 切り抜きの下絵：長辺2400px・0.92（ここを出す絵より小さくすると、切り抜いた絵がぼやける）。
+   - イラスト：長辺400px（shrinkImage。132pxで出すので、3倍の画面でもにじまない大きさ）。
+   すでに保存した写真は、そのままの大きさで残る（新しく入れる写真から高くなる） */
+const PHOTO_SIDE = 1600;
+const PHOTO_Q = 0.8;
+const DECO_Q = 0.85;
 /* 記録に付ける写真の縮小。
    **イラスト用の shrinkImage（長辺220px）を使い回さないこと。** 写真が粗くなって見るに堪えない。
    長辺720px・画質0.6で、1枚およそ40〜120KBに収める。
@@ -1102,6 +1182,8 @@ function shrinkPhoto(file, maxSide = PHOTO_SIDE, quality = PHOTO_Q) {
           const ctx = canvas.getContext("2d");
           /* 透過のある絵を敷いたとき、黒くならないように下地を白で塗っておく */
           ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, w, h);
+          /* 縮めるときのなめらかさを「高」に（2.19.0〜。既定の「低」だと、細い線や字がガタつく） */
+          try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; } catch (e) { /* noop */ }
           ctx.drawImage(img, 0, 0, w, h);
           const webp = canvas.toDataURL("image/webp", quality);
           if (webp.startsWith("data:image/webp")) return resolve(webp);
@@ -1114,7 +1196,7 @@ function shrinkPhoto(file, maxSide = PHOTO_SIDE, quality = PHOTO_Q) {
   });
 }
 
-function shrinkImage(file, maxSide = 220) {
+function shrinkImage(file, maxSide = 400) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("画像を読み込めませんでした"));
@@ -1129,20 +1211,22 @@ function shrinkImage(file, maxSide = 220) {
           const canvas = document.createElement("canvas");
           canvas.width = w; canvas.height = h;
           const ctx = canvas.getContext("2d");
+          try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; } catch (e) { /* noop */ }
           ctx.drawImage(img, 0, 0, w, h);
 
           const png = canvas.toDataURL("image/png");
-          if (png.length <= 90000) return resolve(png); // 透過を保てる軽さならPNGのまま
+          /* 2.19.0 で長辺を 220→400px にしたので、上限もそれに合わせて広げた（5枚で合計 ART_TOTAL_LIMIT に収まる大きさ） */
+          if (png.length <= 200000) return resolve(png); // 透過を保てる軽さならPNGのまま
 
-          const webp = canvas.toDataURL("image/webp", 0.85);
-          if (webp.startsWith("data:image/webp") && webp.length <= 120000) return resolve(webp);
+          const webp = canvas.toDataURL("image/webp", 0.88);
+          if (webp.startsWith("data:image/webp") && webp.length <= 220000) return resolve(webp);
 
           const c2 = document.createElement("canvas");
           c2.width = w; c2.height = h;
           const x2 = c2.getContext("2d");
           x2.fillStyle = "#FFFFFF"; x2.fillRect(0, 0, w, h);
           x2.drawImage(img, 0, 0, w, h);
-          resolve(c2.toDataURL("image/jpeg", 0.8));
+          resolve(c2.toDataURL("image/jpeg", 0.85));
         } catch (e) {
           reject(new Error("画像を変換できませんでした"));
         }
@@ -1168,6 +1252,7 @@ function cropImage(source, { aspect = 1, scale = 1, dx = 0, dy = 0, maxSide = 64
         cv.width = outW; cv.height = outH;
         const ctx = cv.getContext("2d");
         ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, outW, outH);
+        try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; } catch (e) { /* noop */ }
         /* 窓いっぱいに広がる大きさを基準に、つまんだぶんを足す */
         const base = Math.max(outW / img.width, outH / img.height);
         const k = base * scale;
@@ -2704,12 +2789,21 @@ function HighlightedText({ text, className }) {
 /* highlightRefs（聖書箇所に色を付ける処理）は取りやめた。
    引用は左の縦線で示している */
 
-function RecognizedRefs({ text, inline }) {
+function RecognizedRefs({ text, inline, onPick }) {
   /* 同じ文字なら読み直さない（2.13.0〜）。入力画面では、どの欄に1文字打っても
      画面ぜんたいが描き直され、ほかの欄の聖書箇所まで毎回読み直していた */
   const refs = useMemo(() => parseBibleRefs(text), [text]);
+  /* 押して直せるとき（2.19.0〜）は、書いてある場所ごとに1つずつ札を出す（同じ箇所を2回書いたら2つ） */
+  const spans = useMemo(() => (onPick ? findRefSpans(text) : []), [text, onPick]);
   if (!refs.length) return null;
-  const chips = refs.map((r, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-th-50 text-th-800 border border-th-300 ft-chip">{formatRef(r)}</span>);
+  const chips = onPick
+    ? spans.map((sp, i) => (
+      <button key={sp.start + "-" + i} type="button" onClick={() => onPick(sp)} aria-label={formatRef(sp.ref) + " を直す"}
+        className="inline-flex items-center gap-1 text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-th-50 text-th-800 border border-th-300 ft-tap" style={{ minHeight: 28 }}>
+        <span>{formatRef(sp.ref)}</span><Pencil size={11} className="opacity-70 shrink-0" />
+      </button>
+    ))
+    : refs.map((r, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-th-50 text-th-800 border border-th-300 ft-chip">{formatRef(r)}</span>);
   /* inline ＝ 枠の中の帯（RefBox）に、挿入ボタンといっしょに並べる */
   return inline ? <>{chips}</> : <div className="flex flex-wrap gap-1.5 mt-2">{chips}</div>;
 }
@@ -2780,13 +2874,36 @@ function ImagesField({ images, onChange, onError }) {
    そのとなり（入り切らなければ次の行）に、読み取れた聖書箇所の札を並べる。
    入力欄は bare（枠なし）にして、この外枠の線と入力中の縁取りを使う。
    ・帯と入力欄のあいだ、札と札のあいだ以外に、余白をはさまないこと */
+/* 入力欄のカーソルの位置を覚えておく（2.19.0〜）。挿入した箇所を、文の最後ではなくカーソルのところへ入れるため。
+   覚えるのは、欄から離れたとき・選びを変えたとき・打ったとき。挿入ボタンを押すと欄から離れるが、
+   離れる直前の位置がここに残る。**文の長さも一緒に覚え、いまの文と長さが違えば使わない**（別の欄の話になるため） */
+function useCaretMemo() {
+  const caret = useRef(null);
+  const note = (e) => {
+    const el = e.target;
+    if (!el || (el.tagName !== "TEXTAREA" && el.tagName !== "INPUT")) return;
+    try { caret.current = { pos: el.selectionStart, end: el.selectionEnd, len: (el.value || "").length }; } catch (err) { /* noop */ }
+  };
+  return { caret, handlers: { onBlur: note, onSelect: note, onKeyUp: note, onInput: note } };
+}
+/* 挿入ボタン（RefInserter）に、カーソルの覚えと「この札を直す」頼みを渡す。
+   札を押すと editReq が変わり、挿入の紙が「直す」形で開く */
+function useRefEditing(inserter) {
+  const { caret, handlers } = useCaretMemo();
+  const [editReq, setEditReq] = useState(null);
+  const canEdit = !!(inserter && inserter.props && inserter.props.onText);
+  const pick = useCallback((sp) => setEditReq({ ...sp, n: Date.now() }), []);
+  const el = inserter && React.isValidElement(inserter) ? React.cloneElement(inserter, { caret, editReq }) : inserter;
+  return { el, handlers, onPick: canEdit ? pick : undefined };
+}
 function RefBox({ children, inserter, refsText }) {
+  const { el, handlers, onPick } = useRefEditing(inserter);
   return (
     <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden focus-within:border-th-800 focus-within:ring-4 focus-within:ring-th-800/20">
-      {children}
+      <div {...handlers}>{children}</div>
       <div className="border-t border-neutral-100 bg-neutral-50 px-2.5 py-1.5 flex flex-wrap items-center gap-1.5">
-        {inserter}
-        <RecognizedRefs text={refsText} inline />
+        {el}
+        <RecognizedRefs text={refsText} inline onPick={onPick} />
       </div>
     </div>
   );
@@ -2796,16 +2913,17 @@ function RefBox({ children, inserter, refsText }) {
    読み取れた聖書箇所の札は、あるときだけ下に出る（RefBox のように、いつも帯を敷かない） */
 function NoteLine({ children, inserter, refsText }) {
   const has = useMemo(() => parseBibleRefs(refsText).length > 0, [refsText]);
+  const { el, handlers, onPick } = useRefEditing(inserter);
   return (
     <div className="rounded-xl border border-neutral-200 bg-white overflow-hidden focus-within:border-th-800 focus-within:ring-4 focus-within:ring-th-800/20">
       <div className="flex items-start">
         <span className="text-neutral-400 shrink-0 flex items-center" style={{ height: 48, paddingLeft: 14 }}><Pencil size={16} /></span>
-        <div className="flex-1 min-w-0">{children}</div>
-        <span className="shrink-0 flex items-center" style={{ height: 48, paddingRight: 6 }}>{inserter}</span>
+        <div className="flex-1 min-w-0" {...handlers}>{children}</div>
+        <span className="shrink-0 flex items-center" style={{ height: 48, paddingRight: 6 }}>{el}</span>
       </div>
       {has && (
         <div className="border-t border-neutral-100 bg-neutral-50 px-2.5 py-1.5 flex flex-wrap items-center gap-1.5">
-          <RecognizedRefs text={refsText} inline />
+          <RecognizedRefs text={refsText} inline onPick={onPick} />
         </div>
       )}
     </div>
@@ -2827,6 +2945,8 @@ function NoteLine({ children, inserter, refsText }) {
    返すのは { start, end, text, ref }。start〜end が色を付ける範囲 */
 function splitByCitations(text) {
   if (!text) return [];
+  /* 読み取りは数字・記号をそろえた文（nt）で行い、切り出しは元の文（text）で行う。長さは同じ */
+  const nt = normRefText(text);
   const blankLineRegex = /\n[ \t]*\n/g;
 
   /* 引用の目印になる箇所を、文の前から順に集める */
@@ -2834,7 +2954,7 @@ function splitByCitations(text) {
   /* 全角の（）も見る。日本語で書くとこちらのほうが多い */
   const paren = /[（(][^）)]*[）)]/g;
   let m;
-  while ((m = paren.exec(text)) !== null) {
+  while ((m = paren.exec(nt)) !== null) {
     const refs = parseBibleRefs(m[0]);
     if (refs.length && refs[0].verse) marks.push({ from: m.index, to: m.index + m[0].length, ref: refs[0] });
   }
@@ -2845,16 +2965,16 @@ function splitByCitations(text) {
   const hits = [];
   REF_REGEX.lastIndex = 0;
   let r;
-  while ((r = REF_REGEX.exec(text)) !== null) hits.push({ index: r.index, str: r[0], name: r[1] });
+  while ((r = REF_REGEX.exec(nt)) !== null) { if (r[0] === "") { REF_REGEX.lastIndex++; continue; } hits.push({ index: r.index, str: r[0], name: r[1] }); }
   for (const h of hits) {
     if (inParen(h.index)) continue;
     /* 短い略称のふりをした、ただの日本語を弾く（「国民 3割」など）。
        parseBibleRefs と同じ判定を必ず通すこと */
-    if (!bookNameOkAt(text, h.index, h.str, h.name)) continue;
+    if (!bookNameOkAt(nt, h.index, h.str, h.name)) continue;
     const refs = parseBibleRefs(h.str);
     if (!refs.length || !refs[0].verse) continue;
     /* その行の終わりに置かれているか。うしろは空白か、訳名のような短い添え書きだけ */
-    const after = text.slice(h.index + h.str.length);
+    const after = nt.slice(h.index + h.str.length);
     const rest = (after.match(/^[^\n]*/) || [""])[0];
     if (!/^[\s　]*(（[^）\n]{0,12}）|\([^)\n]{0,12}\))?[\s　]*$/.test(rest)) continue;
     marks.push({ from: h.index, to: h.index + h.str.length + rest.length, ref: refs[0] });
@@ -3991,17 +4111,55 @@ function useLockBackground() {
             }
             lastRaw = -1;
             lowerSheets();
-            if (raw >= 60)
-                return; /* キーボードが引っ込む途中。全画面・ページは引っ込みきるまで今のまま */
-            setFix(false);
-            setReserve(0);
-            setCtx("");
-            if (overlayCount > 0) {
-                const y = window.scrollY || document.documentElement.scrollTop || 0;
-                if (Math.abs(y - overlayLockY) > 1)
-                    window.scrollTo(0, overlayLockY);
+            if (raw >= 60) {
+                /* キーボードが引っ込む途中。全画面・ページは引っ込みきるまで今のまま。
+                   **引っ込みきった知らせを待つだけにしないこと（2.19.0〜）。** 下の pollDown */
+                pollDown();
+                return;
             }
+            releaseKb();
         });
+    };
+    /* キーボードぶんの場所を空けていたのを、元に戻す */
+    const releaseKb = () => {
+        clearTimeout(downPoll);
+        downPoll = 0;
+        lastRaw = -1;
+        lowerSheets();
+        setFix(false);
+        setReserve(0);
+        setCtx("");
+        if (overlayCount > 0) {
+            const y = window.scrollY || document.documentElement.scrollTop || 0;
+            if (Math.abs(y - overlayLockY) > 1)
+                window.scrollTo(0, overlayLockY);
+        }
+    };
+    /* ---- キーボードを閉じたのに、下が白いまま残る（2.19.0〜。姉妹アプリ My手帳 8.1.1 と同じ直し） ----
+       全画面の中身の下に足した「キーボードぶんの余白」（--ft-kb）と、送り場をキーボードの上端で終わらせる印
+       （data-ft-kbfix）を外すのは、「キーボードが引っ込みきった」知らせ（visualViewport の resize）を受けたときだけだった。
+       iOS はその最後の知らせを出さないこと・古い高さを返すことがあり、余白が残って下が白く見えた。
+       入力欄から外れたあとは、こちらから 120ms ごとに高さを見に行き、戻っていれば外す。
+       **打っている欄が無いのに約1.5秒たっても高さが戻らないときも外す**（打つ欄にフォーカスが無ければ、キーボードは出ていられない）。
+       打つ欄へ移った・こちらでフォーカスを入れている途中（pending）なら、何もしない */
+    let downPoll = 0;
+    let downLeft = 0;
+    /* 見に行く回数（120ms × 12 ＝ 約 1.5 秒）。**見に行っているあいだに数え直さないこと**（ずっと終わらなくなる） */
+    const pollDown = () => {
+        if (downPoll)
+            return;
+        downLeft = 12;
+        const tick = () => {
+            downPoll = 0;
+            if (isTyping(document.activeElement) || isProxy(document.activeElement) || pending)
+                return;
+            if (rawKb() >= 60 && --downLeft > 0) {
+                downPoll = setTimeout(tick, 120);
+                return;
+            }
+            releaseKb();
+        };
+        downPoll = setTimeout(tick, 120);
     };
     /* 入力欄から外れたら（ほかの入力欄へ移ったのでなければ）、紙はキーボードといっしょに下ろしはじめる */
     const onFocusOut = () => {
@@ -4014,6 +4172,8 @@ function useLockBackground() {
             clearTimeout(settle);
             lowerSheets();
             measure();
+            /* 引っ込みきった知らせが来なくても、元に戻す（上の pollDown） */
+            pollDown();
         }, 0);
     };
     /* 紙の入力欄から始まったタップの click を、入力欄の外へ流さない（2.13.1〜）。
@@ -4234,7 +4394,10 @@ function OverlayScreen({ from = "right", closing, children, zIndex = 50 }) {
        data-ft-scrim ＝ 地の暗がり。左端から払って戻るとき、払った量に合わせて薄くする。外さないこと。
        data-ft-lift ＝ メニューから移ってくる途中の画面（goFromMenu が入りきったかを見る） */
     <div className="fixed inset-0" data-ft-overlay="" data-ft-lift={zIndex === MENU_LIFT_Z ? "" : undefined} style={{ zIndex }}>
-      <div data-ft-scrim="" className={"absolute inset-0 bg-black/25 " + (closing ? scrimOutCls : "anim-fade")} />
+      {/* メニューから移ってくる画面（2.20.0〜。My手帳 10.1.0 と同じ）は、入りきるまで暗がりを出さない（anim-fade-lift）。
+          ふつうの anim-fade（0.2秒）だと、入ってくる途中でうしろに残したメニューの白い板まで灰色に沈め、暗転したように見えた。
+          入りきった時点では画面がうしろを覆っているので、そこで暗がりを出しても見えない（左端から払って戻るときに使う） */}
+      <div data-ft-scrim="" className={"absolute inset-0 bg-black/25 " + (closing ? scrimOutCls : zIndex === MENU_LIFT_Z ? "anim-fade-lift" : "anim-fade")} />
       <div className={"absolute inset-0 " + (closing ? outCls : inCls)}>{children}</div>
     </div>
   );
@@ -4335,6 +4498,43 @@ const appendRef = (cur, ref) => {
   const base = (cur || "").replace(/\s+$/, "");
   return base ? base + " " + ref : ref;
 };
+/* カーソルのところへ聖書箇所を入れる（2.19.0〜）。前後が字でつながるときだけ、半角の空白をはさむ。
+   返すのは { text, pos }（pos ＝ 入れたあとのカーソルの位置。続けて足すとき、その後ろへ並ぶ） */
+function insertRefAt(cur, ref, pos, end) {
+  const t = cur || "";
+  const a = Math.max(0, Math.min(t.length, pos));
+  const b = Math.max(a, Math.min(t.length, end == null ? a : end));
+  const before = t.slice(0, a), after = t.slice(b);
+  const sp1 = before && !/\s$/.test(before) ? " " : "";
+  const sp2 = after && !/^\s/.test(after) ? " " : "";
+  const text = before + sp1 + ref + sp2 + after;
+  return { text, pos: (before + sp1 + ref).length };
+}
+/* 文の中の1つの箇所（start〜end）を、別の箇所に置きかえる／取りのぞく（2.19.0〜。札を押して直す）。
+   取りのぞくときは、前後の空白を1つにまとめ、中身が空になった括弧（「（）」）も消す */
+function replaceRefSpan(cur, start, end, ref) {
+  const t = cur || "";
+  if (ref) return t.slice(0, start) + ref + t.slice(end);
+  const WS = /[ \t\u3000]/;
+  let rawB = t.slice(0, start), rawA = t.slice(end);
+  let before = rawB.replace(/[ \t\u3000]+$/, "");
+  let after = rawA.replace(/^[ \t\u3000]+/, "");
+  if (/[（(]$/.test(before) && /^[）)]/.test(after)) {
+    rawB = before.slice(0, -1); rawA = after.slice(1);
+    before = rawB.replace(/[ \t\u3000]+$/, "");
+    after = rawA.replace(/^[ \t\u3000]+/, "");
+  }
+  /* 箇所を並べていた区切り（「、」「,」「;」「・」）が、端に取り残されないようにする */
+  const SEP = /[、,，;；・]$/;
+  if (SEP.test(before) && (!after || /^[\n、,，;；・]/.test(after))) before = before.slice(0, -1).replace(/[ \t\u3000]+$/, "");
+  else if ((!before || /\n$/.test(before)) && /^[、,，;；・]/.test(after)) after = after.slice(1).replace(/^[ \t\u3000]+/, "");
+  /* 1行まるごと箇所だったときは、その行ごと消す（空いた行を残さない） */
+  if (/\n$/.test(before) && /^\n/.test(after)) after = after.slice(1);
+  /* もともと空白をはさんでいたときだけ、空白1つでつなぐ（「きょうは（ルカ 15:11）を」→「きょうはを」） */
+  const hadSpace = WS.test(rawB.slice(-1)) || WS.test(rawA.slice(0, 1));
+  const glue = hadSpace && before && after && !/\n$/.test(before) && !/^\n/.test(after) ? " " : "";
+  return before + glue + after;
+}
 
 /* 選んだ書・章のうち、「読んだ箇所」の文字に書かれていない章を、文字として書き足す。
    記録画面の「続きから」で開いたときや、前の版で保存した通読は、書・章だけ入っていて
@@ -4600,8 +4800,10 @@ const VERSE_MAX = 176;
    ・near ＝ 近くの欄の文（配列）。そこに書かれている最後の箇所の書から始める（学びで同じ書を続けて引くことが多いため）
    ・onPickRange は 2.18.0 で使わなくなった（通読は ReadingPicker が受け持つ）
    ・icon ＝ ボタンを、しるしだけの小さな丸にする（通読のメモ欄） */
-function RefInserter({ onInsert, label, near, icon }) {
+function RefInserter({ onInsert, label, near, icon, value, onText, caret, editReq }) {
   const [open, setOpen] = useState(false);
+  /* 札を押して直しているとき（2.19.0〜）：{ start, end, ref }。null ＝ ふつうに足す */
+  const [editing, setEditing] = useState(null);
   const [step, setStep] = useState("book");
   const [book, setBook] = useState("");
   const [chapter, setChapter] = useState(0);
@@ -4624,8 +4826,25 @@ function RefInserter({ onInsert, label, near, icon }) {
     if (!start) start = lastRefBook;
     setBook(start); setStep(start ? "chapter" : "book");
     setChapter(0); setChapterEnd(0); setV1(0); setV2(0); setMore(false); setAdded([]);
+    setEditing(null);
     setOpen(true);
   };
+  /* 札を押されたら、その箇所を選んだ状態で開く（2.19.0〜）。
+     章をまたぐ箇所は章の範囲、節があればその節、無ければ章ぜんたい（節のマス目で選び足せる） */
+  useEffect(() => {
+    if (!editReq || !editReq.ref) return;
+    const r = editReq.ref;
+    if (!bookByName(r.book)) return;
+    setBook(r.book); setChapter(r.chapter || 0); setAdded([]);
+    const ce = r.chapterEnd && r.chapterEnd > r.chapter ? r.chapterEnd : 0;
+    setChapterEnd(ce);
+    setV1(ce ? 0 : (r.verse || 0));
+    setV2(ce ? 0 : (r.verseEnd && r.verseEnd > (r.verse || 0) ? r.verseEnd : 0));
+    setMore(!!(r.verse && r.verse > VERSE_FIRST) || !!(r.verseEnd && r.verseEnd > VERSE_FIRST));
+    setStep(!r.chapter ? "chapter" : ce ? "range" : "verse");
+    setEditing({ start: editReq.start, end: editReq.end, ref: r });
+    setOpen(true);
+  }, [editReq && editReq.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const info = bookByName(book);
   const total = info ? info.chapters : 0;
   let ref = "";
@@ -4636,12 +4855,42 @@ function RefInserter({ onInsert, label, near, icon }) {
   }
   const add = () => {
     if (!ref) return;
-    onInsert(ref);
+    /* カーソルを置いていたら、そこへ入れる（2.19.0〜）。覚えが無い・文が変わっていれば、これまでどおり最後に足す */
+    const c = caret && caret.current;
+    const cur = value || "";
+    if (onText && c && c.len === cur.length && typeof c.pos === "number" && c.pos < cur.length) {
+      const res = insertRefAt(cur, ref, c.pos, c.end);
+      onText(res.text);
+      caret.current = { pos: res.pos, end: res.pos, len: res.text.length };
+    } else {
+      onInsert(ref);
+      if (caret) caret.current = null;
+    }
     lastRefBook = book;
     setAdded((p) => [...p, ref]);
     setChapter(0); setChapterEnd(0); setV1(0); setV2(0); setMore(false);
     setStep("chapter");
     toTop();
+  };
+  /* 直す：書いてあった場所を、いま選んでいる箇所に置きかえる。
+     紙を開いているあいだに文が変わっていたら、同じ所から始まる箇所を探し直す（見つからなければ何もしない） */
+  const spanNow = () => {
+    if (!editing) return null;
+    const cur = value || "";
+    const list = findRefSpans(cur);
+    return list.find((x) => x.start === editing.start) || list.find((x) => sameRef(x.ref, editing.ref)) || null;
+  };
+  const applyEdit = (close) => {
+    const sp = spanNow();
+    if (sp && ref && onText) { onText(replaceRefSpan(value || "", sp.start, sp.end, ref)); lastRefBook = book; }
+    if (caret) caret.current = null;
+    close();
+  };
+  const removeEdit = (close) => {
+    const sp = spanNow();
+    if (sp && onText) onText(replaceRefSpan(value || "", sp.start, sp.end, ""));
+    if (caret) caret.current = null;
+    close();
   };
   const tapVerse = (n) => {
     if (!v1) { setV1(n); return; }
@@ -4671,8 +4920,19 @@ function RefInserter({ onInsert, label, near, icon }) {
         </button>
       )}
       {open && (
-        <PickSheet title="聖書箇所" tall onClose={() => setOpen(false)}
-          foot={(close) => (
+        <PickSheet title={editing ? "聖書箇所を直す" : "聖書箇所"} tall onClose={() => { setOpen(false); setEditing(null); }}
+          foot={(close) => editing ? (
+            /* 直すとき（2.19.0〜）：左に「外す」（文からその箇所を取りのぞく）、右に「○○に変更」 */
+            <div className="shrink-0 flex gap-2.5 px-4 py-3 border-t border-neutral-200"
+              style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+              <button type="button" onClick={() => removeEdit(close)}
+                className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}><Trash2 size={15} className="shrink-0" />外す</button>
+              <button type="button" onClick={() => applyEdit(close)} disabled={!ref} style={{ flex: 1.6 }}
+                className={BTN_PRIMARY + " min-w-0 " + BTN_H + " text-[14.5px]"}>
+                <Check size={16} className="shrink-0" /><span className="truncate">{ref ? `${formatRef(parseBibleRefs(ref)[0]) || ref} に変更` : "変更"}</span>
+              </button>
+            </div>
+          ) : (
             <div className="shrink-0 flex gap-2.5 px-4 py-3 border-t border-neutral-200"
               style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
               <button type="button" onClick={close} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>{added.length ? "完了" : "閉じる"}</button>
@@ -4683,6 +4943,11 @@ function RefInserter({ onInsert, label, near, icon }) {
             </div>
           )}>
           <div ref={bodyRef} className="ft-sheet-body overflow-y-auto px-4 py-3">
+            {editing && (
+              <p className="text-[12.5px] text-neutral-500 mb-3">
+                いま：<span className="font-bold text-neutral-700">{formatRef(editing.ref)}</span>
+              </p>
+            )}
             {added.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 mb-3">
                 <Check size={15} className="text-th-800 shrink-0" />
@@ -5639,41 +5904,49 @@ function MenuRow({ it }) {
    ・かぶせ終わったら（AppMain の goFromMenu）、見えないところで外す */
 const MENU_UNDER_Z = 65;
 const MENU_LIFT_Z = 66;
-function SideMenu({ open, onClose, items, footer, instant, under }) {
-  const [mounted, setMounted] = useState(open);
-  const [shown, setShown] = useState(false);
-  const [shield, setShield] = useState(false);
-
+/* メニューの開け閉め（2.20.0〜。姉妹アプリ My手帳 10.1.0 と同じ作り）。
+   **AppMain の state に戻さないこと。** AppMain に持っていたときは、三本線を押すたびに
+   ホームや記録の一覧までぜんぶ描き直していて、その重さが板の出はじめ・閉じはじめに重なり、つっかえて見えた。
+   ここに持てば、描き直すのはメニューの板だけで済む。AppMain は menuStore.set を呼ぶだけ */
+const menuStore = (() => {
+  let st = { open: false, under: false };
+  const subs = new Set();
+  return {
+    get: () => st,
+    set: (patch) => {
+      const next = { ...st, ...patch };
+      if (next.open === st.open && next.under === st.under) return;
+      st = next;
+      subs.forEach((f) => f());
+    },
+    sub: (f) => { subs.add(f); return () => { subs.delete(f); }; },
+  };
+})();
+const useMenuState = () => React.useSyncExternalStore(menuStore.sub, menuStore.get, menuStore.get);
+/* 閉じる。いつも同じ関数（SideMenu の Escape の見張りを張り直さないため）。**AppMain の中で useCallback にしないこと**（「if (!loaded) return」より後ろにあるため） */
+const closeMenu = () => menuStore.set({ open: false });
+/* メニューの板（2.20.0 で出し方を作り直した。My手帳 10.1.0 と同じ）。
+   **出るときは、ほかの重なる画面と同じ CSS の動き（anim-right / anim-fade）で出すこと。**
+   2.19.0 までは、描いてから requestAnimationFrame を2回待って transition を始めていた。
+   ゆるめ方が cubic-bezier(0.16,1,0.3,1)（出だしが極端に速い）で、暗がりが最初の1こまでほぼ半分まで濃くなり、
+   iPhone で1〜2こま落ちると「いきなり暗くなった」ように見えた。待つこまの数も描き直しの重さで前後した。
+   **閉じるときだけは transition**（いまの位置から右へ送り出す） */
+function SideMenu({ onClose, items, footer }) {
+  const { open, under } = useMenuState();
+  /* 閉じる動きのあいだだけ true。**描き直しのときに決めること（effect で決めないこと）。**
+     effect だと、閉じた瞬間に一度「無し」で描かれて板が消え、もう一度生まれてから滑り出す */
+  const [seen, setSeen] = useState(open);
+  const [closing, setClosing] = useState(false);
+  if (open !== seen) {
+    setSeen(open);
+    /* 移った先の画面の下に沈めていたとき（under）は、もう画面に隠れている。滑らせず、すぐ外す */
+    setClosing(!open && !under && !motionIsOff());
+  }
   useEffect(() => {
-    let t;
-    if (open) {
-      setMounted(true);
-      t = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)));
-      return () => cancelAnimationFrame(t);
-    }
-    /* 移った先の画面の下に沈めていたとき（under）は、もう画面に隠れている。
-       **ここで滑らせたり薄れさせたりしないこと。** すぐ外す */
-    if (under) {
-      setShown(false);
-      setShield(false);
-      setMounted(false);
-      return undefined;
-    }
-    /* 画面へ移るときは、メニューが左へ滑って消える動きを見せない。
-       元の画面はそのままで、新しい画面だけが右から来るようにするため */
-    if (instant) {
-      /* 画面へ移るときは、メニューを動かさずその場で消す。
-         ただし要素を即座に外すと、その位置にある別のものがタップを拾って
-         違う画面が開いてしまう。透明なまま少しの間だけ残して受け止める */
-      setShown(false);
-      setShield(true);
-      const q = setTimeout(() => { setShield(false); setMounted(false); }, 320);
-      return () => clearTimeout(q);
-    }
-    setShown(false);
-    const timer = setTimeout(() => setMounted(false), 260);
-    return () => clearTimeout(timer);
-  }, [open]); // eslint-disable-line
+    if (!closing) return undefined;
+    const t = setTimeout(() => setClosing(false), FT_EXIT_RIGHT_MS + 20);
+    return () => clearTimeout(t);
+  }, [closing]);
 
   useEffect(() => {
     if (!open) return;
@@ -5682,24 +5955,25 @@ function SideMenu({ open, onClose, items, footer, instant, under }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  if (!mounted) return null;
-  /* 沈めた板（under）は、閉じたその描き直しで外すこと（2.11.1〜）。
-     goFromMenu の finish は、板を閉じる（open=false）のと同時に、移った先の画面を
-     66 から 50 へ下ろす（menuLift を外す）。上の useEffect で mounted を落とすのを待つと、
-     そのあいだの1コマだけ、板（65）が画面（50）より上に来て、メニューがチラッと映っていた。
-     **useEffect の setMounted(false) だけに任せないこと。** */
-  if (!open && under) return null;
+  if (!open && !closing) return null;
+  const panelStyle = open
+    ? { transition: "transform 0.3s cubic-bezier(0.22,1,0.36,1)" }
+    : { transform: "translate3d(100%,0,0)", transition: "transform 0.3s cubic-bezier(0.22,1,0.36,1)" };
+  const scrimStyle = open
+    ? undefined
+    : { opacity: 0, transition: "opacity 0.3s ease-out" };
   return (
+    /* 閉じる動きのあいだも、指は受け止めておく（うしろの画面に届かせない） */
     <div data-ft-overlay="" className="fixed inset-0" style={{ zIndex: under ? MENU_UNDER_Z : 2147483200 }}>
       <BackgroundLock />
       <div
-        onClick={under ? undefined : onClose}
-        className="absolute inset-0 bg-black/40"
-        style={{ opacity: shown ? 1 : 0, transition: "opacity 240ms cubic-bezier(0.16,1,0.3,1)" }}
+        onClick={under || !open ? undefined : onClose}
+        className={"absolute inset-0 bg-black/40" + (open ? " anim-fade" : "")}
+        style={scrimStyle}
       />
       <div
-        className="absolute top-0 right-0 h-full w-[84%] max-w-[340px] bg-white shadow-xl flex flex-col"
-        style={{ transform: shown ? "translateX(0)" : "translateX(100%)", transition: "transform 260ms cubic-bezier(0.16,1,0.3,1)" }}
+        className={"absolute top-0 right-0 h-full w-[84%] max-w-[340px] bg-white shadow-xl flex flex-col" + (open ? " anim-right" : "")}
+        style={panelStyle}
       >
         <div className="ft-hdr flex items-center justify-between px-5 pb-4 border-b border-neutral-200 shrink-0" style={SAFE_TOP(16)}>
           <span className="font-display text-[18px] text-neutral-900">メニュー</span>
@@ -6113,7 +6387,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
             <PastNotesPanel notes={pastNotes} />
             <Field>
               <NoteLine refsText={record.notes}
-                inserter={<RefInserter icon near={[record.notes, record.book]} onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
+                inserter={<RefInserter icon near={[record.notes, record.book]} onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} value={record.notes} onText={(t) => set({ notes: t })} />}>
                 <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="メモ" style={{ paddingLeft: 10 }} />
               </NoteLine>
             </Field>
@@ -6128,18 +6402,18 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
               <TextInput value={record.theme || ""} onChange={(e) => set({ theme: e.target.value })} placeholder="テーマ" />
             </Field>
             <Field>
-              <RefBox refsText={record.passageText} inserter={<RefInserter near={[record.passageText, record.mainVerseText, record.notes]} onInsert={(ref) => set({ passageText: appendRef(record.passageText, ref) })} />}>
+              <RefBox refsText={record.passageText} inserter={<RefInserter near={[record.passageText, record.mainVerseText, record.notes]} onInsert={(ref) => set({ passageText: appendRef(record.passageText, ref) })} value={record.passageText} onText={(t) => set({ passageText: t })} />}>
                 <TextInput bare value={record.passageText} onChange={(e) => set({ passageText: e.target.value })} placeholder="聖書箇所" />
               </RefBox>
             </Field>
             <PastNotesPanel notes={pastNotes} />
             <Field>
-              <RefBox refsText={record.mainVerseText} inserter={<RefInserter near={[record.mainVerseText, record.passageText, record.notes]} onInsert={(ref) => set({ mainVerseText: appendRef(record.mainVerseText, ref) })} />}>
+              <RefBox refsText={record.mainVerseText} inserter={<RefInserter near={[record.mainVerseText, record.passageText, record.notes]} onInsert={(ref) => set({ mainVerseText: appendRef(record.mainVerseText, ref) })} value={record.mainVerseText} onText={(t) => set({ mainVerseText: t })} />}>
                 <TextArea bare value={record.mainVerseText} onChange={(e) => set({ mainVerseText: e.target.value })} minRows={2} placeholder="主題聖句" />
               </RefBox>
             </Field>
             <Field>
-              <RefBox refsText={record.notes} inserter={<RefInserter near={[record.notes, record.mainVerseText, record.passageText]} onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
+              <RefBox refsText={record.notes} inserter={<RefInserter near={[record.notes, record.mainVerseText, record.passageText]} onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} value={record.notes} onText={(t) => set({ notes: t })} />}>
                 <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="聞いたこと、心に残ったこと" />
               </RefBox>
             </Field>
@@ -6150,12 +6424,12 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
           <>
             <Field>
               {/* 学びの「主題聖句」と同じ高さ（2行ぶん）にそろえている */}
-              <RefBox refsText={record.text} inserter={<RefInserter near={[record.text, record.note]} onInsert={(ref) => set({ text: appendRef(record.text, ref) })} />}>
+              <RefBox refsText={record.text} inserter={<RefInserter near={[record.text, record.note]} onInsert={(ref) => set({ text: appendRef(record.text, ref) })} value={record.text} onText={(t) => set({ text: t })} />}>
                 <TextArea bare value={record.text} onChange={(e) => set({ text: e.target.value })} minRows={2} placeholder="覚えたい聖書のことば" />
               </RefBox>
             </Field>
             <Field>
-              <RefBox refsText={record.note} inserter={<RefInserter near={[record.note, record.text]} onInsert={(ref) => set({ note: appendRef(record.note, ref) })} />}>
+              <RefBox refsText={record.note} inserter={<RefInserter near={[record.note, record.text]} onInsert={(ref) => set({ note: appendRef(record.note, ref) })} value={record.note} onText={(t) => set({ note: t })} />}>
                 <TextArea bare value={record.note} onChange={(e) => set({ note: e.target.value })} minRows={2} placeholder="メモ" />
               </RefBox>
             </Field>
@@ -6199,7 +6473,7 @@ function RecordForm({ initial, draft, onSave, onCancel, onDelete, allRecords, ca
         {type === "memo" && (
           <>
             <Field>
-              <RefBox refsText={record.notes} inserter={<RefInserter near={[record.notes, record.mainVerseText, record.passageText]} onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} />}>
+              <RefBox refsText={record.notes} inserter={<RefInserter near={[record.notes, record.mainVerseText, record.passageText]} onInsert={(ref) => set({ notes: appendRef(record.notes, ref) })} value={record.notes} onText={(t) => set({ notes: t })} />}>
                 <TextArea bare value={record.notes} onChange={(e) => set({ notes: e.target.value })} minRows={7} placeholder="書きとめておきたいこと" />
               </RefBox>
             </Field>
@@ -6417,7 +6691,7 @@ function RecordCard({ r, onClick, hit, selectMode, selected, onLongPress }) {
           )}
         </div>
       )}
-      {chips.length > 0 && <div className="flex flex-wrap gap-1.5 mt-0.5">{chips.map((c, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">{c.book}{c.chapter ? ` ${c.chapter}` : ""}</span>)}</div>}
+      {chips.length > 0 && <div className="flex flex-wrap gap-1.5 mt-0.5">{chips.map((c, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">{c.book}{c.chapter ? ` ${c.chapter}章` : ""}</span>)}</div>}
       {extra.length > 0 && (
         <div className="mt-0.5 rounded-lg bg-th-50/60 border border-th-100 px-2.5 py-1.5 space-y-0.5">
           {extra.map((x, i) => <div key={i} className="text-[12.5px] text-neutral-600">{x.pre}<mark className="ft-hit">{x.hit}</mark>{x.post}</div>)}
@@ -8076,7 +8350,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
 
         {chips.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-5 pt-4 border-t border-neutral-200">
-            {chips.map((c, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">{c.book}{c.chapter ? ` ${c.chapter}` : ""}</span>)}
+            {chips.map((c, i) => <span key={i} className="text-[11.5px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">{c.book}{c.chapter ? ` ${c.chapter}章` : ""}</span>)}
           </div>
         )}
 
@@ -8666,7 +8940,7 @@ function CropSheet({ file, aspect = 1, round, title = "位置を決める", onCa
   useEffect(() => {
     let alive = true;
     setUrl(""); setNg(false); setNat(null);
-    shrinkPhoto(file, 1600, 0.92)
+    shrinkPhoto(file, 2400, 0.92)
       .then((d) => {
         if (!alive) return;
         const im = new Image();
@@ -8748,7 +9022,7 @@ function CropSheet({ file, aspect = 1, round, title = "位置を決める", onCa
   const done = async () => {
     setBusy(true);
     try {
-      const outW = aspect === 1 ? 480 : 1200;
+      const outW = aspect === 1 ? 800 : 2000;
       /* 画面での動かしぶんを、出す絵の大きさに直す */
       const k = box.w > 0 ? outW / box.w : 1;
       const out = await cropImage(url || file, {
@@ -10797,12 +11071,10 @@ function AppMain() {
   const [garden, setGarden] = useState({ ...DEFAULT_GARDEN });
   const [pickFruit, setPickFruit] = useState(false);
   const [harvestOf, setHarvestOf] = useState(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuInstant, setMenuInstant] = useState(false);
+  /* メニューの開け閉めは menuStore が持つ（2.20.0〜。AppMain の state にしないこと） */
   /* メニューから画面へ移るあいだ（2.10.0〜。姉妹アプリ My手帳 2.20.6 と同じ）。
-     menuUnder＝板を移った先の画面の下へ沈めている。
+     menuStore の under＝板を移った先の画面の下へ沈めている。
      menuLift＝右から入ってくる画面（"art" など）。入りきるまで、ほかの全画面より上（MENU_LIFT_Z）に出す */
-  const [menuUnder, setMenuUnder] = useState(false);
   const [menuLift, setMenuLift] = useState(null);
   const menuGoTimer = useRef(null);
   useEffect(() => () => clearTimeout(menuGoTimer.current), []);
@@ -10854,7 +11126,22 @@ function AppMain() {
   useEffect(() => { loadPrefs().then(setPrefs); }, []);
   useEffect(() => { loadGarden().then(setGarden); }, []);
   useEffect(() => { loadTypeDesc().then(setTypeDesc); }, []);
-  const saveTypeDesc = useCallback(async (d) => { setTypeDesc(d); return await persistTypeDesc(d); }, []);
+  /* 記録・フォルダ以外の書きかえの控え（2.20.0〜。unsavedCount の説明を参照）。
+     quietRef ＝ 読み込み・同期で戻しているあいだは数えない（読み込んだものは書き出し済みと同じ） */
+  const [changes, setChanges] = useState(loadChanges);
+  const quietRef = useRef(0); // この時刻までは数えない（読み込み・同期の最中。写真を戻すあいだも含めて10秒）
+  const noteChange = useCallback((key) => {
+    if (Date.now() < quietRef.current) return;
+    const at = new Date().toISOString();
+    setChanges((prev) => {
+      const next = { ...prev, [key]: at };
+      try { localStorage.setItem(CHANGE_KEY, JSON.stringify(next)); } catch (e) { /* 数えられないだけ */ }
+      return next;
+    });
+  }, []);
+  const prefsNowRef = useRef(prefs);
+  prefsNowRef.current = prefs;
+  const saveTypeDesc = useCallback(async (d) => { setTypeDesc(d); noteChange("typeDesc"); return await persistTypeDesc(d); }, []); // eslint-disable-line
   useEffect(() => { loadDraft().then((d) => { if (d && hasContent(d.rec)) setDraftSaved(d); }); }, []);
 
   /* 入力中の内容を控える。空っぽなら控えない */
@@ -10880,7 +11167,7 @@ function AppMain() {
     /* 画面には、置き場に入れたあとの姿（photo:番号）を持たせる。
        **元の data URL を持ち続けないこと。** 持ち続けると、書き出しや片づけで「使用中」と数えられず、
        いま出ている絵と置き場の中身が食い違う */
-    if (!res || res.ok) setHeaderBg((res && res.src !== undefined ? res.src : src) || null);
+    if (!res || res.ok) { setHeaderBg((res && res.src !== undefined ? res.src : src) || null); noteChange("headerBg"); }
     return res;
   }, []);
 
@@ -10912,7 +11199,7 @@ function AppMain() {
      ドライブに入っていれば控えがあるのと同じ。まだ送っていない分は、ヘッダーの雲に件数で出る */
   const syncSt = useSyncStatus();
   const driveOn = !!(syncSt.hasClientId && syncSt.enabled);
-  const unsavedNow = driveOn ? 0 : unsavedCount(records, prefs, folders);
+  const unsavedNow = driveOn ? 0 : unsavedCount(records, prefs, folders, changes);
 
   const markBackedUp = useCallback(() => {
     setPrefs((prev) => {
@@ -10923,10 +11210,11 @@ function AppMain() {
   }, []);
 
   const savePrefs = useCallback(async (next) => {
+    const before = prefsNowRef.current;
     const res = await persistPrefs(next);
-    if (res.ok) setPrefs(next);
+    if (res.ok) { setPrefs(next); if (prefsContentChanged(before, next)) noteChange("prefs"); }
     return res;
-  }, []);
+  }, []); // eslint-disable-line
 
   /* テーマカラーを画面全体へ反映する */
   useEffect(() => {
@@ -10948,19 +11236,21 @@ function AppMain() {
     const list = normalizeTags(next);
     setTagMaster(list);
     persistTagMaster(list);
-  }, []);
+    noteChange("tags");
+  }, []); // eslint-disable-line
 
   const addTagToMaster = useCallback((t) => {
     setTagMaster((prev) => {
       const next = normalizeTags([...prev, t]);
-      if (next.length !== prev.length) persistTagMaster(next);
+      if (next.length !== prev.length) { persistTagMaster(next); setTimeout(() => noteChange("tags"), 0); }
       return next;
     });
-  }, []);
+  }, []); // eslint-disable-line
 
   /* タグの名前を変える。一覧と記録の両方に同じことをすること。
      片方だけ直すと、記録に古い名前が残って食い違う */
   const renameTag = useCallback((from, to) => {
+    noteChange("tags");
     setTagMaster((prev) => {
       const next = normalizeTags(prev.map((t) => (t === from ? to : t)));
       persistTagMaster(next);
@@ -10975,6 +11265,7 @@ function AppMain() {
   }, []); // eslint-disable-line
   /* タグを消す。記録からも外すが、記録そのものは消さない */
   const deleteTag = useCallback((tag) => {
+    noteChange("tags");
     setTagMaster((prev) => {
       const next = prev.filter((t) => t !== tag);
       persistTagMaster(next);
@@ -11024,13 +11315,13 @@ function AppMain() {
 
   const saveCaptions = useCallback(async (map) => {
     const res = await persistCaptions(map);
-    if (res.ok) setCaptions(map);
+    if (res.ok) { setCaptions(map); noteChange("captions"); }
     return res;
   }, []);
 
   const saveArtworks = useCallback(async (list) => {
     const res = await persistArtworks(list);
-    if (res.ok) setArtworks(list);
+    if (res.ok) { setArtworks(list); noteChange("artworks"); }
     return res;
   }, []);
 
@@ -11217,9 +11508,24 @@ function AppMain() {
     commitSaveOrAdd(rec); closeForm();
     setViewing((prev) => (prev && prev.id === rec.id ? rec : prev));
   };
+  /* 消した記録も「まだ書き出していない変更」に数える（2.19.0〜。My手帳 2.12.0 と同じ考え）。
+     消えた記録は一覧に無いので時刻を見られない。フォルダを消したときと同じ控え（prefs.folderDeletes）に、消した時刻を足す。
+     名前は folderDeletes のままにしてある（前の版のバックアップ・設定と食い違わないように） */
+  const noteDeleted = (n) => {
+    if (!n) return;
+    const at = new Date().toISOString();
+    setPrefs((prev) => {
+      const next = { ...prev, folderDeletes: [...(prev.folderDeletes || []), ...Array(n).fill(at)].slice(-200) };
+      persistPrefs(next);
+      return next;
+    });
+  };
   /* まとめて削除（探す画面の選ぶモード）。写真の片づけもここを通す */
   const handleDeleteMany = (ids) => {
     const gone = new Set(ids);
+    noteDeleted(records.filter((r) => gone.has(r.id)).length);
+    /* 消した記録の書きかけが端末に残っていると、次に開いたとき「書きかけ」として戻ってくる（My手帳 6-⑥） */
+    if (draftSaved && draftSaved.rec && gone.has(draftSaved.rec.id)) { clearDraft(); setDraftSaved(null); }
     setRecords((prev) => {
       const next = prev.filter((p) => !gone.has(p.id));
       sweepPhotos({ records: next, headerBg: headerBgRef.current, folders: foldersRef.current });
@@ -11228,6 +11534,7 @@ function AppMain() {
     setViewing((prev) => (prev && gone.has(prev.id) ? null : prev));
   };
   const handleDelete = (id) => {
+    noteDeleted(records.some((r) => r.id === id) ? 1 : 0);
     setRecords((prev) => {
       const next = prev.filter((p) => p.id !== id);
       /* 消した記録に付いていた写真を、置き場からも片づける。
@@ -11245,6 +11552,8 @@ function AppMain() {
        同じ内容をもう一度書き出すことになる。
        読み込んだ時刻を「最後に書き出した日」として控えておく */
     const restoredAt = new Date().toISOString();
+    /* 読み込みで戻したものは、書きかえとして数えない（noteChange を止める） */
+    quietRef.current = Date.now() + 10000;
     /* 画面の設定を戻す。入っていない項目は今のまま残すこと */
     if (importedSetting) {
       if (importedSetting.prefs) {
@@ -11313,6 +11622,8 @@ function AppMain() {
      **変わっていない部分には触れないこと**（描き直しと保存を増やさない）。
      lastBackup と folderDeletes は、この端末のものをそのまま残す */
   const applySyncSnapshot = useCallback(async (m) => {
+    /* 同期で届いたものは、書きかえとして数えない */
+    quietRef.current = Date.now() + 10000;
     const cur = syncStateRef.current;
     const same = (a, b) => syncSetHash([a]) === syncSetHash([b]);
     if (syncSetHash(m.records) !== syncSetHash(cur.records)) {
@@ -11399,7 +11710,7 @@ function AppMain() {
   }
 
   /* メニューから画面へ移る（2.10.0〜。姉妹アプリ My手帳 2.20.6 と同じ動き）。
-     1. 板はその場に残し、移った先の画面の下へ沈める（menuUnder）
+     1. 板はその場に残し、移った先の画面の下へ沈める（menuStore の under）
      2. 移った先の画面を、ほかの全画面より上（menuLift）に、右から入れる。板と、いま出ている画面にかぶさっていく
      3. 入りきったら（data-ft-entered が付いたら）、隠れた板と、下に残った画面を閉じる
      **いま出ている画面を先に閉じないこと。** 入ってくる途中の左側に、ひとつ下の画面（ホームなど）がのぞく。
@@ -11422,8 +11733,7 @@ function AppMain() {
     const target = MENU_SCREENS[key];
     /* いま見ている画面を選んだ → 移らない。板をふつうに閉じる（右へ滑る） */
     if (target.isOpen && !viewing) {
-      setMenuInstant(false);
-      setMenuOpen(false);
+      menuStore.set({ open: false });
       return;
     }
     /* 選んだ画面が、いま見ている画面（記録の閲覧）の下にもう開いている（2.11.2〜）。
@@ -11438,7 +11748,7 @@ function AppMain() {
       setMenuRelaunch(key);
       return;
     }
-    setMenuUnder(true);
+    menuStore.set({ under: true });
     setMenuLift(key);
     target.open();
     /* **時間を決め打ちで待たないこと。** iPhone が重いと動きの始まりが遅れ、
@@ -11448,7 +11758,7 @@ function AppMain() {
     const entered = () => !!document.querySelector("[data-ft-lift] > .anim-right[data-ft-entered]");
     const finish = () => {
       menuGoTimer.current = null;
-      setMenuOpen(false);
+      menuStore.set({ open: false });
       if (key !== "art") setArtOpen(false);
       if (key !== "bookmark") setBookmarkOpen(false);
       if (key !== "garden") setGardenOpen(false);
@@ -11473,9 +11783,7 @@ function AppMain() {
   const openMenu = () => {
     /* 画面へ移っている途中は開かない（すぐ閉じられてしまう） */
     if (menuGoTimer.current) return;
-    setMenuInstant(false);
-    setMenuUnder(false);
-    setMenuOpen(true);
+    menuStore.set({ under: false, open: true });
   };
 
   return (
@@ -11517,6 +11825,21 @@ function AppMain() {
            数字を書き写すと、帯の厚みを変えたときに置いていかれて、
            ボタンだけ高い場所に浮いたままになる */
         :root { --ft-nav-h: calc(57px + env(safe-area-inset-bottom)); } /* 中身56 ＋ 上の線1 */
+
+        /* 字の色のマスター（2.19.0〜。姉妹アプリ My手帳 10.4.0 の「文字と色のマスター」に合わせた）。
+           **字の灰色に、色の数値を直に書かないこと。** text-neutral-* はここを通る。
+           ・--tx-1 見出し・名前（900）／--tx-1s 強めの本文（800）／--tx-2 本文（700）／--tx-2s 引用・補う本文（600）
+           ・--tx-3 補足・小見出し（500）／--tx-4 添え字・ヒント（400）／--tx-5 placeholder／--tx-6 飾り（300）
+           400 だけ値を変えた（#A3A3A3 → #8C8C8C）。白地で読める濃さ（コントラスト 2.5 → 3.3）にするため。
+           placeholder（placeholder-neutral-400）はうすいまま（書いた字と見分けるため） */
+        :root { --tx-1: #171717; --tx-1s: #262626; --tx-2: #404040; --tx-2s: #525252; --tx-3: #737373; --tx-4: #8C8C8C; --tx-5: #A3A3A3; --tx-6: #C4C4C4; }
+        .text-neutral-900 { color: var(--tx-1); }
+        .text-neutral-800 { color: var(--tx-1s); }
+        .text-neutral-700 { color: var(--tx-2); }
+        .text-neutral-600 { color: var(--tx-2s); }
+        .text-neutral-500 { color: var(--tx-3); }
+        .text-neutral-400 { color: var(--tx-4); }
+        .text-neutral-300 { color: var(--tx-6); }
         .ft-tabbar-wrap { padding-bottom: env(safe-area-inset-bottom); }
         /* **タブの高さは min-height ではなく height で留めること。**
            min-height だと中身しだいで数pxふくらみ、--ft-nav-h と食い違う。
@@ -11668,6 +11991,8 @@ function AppMain() {
         .anim-sheet     { animation: ft-sheet-up 0.36s cubic-bezier(0.33,1,0.5,1) backwards; }
         .anim-sheet-out { animation: ft-sheet-down 0.24s cubic-bezier(0.55,0,0.68,0.53) forwards; }
         .anim-fade      { animation: ft-fade-in 0.2s ease-out backwards; }
+        @keyframes ft-enter-lift { from { opacity: 0; } 99% { opacity: 0; } to { opacity: 1; } }
+        .anim-fade-lift { animation: ft-enter-lift 0.3s linear backwards; }
         .anim-fade-out  { animation: ft-fade-out 0.2s ease-out forwards; }
         .anim-pop       { animation: ft-pop 0.26s cubic-bezier(0.34,1.4,0.5,1) backwards; }
         .spin           { animation: ft-spin 0.75s linear infinite; }
@@ -12209,10 +12534,7 @@ function AppMain() {
 
 
         <SideMenu
-          open={menuOpen}
-          instant={menuInstant}
-          under={menuUnder}
-          onClose={() => { setMenuInstant(false); setMenuOpen(false); }}
+          onClose={closeMenu}
           items={[
             {
               label: "画面のカスタマイズ",
