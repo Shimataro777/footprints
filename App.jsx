@@ -761,17 +761,30 @@ function syncFolderDeco(folders) {
 /* ============================================================
    画面のカスタマイズ（テーマカラーなど）
    ============================================================ */
+/* テーマカラー（3.0.0〜 My手帳 10.54.0 の配色にそろえた。12色・虹の並び）。
+   **淡い段（50〜300）はやわらかく、濃い段（600〜900）ははっきり。** 2.22 までは Tailwind の色をそのまま使っていて、
+   濃い段が沈みすぎ・淡い段が甘すぎた（「色が甘い／重い」）。My手帳 で何案も比べて決めた明るさに合わせてある。
+   My手帳 の段との対応：50〜300 は同じ、600＝My手帳の700、700＝800、800＝900、900＝950
+   （このアプリは 900 をボタンの地・いちばん濃い字に使うため。白地に対する比は 700 ≒3.8・800 ≒5.3・900 ≒7.4）。
+   ・**800 を白地に対し 4.5 より下にしないこと・900 を白い字に対し 7 より下にしないこと**（見出し・ボタンの白い字が読めなくなる）
+   ・**key は保存された設定と結びついているので変えないこと。** "indigo" はもとから「空」の色（菫と見分けにくかったので差し替えた名残）。
+     藍は新しい key "navy" にした。変えると、この色を選んでいた人の設定が既定の色に戻ってしまう
+   ・既定は "teal"（DEFAULT_PREFS）。並びを入れかえても、見つからないときは teal に戻す（themeOf） */
 const THEMES = [
-  { key: "teal",   label: "深い緑",   swatch: "#0F766E", vars: { 50:"#F0FDFA",100:"#CCFBF1",200:"#99F6E4",300:"#5EEAD4",600:"#0D9488",700:"#0F766E",800:"#115E59",900:"#134E4A" } },
-  /* もとは藍色だったが、菫と見分けがつきにくかったので空色に差し替えた。
-     key（"indigo"）は保存された設定と結びついているので変えないこと。
-     変えると、この色を選んでいた人の設定が既定の色に戻ってしまう */
-  { key: "indigo", label: "空",       swatch: "#0369A1", vars: { 50:"#F0F9FF",100:"#E0F2FE",200:"#BAE6FD",300:"#7DD3FC",600:"#0284C7",700:"#0369A1",800:"#075985",900:"#0C4A6E" } },
-  { key: "rose",   label: "臙脂",     swatch: "#BE123C", vars: { 50:"#FFF1F2",100:"#FFE4E6",200:"#FECDD3",300:"#FDA4AF",600:"#E11D48",700:"#BE123C",800:"#9F1239",900:"#881337" } },
-  { key: "amber",  label: "琥珀",     swatch: "#B45309", vars: { 50:"#FFFBEB",100:"#FEF3C7",200:"#FDE68A",300:"#FCD34D",600:"#D97706",700:"#B45309",800:"#92400E",900:"#78350F" } },
-  { key: "violet", label: "菫",       swatch: "#6D28D9", vars: { 50:"#F5F3FF",100:"#EDE9FE",200:"#DDD6FE",300:"#C4B5FD",600:"#7C3AED",700:"#6D28D9",800:"#5B21B6",900:"#4C1D95" } },
-  { key: "slate",  label: "墨",       swatch: "#334155", vars: { 50:"#F8FAFC",100:"#F1F5F9",200:"#E2E8F0",300:"#CBD5E1",600:"#475569",700:"#334155",800:"#1E293B",900:"#0F172A" } },
+  { key: "rose",   label: "紅",    swatch: "#D2817E", vars: { 50:"#FEF2F2",100:"#FCE3E3",200:"#F8C8C7",300:"#F2A7A5",600:"#D2817E",700:"#CD6461",800:"#BD403D",900:"#963330" } },
+  { key: "orange", label: "橙",    swatch: "#D3844C", vars: { 50:"#FDF3EB",100:"#FAE5D6",200:"#F4CBAE",300:"#ECAD80",600:"#D3844C",700:"#C76B2A",800:"#A35824",900:"#81461C" } },
+  { key: "amber",  label: "山吹",   swatch: "#C28E2A", vars: { 50:"#FDF4E3",100:"#F8E7C6",200:"#F0CF8F",300:"#E5B251",600:"#C28E2A",700:"#AA7B20",800:"#8C651B",900:"#6E5015" } },
+  { key: "lime",   label: "若葉",   swatch: "#80A32E", vars: { 50:"#F0F8DD",100:"#E0EFBC",200:"#C1DE7C",300:"#9EC936",600:"#80A32E",700:"#6F8E24",800:"#5B751E",900:"#485C18" } },
+  { key: "green",  label: "緑",    swatch: "#47AA51", vars: { 50:"#EBF8EC",100:"#D6EFD8",200:"#AEE0B2",300:"#7FCC87",600:"#47AA51",700:"#3A9543",800:"#307A37",900:"#26612C" } },
+  { key: "teal",   label: "浅葱",   swatch: "#39A986", vars: { 50:"#E6F9F3",100:"#CDF0E6",200:"#9CE1CC",300:"#63CDAC",600:"#39A986",700:"#2D9374",800:"#26795F",900:"#1E604B" } },
+  { key: "indigo", label: "空",    swatch: "#14A0E3", vars: { 50:"#E8F7FF",100:"#CDEEFD",200:"#9DDCFA",300:"#5EC6F4",600:"#14A0E3",700:"#0B8BCB",800:"#0A72A8",900:"#085A86" } },
+  { key: "navy",   label: "藍",    swatch: "#8695CB", vars: { 50:"#F2F4FC",100:"#E4E8F7",200:"#CBD3EF",300:"#ADB9E5",600:"#8695CB",700:"#6E80C5",800:"#5167B9",900:"#3D5198" } },
+  { key: "violet", label: "藤",    swatch: "#A38CCE", vars: { 50:"#F6F3FC",100:"#ECE6F8",200:"#DACEF1",300:"#C5B2E8",600:"#A38CCE",700:"#9274C8",800:"#7B58BC",900:"#6341A2" } },
+  { key: "pink",   label: "桜",    swatch: "#D47BA3", vars: { 50:"#FEF1F7",100:"#FBE2ED",200:"#F7C6DC",300:"#F1A4C6",600:"#D47BA3",700:"#CF5B8F",800:"#BD3873",900:"#962D5B" } },
+  { key: "brown",  label: "栗",    swatch: "#B78F6C", vars: { 50:"#F9F4F0",100:"#F1E7DF",200:"#E2D0C1",300:"#D1B69E",600:"#B78F6C",700:"#AB794F",800:"#8C6341",900:"#6E4E33" } },
+  { key: "slate",  label: "灰",    swatch: "#8A98A8", vars: { 50:"#F3F5F7",100:"#E6E9ED",200:"#CED4DB",300:"#B2BCC6",600:"#8A98A8",700:"#738599",800:"#5D6E7F",900:"#4A5664" } },
 ];
+const themeOf = (key) => THEMES.find((t) => t.key === key) || THEMES.find((t) => t.key === "teal");
 /* 書きかけの記録（自動下書き）。アプリが不意に閉じても失われないようにする */
 const DRAFT_KEY = "bible-tracker-draft";
 async function loadDraft() {
@@ -5919,47 +5932,86 @@ const MenuContext = React.createContext(null);
 /* 書き出していない記録の件数。三本線のバッジなどで使う */
 const UnsavedContext = React.createContext(0);
 
-/* 重なって出る画面のヘッダに置く三本線。記録の作成・編集画面には出さない */
-/* 三本線と、その右上に出す未保存の印。
-   印は必ず「アイコンを包んだ span」を基準に置くこと。
-   以前はボタンの角からの距離（top:12 / right:9 など）で置いていた。
-   この置き方はボタンとアイコンの大きさが特定の組み合わせのときしか合わず、
-   タブの見出し（ボタン56px・アイコン32px）では印がアイコンに重なっていた。
-   アイコン基準にしておけば、どの大きさの組み合わせでも必ず右上に出る */
+/* ============================================================
+   見出しの右はし（3.0.0〜。My手帳 8.0.0 の HeaderTail と同じ決まり）
+   **どの見出しも、この部品で並べること：その画面のボタン → 雲（同期） → 三本線（メニュー）。**
+   2.22 までは、下タブの見出しと重なる画面で、ボタンの大きさ（56px）や並べ方が画面ごとに少しずつ違い、
+   画面を移るたびに雲と三本線が動いて見えた。大きさ（48px・.ft-hbtn）と右の余白（.ft-htail）はここで決める。
+   右はしから三本線のまん中までの長さは、どの画面も同じ
+   ============================================================ */
+const MENU_BTN = 48;
+const MENU_ICON = 26;
 function MenuIconWithBadge({ size, unsaved, ringClass }) {
+  /* 印は「アイコンを包んだ span」を基準に置くこと（ボタンの角からの距離で置くと、大きさしだいでアイコンに重なる） */
   return (
     <span className="relative inline-flex">
-      <Menu size={size} strokeWidth={2.4} />
+      <Menu size={size} strokeWidth={2.2} />
       {unsaved > 0 && (
         <span className={"absolute bg-amber-500 border-2 " + ringClass}
-          style={{ top: -5, right: -5, width: 14, height: 14, borderRadius: 9999 }} />
+          style={{ top: -5, right: -5, width: 13, height: 13, borderRadius: 9999 }} />
       )}
     </span>
   );
 }
-
-/* 重なって出る画面の三本線。
-   **大きさはタブの見出し（ScreenHeader）とそろえること。**
-   別々の数にしていたため、画面を移ると三本線の大きさが変わって見えた */
-const MENU_BTN = 56;
-const MENU_ICON = 32;
+/* 雲を出すかどうか（見出しの題の幅を決めるのにも使う） */
+function useSyncShown() {
+  const ui = React.useContext(SyncUiContext);
+  const st = useSyncStatus();
+  return !!ui && !!st.hasClientId;
+}
 /* guard：開く前に確かめたいことがある画面（画面のカスタマイズの「保存していない変更」）だけ渡す。
    guard(open) の形で呼ぶので、確かめ終わったら open() を呼ぶこと（2.10.0〜） */
-function MenuButton({ size = MENU_BTN, guard }) {
+function HeaderTail({ right, menuGuard }) {
   const openMenu = React.useContext(MenuContext);
   const unsaved = React.useContext(UnsavedContext);
-  if (!openMenu) return null;
-  /* 三本線の左に、Googleドライブの雲（2.17.0〜）。どの画面からでも同期の様子が見え、押せば小窓が開く */
   return (
-    <>
-      <SyncHeaderButton size={size} />
-      <button onClick={guard ? () => guard(openMenu) : openMenu} aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
-        className="relative flex items-center justify-center rounded-xl text-neutral-800 hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0"
-        style={{ minWidth: size, minHeight: size }}>
-        <MenuIconWithBadge size={MENU_ICON} unsaved={unsaved} ringClass="border-white" />
-      </button>
-    </>
+    <div className="ft-htail">
+      {right || null}
+      {openMenu && <SyncHeaderButton />}
+      {openMenu && (
+        <button type="button" onClick={menuGuard ? () => menuGuard(openMenu) : openMenu}
+          aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
+          className="ft-hbtn relative flex items-center justify-center rounded-xl text-neutral-800 hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0">
+          <MenuIconWithBadge size={MENU_ICON} unsaved={unsaved} ringClass="border-white" />
+        </button>
+      )}
+    </div>
   );
+}
+/* 右はしのボタンの数から、まん中の題を左右どれだけ狭めるかを決める（題をいつも画面のまん中に置く） */
+function useTitleInset(nRight) {
+  const openMenu = React.useContext(MenuContext);
+  const cloud = useSyncShown() && !!openMenu;
+  const n = nRight + (openMenu ? 1 : 0) + (cloud ? 1 : 0);
+  return Math.max(60, 10 + n * 50);
+}
+/* 重なって出る画面の見出し（戻る＋まん中の題＋右はし）。3.0.0〜 どの画面もこれを使う。
+   ・戻るは「‹」だけ（My手帳 と同じ）。字の「戻る」は外した（題がまん中に来るぶん、左を軽くする）
+   ・**左端から払って戻る帯（data-ft-edge）より、上の階層に置くこと。** 帯が「‹」の当たりを奪わないように */
+function OverlayHeader({ title, onBack, right, menuGuard }) {
+  const nRight = right ? (Array.isArray(right) ? right.length : (right.props && right.props.children ? React.Children.count(right.props.children) : 1)) : 0;
+  const inset = useTitleInset(nRight);
+  return (
+    <div className="ft-hdr ft-ohead bg-white border-b border-neutral-200 px-2 flex items-center gap-1 shrink-0 relative"
+      style={{ ...SAFE_TOP(12), paddingBottom: 8, zIndex: 20 }}>
+      {/* **題は、この行の箱の中でまん中に置くこと。** 見出しの箱（上に安全域の余白がある）の中で top:50% にすると、
+          iPhone の切り欠きのぶん、題だけがボタンより上にずれる */}
+      <div className="relative flex items-center gap-1 min-h-[48px] w-full">
+        <TapButton onClick={onBack} aria-label="戻る"
+          className="ft-hbtn flex items-center justify-center rounded-xl text-neutral-700 hover:bg-neutral-100 shrink-0">
+          <ChevronLeft size={26} />
+        </TapButton>
+        <h2 className="ft-htitle font-display text-[17px] font-bold text-neutral-900 truncate text-center pointer-events-none"
+          style={{ left: inset, right: inset }}>{title}</h2>
+        <span className="flex-1" />
+        <HeaderTail right={right} menuGuard={menuGuard} />
+      </div>
+    </div>
+  );
+}
+/* 前の形の三本線（雲＋三本線）。新しい見出しは HeaderTail を使うこと */
+function MenuButton({ guard }) {
+  return <HeaderTail menuGuard={guard} />;
 }
 
 /* 画面の上に留める見出しと帯（下の4タブの画面だけで使う）。
@@ -6007,8 +6059,7 @@ function TopChrome({ children }) {
 /* 画面の説明文は置かない。使い方はメニューの「ヘルプ」と「？」にまとめてある。
    説明が無くなったぶん、画面名は大きくしてある */
 function ScreenHeader({ title, right }) {
-  const openMenu = React.useContext(MenuContext);
-  const unsaved = React.useContext(UnsavedContext);
+  const inset = useTitleInset(right ? 1 : 0);
   /* 見出しの高さを測って、みんなが使えるところ（--ft-head-h）に書いておく。
      **数を決め打ちしないこと。** 文字の大きさを変えると見出しも高くなり、
      その下に貼りつけた部品が見出しに食い込む */
@@ -6042,20 +6093,13 @@ function ScreenHeader({ title, right }) {
     };
   }, []);
   return (
-    <div ref={headRef} className="ft-hdr px-5 pb-2.5 ft-page border-b border-th-200" style={SAFE_TOP(18)}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0"><h1 className="font-display text-[27px] text-neutral-900 tracking-wide truncate">{title}</h1></div>
-        <div className="flex items-center gap-1 shrink-0">
-          {right}
-          {openMenu && <SyncHeaderButton />}
-          {openMenu && (
-            <button onClick={openMenu} aria-label={unsaved > 0 ? `メニュー（未保存 ${unsaved}件）` : "メニュー"}
-              className="relative flex items-center justify-center rounded-xl text-neutral-800 hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0"
-              style={{ minWidth: MENU_BTN, minHeight: MENU_BTN }}>
-              <MenuIconWithBadge size={MENU_ICON} unsaved={unsaved} ringClass="border-neutral-50" />
-            </button>
-          )}
-        </div>
+    <div ref={headRef} className="ft-hdr px-2 pb-2 ft-page border-b border-th-200" style={SAFE_TOP(14)}>
+      {/* 題はまん中（3.0.0〜。My手帳 と同じ）。右はしは HeaderTail（雲・三本線）。重なる画面の見出しと同じ並び */}
+      <div className="relative flex items-center gap-1 min-h-[48px]">
+        <h1 className="ft-htitle font-display text-[20px] font-bold text-neutral-900 truncate text-center pointer-events-none"
+          style={{ left: inset, right: inset }}>{title}</h1>
+        <span className="flex-1" />
+        <HeaderTail right={right} />
       </div>
     </div>
   );
@@ -6981,10 +7025,8 @@ function CalendarView({ records, onOpenDay }) {
 
   return (
     <div>
-      <div className="flex gap-2 mb-3">
-        <button onClick={() => setViewMode("week")} className={"flex-1 min-h-[40px] rounded-lg text-[13.5px] font-bold border-2 ft-tap " + (viewMode === "week" ? "bg-th-50 border-th-800 text-th-900" : "border-neutral-300 text-neutral-600")}>週間</button>
-        <button onClick={() => setViewMode("month")} className={"flex-1 min-h-[40px] rounded-lg text-[13.5px] font-bold border-2 ft-tap " + (viewMode === "month" ? "bg-th-50 border-th-800 text-th-900" : "border-neutral-300 text-neutral-600")}>月間</button>
-      </div>
+      {/* 週間・月間の切り替え（3.0.0〜 My手帳 の「日・週・月」と同じピル） */}
+      <PillTabs className="mb-3" tabs={[{ key: "week", label: "週間" }, { key: "month", label: "月間" }]} value={viewMode} onChange={setViewMode} />
 
       {/* 見出しは、日付を選ぶ欄と同じ部品 */}
       <MonthNavHeader
@@ -7896,11 +7938,7 @@ function DayRecordsScreen({ date, records, onClose, onOpenDetail }) {
     <OverlayScreen from="right" closing={closing}>
     <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
       <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">{date}</h2>
-        <MenuButton />
-      </div>
+      <OverlayHeader title={date} onBack={close} />
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         {list.length === 0 ? (
           <div className="flex flex-col items-center py-8">
@@ -7944,11 +7982,7 @@ function BookRecordsScreen({ book, records, onClose, onOpenDetail, defaultSort }
     <OverlayScreen from="right" closing={closing}>
       <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
-      <div className="ft-hdr flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[20px] text-neutral-900 flex-1 min-w-0 truncate tracking-wide">{book}</h2>
-        <MenuButton />
-      </div>
+      <OverlayHeader title={book} onBack={close} />
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         <ChapterTiles book={book} counts={counts} />
         <div className="flex items-center gap-2 mb-3">
@@ -8431,11 +8465,7 @@ function RecordDetailScreen({ record, allRecords, onClose, onEdit, onOpenDetail,
     <OverlayScreen from={from} closing={closing || swapping} zIndex={60}>
       <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 bg-white flex flex-col">
-      <div className="ft-hdr flex items-center gap-2 px-5 pb-4 border-b border-neutral-200 shrink-0 max-w-2xl mx-auto w-full" style={SAFE_TOP(16)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[17px] text-neutral-900 flex-1 min-w-0 truncate">{recordTitle(record)}</h2>
-        <MenuButton />
-      </div>
+      <OverlayHeader title={recordTitle(record)} onBack={close} />
 
       {/* コピーや書き出しの知らせ。
           **本文の下に置かないこと。** 押すボタンは画面の上にあるので、
@@ -8755,66 +8785,137 @@ function useSyncStatus() {
 const SyncUiContext = React.createContext(null);
 
 /* ============================================================
-   同期の見た目（2.17.0〜）
+   同期の見た目（2.17.0〜。3.0.0 で My手帳 10.19.0 の形にそろえた）
    **説明文で伝えないこと（依頼による）。** 「この端末 ⇄ Googleドライブ」の2つの箱と、
    その間の2本の矢印（送る →／← 受け取る）で、データがどちらへ動くのかを見せる。
    ・書きかえて、まだ送っていない → 「送る」の矢印が琥珀色になり、件数が付く。ヘッダーの雲も ↑ と件数
-   ・やりとりの最中 → 2本の矢印が流れる。雲は ⇅
+   ・やりとりの最中 → 2本の矢印が流れる。ヘッダーの雲は、中の ⇅ だけが点滅する
    ・そろった → 矢印は落ち着いた色。雲は ✓
    ・ログインが要る／つながらない → 矢印が灰色の点線。雲は ! か 斜線
+   色は .gs-*（AppMain の <style>）にまとめてある。テーマの色は var(--th-*) から取る
    ============================================================ */
-/* 雲のしるし。mark: check | up | sync | alert | off */
+/* 雲の中のしるしだけ（雲の線なし）。ヘッダーの同期中に、雲の上へ重ねて点滅させる */
+function CloudMarks({ size = 28 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block" }}>
+      <path d="M10 16.6v-5" /><path d="M8.4 13.1 10 11.5l1.6 1.6" />
+      <path d="M14 11.5v5" /><path d="M12.4 15 14 16.6l1.6-1.6" />
+    </svg>
+  );
+}
+/* 雲のしるし。mark: check | up | sync | alert | off | none。
+   anim のとき（紙の見出し・図の中の小さな雲）、雲の中が薄く満ちては引き、ふちが明滅し、↑↓が上下へ流れる。
+   **keyframes の 0% と 100% はふだんの姿にしておくこと。** 動きを止める設定では1回だけ一瞬で回すので、終わりの姿が残る */
 function CloudGlyph({ mark = "check", size = 28, anim = false }) {
   const marks = {
     check: <path d="M9.4 14.1l2 2 3.6-3.6" />,
     up: <><path d="M12 17v-5.6" /><path d="M9.6 13.6 12 11.2l2.4 2.4" /></>,
-    sync: <g className={anim ? "ft-sync-bob" : undefined}><path d="M10 16.6v-5" /><path d="M8.4 13.1 10 11.5l1.6 1.6" /><path d="M14 11.5v5" /><path d="M12.4 15 14 16.6l1.6-1.6" /></g>,
+    sync: (
+      <g>
+        <g className={anim ? "gs-arr-up" : undefined}><path d="M10 16.6v-5" /><path d="M8.4 13.1 10 11.5l1.6 1.6" /></g>
+        <g className={anim ? "gs-arr-dn" : undefined}><path d="M14 11.5v5" /><path d="M12.4 15 14 16.6l1.6-1.6" /></g>
+      </g>
+    ),
     alert: <><path d="M12 11v3" /><path d="M12 16.6h.01" /></>,
     off: <path d="M4 4l16 16" />,
   };
+  const CLOUD = "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z";
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      className={anim ? "gs-cloud-live" : undefined} style={{ overflow: "visible", display: "block" }}>
+      {anim && <path d={CLOUD} className="gs-cloud-glow" fill="currentColor" stroke="none" />}
+      <path d={CLOUD} className={anim ? "gs-cloud-blink" : undefined} />
       {marks[mark] || null}
     </svg>
   );
 }
-function PhoneGlyph({ size = 26 }) {
+function PhoneGlyph({ size = 24 }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="6" y="2.5" width="12" height="19" rx="2.5" /><path d="M11 18h2" />
     </svg>
   );
 }
-/* 状態 → 雲のしるし・色 */
+/* 状態 → 雲のしるし・色（tone は .gs-tone-*） */
 function syncLook(st) {
-  if (!st.enabled) return { mark: "off", tone: "text-neutral-400", label: "Googleドライブ（未連携）" };
-  if (st.phase === "syncing") return { mark: "sync", anim: true, tone: "text-th-800", label: "Googleドライブとやりとり中" };
-  if (st.phase === "needsAuth") return { mark: "alert", tone: "text-amber-600", label: "Googleドライブ（ログインが必要）", dot: true };
-  if (st.phase === "offline") return { mark: "off", tone: "text-neutral-500", label: "Googleドライブ（通信できません）" };
-  if (st.phase === "error") return { mark: "alert", tone: "text-rose-700", label: "Googleドライブ（エラー）", dot: true };
-  if (st.pending > 0) return { mark: "up", tone: "text-amber-600", label: `Googleドライブ（${st.pending}件を送る前）` };
-  return { mark: "check", tone: "text-th-800", label: "Googleドライブ（保存ずみ）" };
+  if (!st.enabled) return { mark: "off", tone: "mute", label: "Googleドライブ（未連携）" };
+  if (st.phase === "syncing") return { mark: "sync", anim: true, tone: "ok", label: "Googleドライブとやりとり中" };
+  if (st.phase === "needsAuth") return { mark: "alert", tone: "warn", label: "Googleドライブ（押すとログインして同期）", dot: "warn" };
+  if (st.phase === "offline") return { mark: "off", tone: "mute", label: "Googleドライブ（通信できません）" };
+  if (st.phase === "error") return { mark: "alert", tone: "err", label: "Googleドライブ（エラー）", dot: "err" };
+  if (st.pending > 0) return { mark: "up", tone: "warn", label: `Googleドライブ（${st.pending}件を送る前）` };
+  return { mark: "check", tone: "ok", label: "Googleドライブ（保存ずみ）" };
 }
 
-/* ヘッダーの雲。三本線のとなりに置く（ScreenHeader と MenuButton から） */
-function SyncHeaderButton({ size = MENU_BTN }) {
+/* ヘッダーの雲（HeaderTail が三本線の左に置く）。
+   **押す＝その場で同期（3.0.0〜。My手帳 10.16.0 と同じ）。紙は開かない。** 同期はうしろで進み、ほかの画面はそのまま使える。
+   ・まだ連携していない → 紙（「Google連携」のボタンがある）
+   ・ログインが切れている → 押したらそのままログインして同期（Google の小さな画面が一瞬出る）。
+     部品の読み込みがまだなら、読み込みを始めて紙を開く
+   ・同期の最中 → 何もしない（雲の中の矢印が点滅している）
+   ・図・アカウント・連携の解除を見たい → **長押し（520ms）で紙。** メニューの「バックアップ」のカードからも同じものが見られる
+   **onTap の中で await を挟まないこと。** Google のログインは、指の操作の流れの中でしか開けない */
+function SyncHeaderButton() {
   const ui = React.useContext(SyncUiContext);
   const st = useSyncStatus();
+  /* 同期がすぐ終わっても、点滅は最低 2 回ぶん（2.2 秒）見せる。0.5 秒で終わると、押して同期が始まったのか分からない */
+  const [hold, setHold] = useState(false);
+  const since = useRef(0);
+  const busy = st.enabled && st.phase === "syncing";
+  useEffect(() => {
+    if (busy) { since.current = Date.now(); setHold(true); return undefined; }
+    if (!hold) return undefined;
+    const t = setTimeout(() => setHold(false), Math.max(0, 2200 - (Date.now() - since.current)));
+    return () => clearTimeout(t);
+  }, [busy]); // eslint-disable-line
+  const press = useRef({ t: null, fired: false });
   if (!ui || !st.hasClientId) return null;
-  const look = syncLook(st);
+  const showBusy = busy || (hold && st.enabled && (st.phase === "idle" || st.phase === "syncing"));
+  const look = syncLook(showBusy ? { ...st, phase: "syncing" } : st);
   const n = st.enabled ? st.pending : 0;
+  const onTap = () => {
+    if (press.current.fired) { press.current.fired = false; return; }
+    const g = getGoogleSync();
+    if (!g || !st.enabled) { ui.open(); return; }
+    if (st.phase === "needsAuth") {
+      if (st.ready) { g.loginNow(); return; }
+      g.preload(); ui.open(); return;
+    }
+    if (busy) return;
+    g.syncManual();
+  };
+  const stop = () => clearTimeout(press.current.t);
+  const pressProps = {
+    onPointerDown: (e) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      press.current.fired = false; clearTimeout(press.current.t);
+      press.current.t = setTimeout(() => {
+        press.current.fired = true;
+        try { if (navigator.vibrate) navigator.vibrate(8); } catch (err) { /* noop */ }
+        ui.open();
+      }, 520);
+    },
+    onPointerUp: stop, onPointerLeave: stop, onPointerCancel: stop,
+    onContextMenu: (e) => e.preventDefault(),
+  };
   return (
-    <button onClick={ui.open} aria-label={look.label + (n > 0 ? `・${n}件` : "")} data-ft-sync-btn=""
-      className={"relative flex items-center justify-center rounded-xl hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0 " + look.tone}
-      style={{ minWidth: 48, minHeight: size }}>
+    <button type="button" onClick={onTap} {...pressProps} data-ft-sync-btn="" aria-busy={showBusy ? "true" : undefined}
+      aria-label={(showBusy ? "同期しています" : st.enabled && st.phase !== "needsAuth" ? "押すと同期・長押しでくわしく" : look.label) + (n > 0 ? `・${n}件` : "")}
+      className={"ft-hbtn relative flex items-center justify-center rounded-xl hover:bg-neutral-200/70 ft-tap ft-tap-icon shrink-0 gs-tone-" + look.tone}>
+      {/* 点滅は、svg の中ではなく、矢印の絵を包む span（ふつうの箱）ごと。
+          iPhone の WebKit は、svg の中の動きを描き直さないことがある（My手帳 10.16.0 で実機確認）。
+          **件数の札・点を、点滅する箱の中に入れないこと**（雲といっしょに薄くなる） */}
       <span className="relative inline-flex">
-        <CloudGlyph mark={look.mark} anim={look.anim} size={30} />
+        {look.anim ? (
+          <span className="relative inline-flex">
+            <CloudGlyph mark="none" size={28} />
+            <span className="gs-pulse gs-arrows" aria-hidden="true"><CloudMarks size={28} /></span>
+          </span>
+        ) : <CloudGlyph mark={look.mark} size={28} />}
         {n > 0 ? (
-          <span className="absolute" style={{ top: -6, right: -9 }}><CountBadge n={n} size={18} className="border-2 border-white" /></span>
+          <span aria-hidden="true" className="gs-badge tabular-nums">{n > 99 ? "99+" : n}</span>
         ) : look.dot ? (
-          <span className="absolute border-2 border-white"
-            style={{ top: -3, right: -4, width: 12, height: 12, borderRadius: 9999, background: st.phase === "error" ? "#E11D48" : "#F59E0B" }} />
+          <span aria-hidden="true" className={"gs-dot gs-dot-" + look.dot} />
         ) : null}
       </span>
     </button>
@@ -8824,23 +8925,22 @@ function SyncHeaderButton({ size = MENU_BTN }) {
 /* 2本の矢印の1本。dir: "right"（送る）| "left"（受け取る）
    mode: run（流れている）| ok（そろっている）| wait（送る前。琥珀色）| stop（止まっている。灰色の点線） */
 function FlowArrow({ dir, label, mode, chip, meta }) {
-  const color = mode === "wait" ? "text-amber-600" : mode === "stop" ? "text-neutral-300" : "text-th-700";
   return (
-    <div className={"min-w-0 " + color}>
+    <div className={"min-w-0 gs-arrow gs-arrow-" + mode}>
       <div className={"flex items-center gap-1.5 " + (dir === "left" ? "justify-end" : "")}>
-        <span className={"text-[12.5px] font-bold " + (mode === "stop" ? "text-neutral-400" : mode === "wait" ? "text-amber-700" : "text-th-900")}>{label}</span>
-        {chip && <span className="font-bold rounded-full bg-amber-50 border border-amber-200 text-amber-800 px-1.5 tabular-nums" style={{ fontSize: 11.5, lineHeight: "16px" }}>{chip}</span>}
+        <span className="text-[12.5px] font-bold gs-arrow-label">{label}</span>
+        {chip && <span className="gs-chip tabular-nums font-bold" style={{ fontSize: 11.5 }}>{chip}</span>}
       </div>
-      <div className={"ft-flow " + (dir === "left" ? "ft-flow-l " : "ft-flow-r ") + (mode === "run" ? "ft-flow-run" : mode === "stop" ? "ft-flow-stop" : "")} />
-      <div className="text-neutral-400 tabular-nums truncate" style={{ fontSize: 11.5, height: 16, lineHeight: "16px", textAlign: dir === "left" ? "right" : "left" }}>{meta || ""}</div>
+      <div className={"gs-flow " + (dir === "left" ? "gs-flow-l" : "gs-flow-r")} />
+      <div className="text-neutral-400 tabular-nums truncate" style={{ fontSize: 11.5, height: 17, lineHeight: "17px", textAlign: dir === "left" ? "right" : "left" }}>{meta || ""}</div>
     </div>
   );
 }
 function FlowNode({ icon, label, dim }) {
   return (
-    <div className="flex flex-col items-center shrink-0" style={{ width: 72, opacity: dim ? 0.45 : 1 }}>
-      <span className="rounded-2xl bg-th-50 border border-th-200 text-th-800 flex items-center justify-center" style={{ width: 54, height: 54 }}>{icon}</span>
-      <span className="font-bold text-neutral-700 mt-1.5 text-center leading-tight" style={{ fontSize: 12 }}>{label}</span>
+    <div className="flex flex-col items-center shrink-0" style={{ width: 70, opacity: dim ? 0.45 : 1 }}>
+      <span className="gs-node">{icon}</span>
+      <span className="font-bold text-neutral-700 mt-1.5 text-center" style={{ fontSize: 11.5, lineHeight: 1.25 }}>{label}</span>
     </div>
   );
 }
@@ -8860,24 +8960,36 @@ function SyncFlow({ st }) {
         <FlowArrow dir="right" label="送る" mode={sendMode} chip={on && st.pending > 0 ? `${st.pending}件` : ""} meta={sentMeta} />
         <FlowArrow dir="left" label="受け取る" mode={recvMode} meta={recvMeta} />
       </div>
-      <FlowNode icon={<CloudGlyph mark={!on ? "off" : "check"} size={28} />} label={<>Google<br />ドライブ</>} dim={stop} />
+      <FlowNode icon={<CloudGlyph mark={!on ? "off" : run ? "sync" : "check"} anim={run} size={26} />} label={<>Google<br />ドライブ</>} dim={stop} />
     </div>
   );
 }
 /* 図の下の1行。いまの状態だけを短く */
 function SyncStatusLine({ st }) {
-  let icon = null; let text = ""; let cls = "text-neutral-600";
-  if (!st.enabled) { text = st.message || ""; cls = "text-rose-700"; }
-  else if (st.phase === "syncing") { icon = <Spinner size={15} />; text = "やりとりしています…"; cls = "text-th-900"; }
-  else if (st.phase === "needsAuth") { text = st.message || "ログインが必要です"; cls = "text-amber-700"; }
-  else if (st.phase === "offline" || st.phase === "error") { text = st.message; cls = st.phase === "error" ? "text-rose-700" : "text-amber-700"; }
-  else if (st.pending > 0) { text = `${st.pending}件をまもなく送ります`; cls = "text-amber-700"; }
-  else if (st.lastSyncAt) { icon = <Check size={15} strokeWidth={3} />; text = `ドライブと同じ内容です（${agoText(st.lastSyncAt)}）`; cls = "text-th-900"; }
+  let icon = null; let text = ""; let tone = "mute";
+  if (!st.enabled) { text = st.message || ""; tone = "err"; }
+  else if (st.phase === "syncing") { icon = <Spinner size={15} />; text = "やりとりしています…"; tone = "ok"; }
+  else if (st.phase === "needsAuth") { text = st.message || "ログインが必要です"; tone = "warn"; }
+  else if (st.phase === "offline" || st.phase === "error") { text = st.message; tone = st.phase === "error" ? "err" : "warn"; }
+  else if (st.pending > 0) { text = `${st.pending}件をまもなく送ります`; tone = "warn"; }
+  else if (st.lastSyncAt) { icon = <Check size={15} strokeWidth={3} />; text = `ドライブと同じ内容です（${agoText(st.lastSyncAt)}）`; tone = "ok"; }
   if (!text) return null;
   return (
-    <p className={"flex items-center justify-center gap-1.5 text-[13.5px] font-bold mt-3 text-center " + cls} data-ft-syncline="">
+    <p className={"flex items-center justify-center gap-1.5 text-[13.5px] font-bold mt-3 text-center gs-tone-" + tone} data-ft-syncline="">
       {icon}<span className="min-w-0">{text}</span>
     </p>
+  );
+}
+/* 同期の進み具合（3.0.0〜。My手帳 7.0.0 と同じ）。同期しているあいだだけ、線と「いましていること」と％を出す。
+   値は同期エンジン（gsync.js）の status.progress（0〜1）・status.step。写真1枚ごとに進む */
+function SyncProgress({ st }) {
+  if (st.phase !== "syncing") return null;
+  const pct = Math.max(4, Math.round((Number(st.progress) || 0) * 100));
+  return (
+    <div className="gs-prog" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+      <div className="gs-prog-bar"><i style={{ width: pct + "%" }} /></div>
+      <div className="gs-prog-t"><span>{st.step || "同期しています"}</span><b className="tabular-nums">{pct}%</b></div>
+    </div>
   );
 }
 
@@ -8897,36 +9009,41 @@ function useSyncActions(setNote) {
     syncNow: () => { setNote(""); if (st.phase === "needsAuth" && !needReady()) return; sync.syncManual(); },
   };
 }
+/* 30秒ごとに描き直す（「○分前」を進める） */
+function useMinuteTick() {
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30000); return () => clearInterval(t); }, []);
+}
+/* 上下の矢印（「今すぐ同期」のボタン） */
+function UpDownGlyph({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 20V5" /><path d="M4 9l4-4 4 4" /><path d="M16 4v15" /><path d="M12 15l4 4 4-4" />
+    </svg>
+  );
+}
 
-/* ヘッダーの雲から開く小窓。起動したときにログインが切れていれば、同じ小窓を launch の形で出す（2.17.0〜）。
-   **ログインの画面を出すのは、ここのボタンを押したときだけ。** 使っている途中に勝手に出さない */
-function SyncSheet({ launch, onClose, onOpenBackup }) {
+/* 雲の長押し（まだ連携していないときは、ふつうに押しても）で開く、下からの紙。
+   **ログインの画面を出すのは、ここのボタンを押したときだけ。** 使っている途中に勝手に出さない。
+   起動したときにログインが切れていても、この紙は出さない（3.0.0〜。My手帳 10.6.0 と同じ）。下に短く知らせるだけ */
+function SyncSheet({ onClose, onOpenBackup }) {
   const sync = getGoogleSync();
   const st = useSyncStatus();
   const [closing, close] = useClosing(onClose, 220);
   const [note, setNote] = useState("");
   const act = useSyncActions(setNote);
-  const [, tick] = useState(0);
+  useMinuteTick();
   useEffect(() => { if (sync && st.hasClientId) sync.preload(); }, [sync, st.hasClientId]);
-  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30000); return () => clearInterval(t); }, []);
-  /* 起動時の小窓は、つなぎ直して同期し終えたら、そろった姿を少し見せてから閉じる */
-  const wasBusy = useRef(false);
-  useEffect(() => {
-    if (!launch) return undefined;
-    if (st.phase === "syncing") { wasBusy.current = true; return undefined; }
-    if (wasBusy.current && st.phase === "idle") { const t = setTimeout(close, 1200); return () => clearTimeout(t); }
-    return undefined;
-  }, [launch, st.phase, close]);
   if (!sync) return null;
   const busy = st.phase === "syncing";
   const look = syncLook(st);
 
   let primary = null;
-  if (!st.enabled) primary = <button type="button" onClick={act.connect} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"}>Google連携</button>;
-  else if (st.phase === "needsAuth") primary = <button type="button" onClick={act.login} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"}>ログインして同期</button>;
+  if (!st.enabled) primary = <button type="button" onClick={act.connect} className={BTN_PRIMARY + " w-full btn-h-lg text-[15.5px]"}>Google連携</button>;
+  else if (st.phase === "needsAuth") primary = <button type="button" onClick={act.login} className={BTN_PRIMARY + " w-full btn-h-lg text-[15.5px]"}>ログインして同期</button>;
   else primary = (
-    <button type="button" onClick={act.syncNow} disabled={busy} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
-      <ArrowUpDown size={18} /> 今すぐ同期
+    <button type="button" onClick={act.syncNow} disabled={busy} className={BTN_PRIMARY + " w-full btn-h-lg text-[15.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
+      <UpDownGlyph /> 今すぐ同期
     </button>
   );
 
@@ -8935,30 +9052,29 @@ function SyncSheet({ launch, onClose, onOpenBackup }) {
       style={{ zIndex: 2147482000 }} onClick={close}>
       <BackgroundLock />
       <div className="absolute inset-0 bg-black/45" />
-      <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-2 border-b-0 border-neutral-200 shadow-xl flex flex-col ft-sheet-box "
+      <div className={"relative w-full max-w-md bg-white rounded-t-2xl border-t border-neutral-100 shadow-lg flex flex-col ft-sheet-box "
         + (closing ? "anim-sheet-out" : "anim-sheet")}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-neutral-200 shrink-0">
-          <span className={look.tone}><CloudGlyph mark={look.mark} anim={look.anim} size={24} /></span>
+          <span className={"gs-tone-" + look.tone}><CloudGlyph mark={look.mark} anim={look.anim} size={22} /></span>
           <div className="flex-1 min-w-0">
-            <p className="font-display text-[17px] text-neutral-900 tracking-wide">{launch ? "Googleドライブとつなぎ直す" : "Googleドライブ"}</p>
-            {st.enabled && st.email && <p className="text-neutral-500 truncate" style={{ fontSize: 12 }}>{st.email}</p>}
+            <h3 className="font-display text-[15.5px] font-bold text-neutral-900 truncate">Googleドライブ</h3>
+            {st.enabled && st.email && <p className="text-neutral-500 truncate" style={{ fontSize: 11.5 }}>{st.email}</p>}
           </div>
           <button type="button" onClick={close} aria-label="閉じる"
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={22} /></button>
+            className="w-11 h-11 -mr-2 flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon"><X size={20} /></button>
         </div>
 
         <div className="ft-sheet-body overflow-y-auto px-5 pt-5 pb-2">
           <SyncFlow st={st} />
           <SyncStatusLine st={st} />
-          {note && <p className="text-[12.5px] text-amber-800 mt-2 text-center">{note}</p>}
+          <SyncProgress st={st} />
+          {note && <p className="text-[12.5px] gs-tone-warn mt-2 text-center">{note}</p>}
         </div>
 
         <div className="shrink-0 px-4 pt-3 space-y-2" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
           {primary}
-          {launch ? (
-            <button type="button" onClick={close} className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px]"}>{st.phase === "needsAuth" ? "あとで" : "閉じる"}</button>
-          ) : onOpenBackup ? (
+          {onOpenBackup ? (
             <button type="button" onClick={onOpenBackup}
               className="w-full min-h-[44px] flex items-center justify-center gap-1 rounded-xl text-[13.5px] font-bold text-neutral-500 hover:bg-neutral-50 ft-tap">
               ファイルでの保存・復元<ChevronRight size={16} />
@@ -8970,61 +9086,114 @@ function SyncSheet({ launch, onClose, onOpenBackup }) {
   );
 }
 
-/* バックアップ画面の上に置く、Google連携のカード。図はヘッダーの小窓と同じもの */
+/* バックアップ画面のいちばん上に置く、Googleドライブのカード。図はヘッダーの紙と同じもの */
 function GoogleSyncCard() {
   const sync = getGoogleSync();
   const st = useSyncStatus();
   const [askOff, setAskOff] = useState(false);
   const [note, setNote] = useState("");
   const act = useSyncActions(setNote);
-  const [, tick] = useState(0);
+  useMinuteTick();
   useEffect(() => { if (sync && st.hasClientId) sync.preload(); }, [sync, st.hasClientId]);
-  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30000); return () => clearInterval(t); }, []);
   /* クライアントID（index.html）が無いときは、カードごと出さない */
   if (!sync || !st.hasClientId) return null;
   const busy = st.phase === "syncing";
 
   return (
-    <div data-gsync-card="" className="rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm">
+    <div data-gsync-card="" className="rounded-2xl bg-white card-soft p-4 mb-5">
       <div className="flex items-center gap-2 mb-4">
-        <h3 className="font-display text-[17px] text-neutral-900 shrink-0">Googleドライブ</h3>
-        {st.enabled && <span className="text-neutral-500 truncate min-w-0 ml-auto" style={{ fontSize: 12 }}>{st.email || "アカウント確認中…"}</span>}
+        <p className="text-[13.5px] font-bold text-neutral-900 shrink-0">Googleドライブ</p>
+        {st.enabled && <span className="text-neutral-500 truncate min-w-0 ml-auto" style={{ fontSize: 11.5 }}>{st.email || "アカウント確認中…"}</span>}
       </div>
       <SyncFlow st={st} />
       <SyncStatusLine st={st} />
+      <SyncProgress st={st} />
 
       {!st.enabled && (
-        <button onClick={act.connect} className={BTN_PRIMARY + " w-full mt-4 " + BTN_H + " text-[15.5px]"}>Google連携</button>
+        <button type="button" onClick={act.connect} className={BTN_PRIMARY + " w-full mt-4 btn-h-lg text-[15.5px]"}>Google連携</button>
       )}
 
       {st.enabled && (
         <>
-          <div className="grid grid-cols-2 gap-2 mt-4">
+          <div className="flex gap-2 mt-4">
             {st.phase === "needsAuth" ? (
-              <button onClick={act.login} className={BTN_PRIMARY + " " + BTN_H + " text-[14.5px]"}>ログインして同期</button>
+              <button type="button" onClick={act.login} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>ログインして同期</button>
             ) : (
-              <button onClick={act.syncNow} disabled={busy} className={BTN_PRIMARY + " " + BTN_H + " text-[14.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
-                <ArrowUpDown size={16} /> 今すぐ同期
+              <button type="button" onClick={act.syncNow} disabled={busy} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
+                <UpDownGlyph size={16} /> 今すぐ同期
               </button>
             )}
-            <button
+            <button type="button"
               onClick={() => { if (!askOff) { setAskOff(true); setTimeout(() => setAskOff(false), 4000); return; } setAskOff(false); sync.disconnect(); }}
-              className={BTN_SECONDARY + " " + BTN_H + " text-[14.5px]"}>
+              className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
               {askOff ? "もう一度押すと解除" : "Google連携を解除"}
             </button>
           </div>
-          <label className="flex items-start gap-2 mt-3 text-[13.5px] text-neutral-700 leading-relaxed">
-            <input type="checkbox" className="mt-0.5" checked={st.autoBackup} onChange={(e) => sync.setAutoBackup(e.target.checked)} />
-            <span>1日1回、バックアップファイルも保存（7日分）</span>
-          </label>
+          <RowCard className="mt-3">
+            <SheetRow label="毎日の控えもドライブに" last
+              help="1日1回、バックアップファイルをドライブに残します（7日分）。「データ復元」で戻せます。">
+              <Switch on={st.autoBackup} onChange={(v) => sync.setAutoBackup(v)} label="毎日の控えもドライブに" />
+            </SheetRow>
+          </RowCard>
         </>
       )}
 
-      {note && <p className="text-[12.5px] text-amber-800 mt-2">{note}</p>}
+      {note && <p className="text-[12.5px] gs-tone-warn mt-2">{note}</p>}
     </div>
   );
 }
 
+/* ============================================================
+   設定のような1行（左に名前、右で決める。3.0.0〜。My手帳 10.2.0 の形）
+   **縦を詰めないこと。** 58px ないと、指がねらいを外す。
+   いくつかの行は RowCard（白い角丸の箱）にまとめ、行のあいだに細い線を引く
+   ============================================================ */
+function SheetRow({ label, sub, children, last, help, className }) {
+  return (
+    <div className={"flex items-center gap-2 px-4 py-2 min-h-[58px] " + (last ? "" : "border-b border-neutral-200") + (className ? " " + className : "")}>
+      <span className="min-w-0">
+        <span className="flex items-center gap-1">
+          <span className="text-[15.5px] text-neutral-900 min-w-0 truncate">{label}</span>
+          {help && <HelpTip text={help} label={typeof label === "string" ? label : undefined} />}
+        </span>
+        {sub && <span className="block text-[11.5px] text-neutral-500 truncate">{sub}</span>}
+      </span>
+      <span className="flex-1" />
+      {children}
+    </div>
+  );
+}
+function RowCard({ children, className }) {
+  return <div className={"bg-white rounded-2xl card-soft overflow-hidden " + (className || "")}>{children}</div>;
+}
+/* 見出しの左に、テーマ色の短い棒（.head-bar）。設定やバックアップの区切りに使う */
+function SectionLabel({ children, help, className }) {
+  return (
+    <div className={"flex items-center gap-1 mb-2 " + (className || "")}>
+      <p className="head-bar text-[12.5px] font-bold text-neutral-500">{children}</p>
+      {help && <HelpTip text={help} label={typeof children === "string" ? children : undefined} />}
+    </div>
+  );
+}
+/* 2〜3択をその場で押せるピル（My手帳 の PillTabs）。sm ＝ 行の右に置く小さな形 */
+function PillTabs({ tabs, value, onChange, className = "", sm }) {
+  return (
+    <div className={"ft-pill-track flex rounded-full p-1 " + className}>
+      {tabs.map((t) => {
+        const on = value === t.key;
+        return (
+          <button key={t.key} type="button" onClick={() => onChange(t.key)} aria-pressed={on}
+            style={{ minHeight: sm ? 36 : 42 }}
+            className={"flex-1 rounded-full font-bold flex items-center justify-center gap-1.5 ft-tap whitespace-nowrap "
+              + (sm ? "text-[13.5px] " : "text-[14.5px] ")
+              + (on ? "bg-white text-th-900 card-soft" : "text-th-800/60")}>
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /* 書き出すファイルの中身。
    **読める文と復元用データを、1つのファイルにまとめること。**
@@ -9271,6 +9440,44 @@ function CropSheet({ file, aspect = 1, round, title = "位置を決める", onCa
   );
 }
 
+/* テーマカラーを選ぶ（3.0.0〜 My手帳 の ColorSelect と同じ形）。
+   行の右に「いまの色の丸＋名前」の小さな札を置き、押すと下から12色の紙（4列×3段）が出る。
+   **画面に12色の大きなボタンを並べないこと。** 設定の画面が縦に長くなる */
+function ThemeSelect({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const cur = themeOf(value);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} style={{ width: 120 }}
+        className="min-h-[46px] px-3 rounded-xl border border-neutral-200 bg-white flex items-center gap-2 shrink-0 ft-tap ft-tap-card">
+        <span className="w-7 h-7 rounded-full shrink-0" style={{ background: cur.swatch }} />
+        <span className="text-[13.5px] text-neutral-600 flex-1 min-w-0 truncate text-left">{cur.label}</span>
+      </button>
+      {open && (
+        <PickSheet title="テーマカラー" onClose={() => setOpen(false)}>
+          {(close) => (
+            <div className="px-4 pt-4 pb-2 ft-csel-grid">
+              {THEMES.map((t) => {
+                const on = t.key === cur.key;
+                return (
+                  <button key={t.key} type="button" aria-label={t.label} aria-pressed={on}
+                    onClick={() => { onChange(t.key); close(); }}
+                    className={"rounded-2xl border-2 px-1 py-2.5 flex flex-col items-center gap-1.5 ft-tap ft-tap-card " + (on ? "border-neutral-800" : "border-neutral-200")}>
+                    <span className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: t.swatch }}>
+                      {on && <Check size={17} className="text-white" strokeWidth={3} />}
+                    </span>
+                    <span className={"text-[11.5px] truncate w-full text-center " + (on ? "font-bold text-neutral-900" : "text-neutral-600")}>{t.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </PickSheet>
+      )}
+    </>
+  );
+}
+
 function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, onSavePrefs, onClose, typeDesc, onSaveTypeDesc, headerBg, onSaveHeaderBg , zIndex}) {
   const [closing, close] = useClosing(onClose, FT_EXIT_RIGHT_MS);
   /* 左端から払って戻るときは待たない（指について動く分で、もう退場している） */
@@ -9399,36 +9606,41 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
     <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
       <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
-        <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
-          <button onClick={handleCloseAttempt} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</button>
-          <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">画面のカスタマイズ</h2>
-          <MenuButton guard={menuGuard} />
-        </div>
+        <OverlayHeader title={"画面のカスタマイズ"} onBack={handleCloseAttempt} menuGuard={menuGuard} />
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {msg && <div className={"rounded-xl border-2 px-3.5 py-3 mb-4 text-[13.5px] font-bold " + msgStyle}>{msg.text}</div>}
 
-          <h3 className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">テーマカラー</h3>
-          <div className="grid grid-cols-3 gap-2 mb-5">
-            {THEMES.map((t) => {
-              const on = prefDraft.theme === t.key;
-              return (
-                <button key={t.key} onClick={() => setPrefDraft({ ...prefDraft, theme: t.key })}
-                  className={"rounded-xl border-2 p-2.5 flex flex-col items-center gap-1.5 ft-tap " + (on ? "border-neutral-800 bg-white" : "border-neutral-200 bg-white")}>
-                  <span className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: t.swatch }}>
-                    {on && <Check size={16} className="text-white ft-check-in" strokeWidth={3} />}
-                  </span>
-                  <span className={"text-[12.5px] " + (on ? "font-bold text-neutral-900" : "text-neutral-600")}>{t.label}</span>
-                </button>
-              );
-            })}
-          </div>
+          {/* 3.0.0〜 My手帳 の「表示設定」と同じ組み方：区切りの見出し（テーマ色の短い棒）＋白い箱に1行ずつ。
+              **どの設定も「左に名前・右で決める」1行にすること。** 小見出しの下に大きなボタンを並べると、
+              画面が縦に長くなり、何を決める行なのかも分かりにくい（2.22 まで） */}
+          <SectionLabel>色と表示</SectionLabel>
+          <RowCard className="mb-5">
+            <SheetRow label="テーマカラー">
+              <ThemeSelect value={prefDraft.theme} onChange={(v) => setPrefDraft({ ...prefDraft, theme: v })} />
+            </SheetRow>
+            <SheetRow label="文字の大きさ">
+              <PillTabs sm className="ft-pill-s3 shrink-0" tabs={FONT_SIZES} value={prefDraft.fontSize || "s"}
+                onChange={(v) => setPrefDraft({ ...prefDraft, fontSize: v })} />
+            </SheetRow>
+            <SheetRow label="動きの演出" help="切ると、画面が切り替わるときの動きが止まります。">
+              <Switch on={prefDraft.motion !== false} onChange={(v) => setPrefDraft({ ...prefDraft, motion: v })} label="動きの演出" />
+            </SheetRow>
+            <SheetRow label="イラスト" last help={`画面ごとに絵と「ひとこと」を変えられます（${ART_MAX}枚まで）。下の「イラスト」で選びます。`}>
+              <Switch on={prefDraft.showMascots !== false} onChange={(v) => setPrefDraft({ ...prefDraft, showMascots: v })} label="イラストを表示する" />
+            </SheetRow>
+          </RowCard>
 
-          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
-            ヘッダーの背景
-            <HelpTip label="ヘッダーの背景" text="画面のいちばん上の帯に、好きな写真を敷けます。" />
-          </h3>
-          <div className="rounded-2xl border border-neutral-200 bg-white p-3 mb-6">
+          <SectionLabel help="「探す」やブックマークを開いたときの並び順です。">はじめの並び順</SectionLabel>
+          <RowCard className="mb-5">
+            <SheetRow label="並び順" last>
+              <PillTabs sm className="ft-pill-s3 shrink-0" tabs={SORT_MODES.map((m) => ({ key: m.key, label: m.label.replace("順", "") }))}
+                value={prefDraft.sortMode || "book"} onChange={(v) => setPrefDraft({ ...prefDraft, sortMode: v })} />
+            </SheetRow>
+          </RowCard>
+
+          <SectionLabel help="画面のいちばん上の帯に、好きな写真を敷けます。">ヘッダーの背景</SectionLabel>
+          <div className="rounded-2xl card-soft bg-white p-3 mb-5">
             {/* 実際の見えかたに近づけて、黒い膜をかけた状態で見せる */}
             {/* **高さを決め打ちしないこと。** 帯と同じ形（headAspect）にしておくと、切り抜いた範囲がそのまま見える */}
             <div className="relative rounded-xl overflow-hidden border border-neutral-200 bg-neutral-100 flex items-center justify-center mb-2.5"
@@ -9465,79 +9677,14 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
             </div>
           </div>
 
-          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
-            並び順のはじめの選び方
-            <HelpTip label="並び順" text="「探す」やブックマークを開いたときの並び順です。" />
-          </h3>
-          <div className="flex gap-1.5 mb-6">
-            {SORT_MODES.map((m) => {
-              const on = (prefDraft.sortMode || "book") === m.key;
-              return (
-                <button key={m.key} type="button" onClick={() => setPrefDraft({ ...prefDraft, sortMode: m.key })}
-                  aria-pressed={on}
-                  className={"flex-1 " + BTN_H + " rounded-xl border-2 text-[13.5px] font-bold ft-tap "
-                    + (on ? "border-th-800 bg-th-800 text-white" : "border-neutral-200 bg-white text-neutral-600")}>
-                  {m.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
-            文字の大きさ
-            <HelpTip label="文字の大きさ" text="画面の文字をまとめて大きくできます。" />
-          </h3>
-          <div className="flex gap-1.5 mb-6">
-            {FONT_SIZES.map((f) => {
-              const on = (prefDraft.fontSize || "s") === f.key;
-              return (
-                <button key={f.key} type="button" onClick={() => setPrefDraft({ ...prefDraft, fontSize: f.key })}
-                  aria-pressed={on}
-                  className={"flex-1 " + BTN_H + " rounded-xl border-2 font-bold ft-tap "
-                    + (on ? "border-th-800 bg-th-800 text-white" : "border-neutral-200 bg-white text-neutral-600")}>
-                  {/* 見本になるよう、それぞれの大きさで書いてある */}
-                  <span style={{ fontSize: f.key === "s" ? 14.5 : f.key === "m" ? 16.5 : 19 }}>{f.label}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
-            動きの演出
-            <HelpTip label="動きの演出" text="切ると、画面が切り替わるときの動きが止まります。" />
-          </h3>
-          <label className="flex items-center gap-2.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 mb-1.5 cursor-pointer select-none">
-            <input type="checkbox" checked={prefDraft.motion !== false}
-              onChange={(e) => setPrefDraft({ ...prefDraft, motion: e.target.checked })}
-              className="w-5 h-5 accent-th-800" />
-            <span className="text-[14.5px] font-bold text-neutral-800 flex-1">押したときの動きをつける</span>
-          </label>
-          <div className="mb-6" />
-
-          {/* 「記録の種類」の名前と説明を変える欄は、依頼により取り除いた。
-              いま保存されている名前（typeDesc）はそのまま持ち続け、
-              バックアップにも入れ続ける。消してしまうと、
-              以前に名前を変えていた人の設定が黙って初期値に戻るため */}
-
-          <h3 className="flex items-center gap-1 text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase mb-2">
-            イラスト
-            <HelpTip label="イラスト" text={`画面ごとに絵と「ひとこと」を変えられます（${ART_MAX}枚まで）。`} />
-          </h3>
-          <label className="flex items-center gap-2.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 mb-3 cursor-pointer select-none">
-            <input type="checkbox" checked={prefDraft.showMascots !== false}
-              onChange={(e) => setPrefDraft({ ...prefDraft, showMascots: e.target.checked })}
-              className="w-5 h-5 accent-th-800" />
-            <span className="text-[14.5px] font-bold text-neutral-800 flex-1">イラストを表示する</span>
-          </label>
-
-
+          {prefDraft.showMascots !== false && <SectionLabel>イラスト</SectionLabel>}
           <div className={"space-y-2.5 mb-6 " + (prefDraft.showMascots === false ? "hidden" : "")}>
             {MASCOT_GROUPS.map((g) => {
               const mine = draft.filter((a) => a.group === g.key);
               const spots = MASCOT_SPOTS.filter((sp) => sp.group === g.key);
               const open = openGroup === g.key;
               return (
-                <div key={g.key} className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
+                <div key={g.key} className="rounded-2xl card-soft bg-white overflow-hidden">
                   <button
                     onClick={() => setOpenGroup(open ? null : g.key)}
                     aria-expanded={open}
@@ -9653,10 +9800,11 @@ function ArtworkScreen({ artworks, onChange, captions, onSaveCaptions, prefs, on
 
         </div>
 
-        <div className="shrink-0 flex gap-2.5 border-t border-neutral-200 bg-white px-5 py-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 16px)" }}>
-          <TapButton onClick={handleCloseAttempt} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>キャンセル</TapButton>
-          <button onClick={() => save()} disabled={saving} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
-            {saving ? "保存中…" : "保存"}
+        {/* 下の帯（My手帳 と同じ）：左に小さめの「キャンセル」、右に広い「保存」。変えていないあいだは「保存」を押せない */}
+        <div className="shrink-0 flex gap-2 border-t border-neutral-200 bg-white px-4 pt-3" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+          <TapButton onClick={handleCloseAttempt} className={BTN_SECONDARY + " btn-h-lg px-5 text-[15.5px]"}>キャンセル</TapButton>
+          <button type="button" onClick={() => save()} disabled={saving || !dirty} className={BTN_PRIMARY + " flex-1 btn-h-lg text-[15.5px]"}>
+            {saving ? "保存中…" : <><Check size={19} /> 保存</>}
           </button>
         </div>
       </div>
@@ -9707,11 +9855,7 @@ function BookmarkScreen({ records, onClose, onOpenDetail, defaultSort , zIndex})
     <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
     <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
       <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ブックマーク</h2>
-        <MenuButton />
-      </div>
+      <OverlayHeader title={"ブックマーク"} onBack={close} />
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         <div className="flex items-center gap-2 mb-3">
           <p className="text-[12.5px] font-bold tracking-wider text-th-800/70 uppercase">{list.length}件</p>
@@ -9811,11 +9955,7 @@ function TagManageScreen({ tags, records, onAdd, onRename, onDelete, onReorder, 
     <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
     <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
       <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">タグの整理</h2>
-        <MenuButton />
-      </div>
+      <OverlayHeader title={"タグの整理"} onBack={close} />
 
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         <div className="flex gap-2 mb-5">
@@ -9957,6 +10097,7 @@ const HELP_SECTIONS = [
       ["保存しておく理由", "記録はこの端末の中だけにあります。機種変更やアプリを消したときは、保存したデータから戻せます。"],
       ["ファイルか文字で", "「データを保存」でファイルに、「文字でコピー」でメモアプリなどに残せます。記録・設定・タグ・写真がまとめて入ります。"],
       ["1件だけ渡す", "記録を見る画面の右上から、その1件をファイルか文字で渡せます。受け取った側の記録は消えません。"],
+      ["Googleドライブの雲", "Google連携をすると、画面の右上に雲が出ます。押すとその場で同期します（同期中は雲の中の矢印が点滅します）。長押しすると、送った・受け取った件数や連携の解除が見られます。"],
     ],
   },
   {
@@ -9978,11 +10119,7 @@ function HelpScreen({ onClose , zIndex}) {
     <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
     <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
       <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">ヘルプ</h2>
-        <MenuButton />
-      </div>
+      <OverlayHeader title={"ヘルプ"} onBack={close} />
 
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         <div className="space-y-2.5 ft-seq">
@@ -10036,11 +10173,7 @@ function GardenScreen({ garden, records, onClose, onChangeFruit , zIndex}) {
     <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
     <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
       <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-      <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-        <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-        <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">収穫した実</h2>
-        <MenuButton />
-      </div>
+      <OverlayHeader title={"収穫した実"} onBack={close} />
 
       <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full">
         {cycle && (
@@ -10331,32 +10464,26 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
     <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
       <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
       <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
-        <div className="ft-hdr flex items-center gap-2 px-4 pb-4 border-b border-neutral-200 shrink-0 bg-white" style={SAFE_TOP(16)}>
-          <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-          <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">バックアップ</h2>
-          <MenuButton />
-        </div>
+        <OverlayHeader title={"バックアップ"} onBack={close} />
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {/* **中身の幅に上限を置くこと（2.17.0〜）。** タブレットで画面いっぱいに広がり、ボタンが極端に横長になっていた */}
-          <div className="max-w-lg mx-auto">
+          <div className="gs-narrow">
           <GoogleSyncCard />
-          <div className="rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm">
-            <div className="flex items-baseline gap-2">
-              <span className="font-display text-[26px] text-neutral-900">{records.length}</span>
-              <span className="text-[13.5px] font-bold text-neutral-600">件の記録</span>
-              {(artworks || []).length > 0 && (
-                <span className="text-[13.5px] font-bold text-neutral-500">＋ イラスト{artworks.length}枚</span>
-              )}
-              {photoIds.length > 0 && (
-                <span className="text-[13.5px] font-bold text-neutral-500">＋ 写真{photoIds.length}枚</span>
-              )}
-              <span className="text-[12.5px] text-neutral-500 ml-auto">{photosReady ? `約${sizeKb}KB` : "写真を読み込み中"}</span>
+          {/* 3.0.0〜「いまの記録」の箱は My手帳 と同じ形（件数・写真・ファイルの大きさ・前回の書き出し） */}
+          <div className="rounded-2xl card-soft bg-white p-4 mb-5">
+            <div className="flex items-center gap-1 mb-2">
+              <p className="text-[13.5px] font-bold text-neutral-900">いまの記録</p>
+              <HelpTip label="バックアップ" text="記録は、この端末の中だけにあります。履歴を消したり端末を替えたりすると失われます。書き出したファイルは「データ復元」で元に戻せます。" />
+            </div>
+            <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-[12.5px] text-neutral-500 tabular-nums">
+              <span>記録 {records.length}件</span>
+              {(artworks || []).length > 0 && <span>イラスト {artworks.length}枚</span>}
+              <span>写真 {photoIds.length}枚</span>
+              <span>{photosReady ? `ファイル 約${sizeKb}KB` : "ファイル 計算中…"}</span>
             </div>
             {prefs && prefs.lastBackup && (
-              <div className="mt-2">
-                <p className="text-[12.5px] text-neutral-400">前回 {fmtJpDate(prefs.lastBackup)}</p>
-              </div>
+              <p className="text-[12.5px] text-neutral-400 mt-1.5">前回の書き出し {fmtJpDate(prefs.lastBackup)}</p>
             )}
           </div>
 
@@ -10364,21 +10491,21 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
               あちこちに出すと、ただの飾りになって読み飛ばされる。
               Googleドライブとつないでいるときは出さない（unsavedNow が 0。ドライブに入っていれば控えがあるのと同じ。2.17.0〜） */}
           {unsaved > 0 && (
-            <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 mb-4">
+            <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 mb-5">
               <p className="text-[13.5px] font-bold text-amber-800">
                 {prefs && prefs.lastBackup ? `前回の書き出しのあとに、${unsaved}件の書きかえがあります` : "まだ一度も書き出していません"}
               </p>
             </div>
           )}
 
+          {/* ボタンは 2.22 までの並びのまま（持ち主の指示。3.0.0 で「書き出す」「読み込む」に分けて4段にしたのを戻した）：
+              「データを保存」「データ復元」を大きく、文字でのやりとり2つは横に並べる。
+              高さも 2.22 までと同じ 40px（持ち主の指示。.btn-h は 3.0.0 で 48px にしたので、ここでは使わない） */}
           <div className="space-y-2.5 mb-4">
-            <div className="flex justify-end">
-              <HelpTip label="バックアップ" text="記録と設定をまとめて保存します。「データ復元」で元に戻せます。" />
-            </div>
-            <button onClick={saveData} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[15.5px]"}>
+            <button type="button" onClick={saveData} className={BTN_PRIMARY + " w-full min-h-[40px] text-[15.5px]"}>
               <Download size={18} /> データを保存
             </button>
-            <button onClick={() => fileInputRef.current && fileInputRef.current.click()} className={BTN_SECONDARY + " w-full " + BTN_H + " text-[15.5px]"}>
+            <button type="button" onClick={() => fileInputRef.current && fileInputRef.current.click()} className={BTN_SECONDARY + " w-full min-h-[40px] text-[15.5px]"}>
               <Upload size={18} /> データ復元
             </button>
             {/* 種類で絞り込まない（Androidで選べなくなるため） */}
@@ -10387,10 +10514,10 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
             {/* ファイルの行方が分かりにくい端末のために、文字でのやりとりも用意する。
                 メモ帳やチャットに貼っておけば、そこから戻せる */}
             <div className="flex gap-2.5">
-              <button onClick={copyWholeBackup} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
+              <button type="button" onClick={copyWholeBackup} className={BTN_SECONDARY + " flex-1 min-h-[40px] text-[14.5px]"}>
                 <Copy size={16} /> 文字でコピー
               </button>
-              <button onClick={() => setPasteOpen(true)} className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
+              <button type="button" onClick={() => setPasteOpen(true)} className={BTN_SECONDARY + " flex-1 min-h-[40px] text-[14.5px]"}>
                 <ClipboardPaste size={16} /> 文字から復元
               </button>
             </div>
@@ -10904,14 +11031,12 @@ function FolderDetail({ folder, records, knownTags, defaultSort, onClose, onChan
     <OverlayScreen from="right" closing={closing}>
       <div ref={screenRef} className="absolute inset-0 ft-page flex flex-col">
         <div ref={stripRef} data-ft-edge="" className="absolute left-0 top-0 bottom-0 w-9 z-10" style={{ touchAction: "none" }} />
-        <div className="ft-hdr bg-white border-b border-neutral-200 px-4 pb-3 flex items-center gap-2 shrink-0" style={SAFE_TOP(12)}>
-          <TapButton onClick={close} className="min-h-[52px] pl-2 pr-3.5 flex items-center gap-1 rounded-xl text-th-800 font-bold text-[15.5px] hover:bg-neutral-100 shrink-0"><ChevronLeft size={22} />戻る</TapButton>
-          <h2 className="font-display text-[20px] text-neutral-900 truncate flex-1 tracking-wide">{folder.name || "（名前なし）"}</h2>
+        <OverlayHeader title={folder.name || "（名前なし）"} onBack={close} right={
+          <>
           <button type="button" onClick={() => setMenuOpen(true)} aria-label="フォルダの設定"
-            className="w-11 h-11 flex items-center justify-center rounded-xl text-neutral-500 hover:bg-neutral-100 ft-tap ft-tap-icon shrink-0"><Settings size={21} /></button>
-          {/* 三本線は、ほかの重なる画面と同じく右端に置く（MENU_BTN の大きさ） */}
-          <MenuButton />
-        </div>
+            className="ft-hbtn flex items-center justify-center rounded-xl text-neutral-600 hover:bg-neutral-100 ft-tap ft-tap-icon shrink-0"><Settings size={23} /></button>
+          </>
+        } />
         <div className="flex-1 overflow-y-auto px-5 py-5 max-w-2xl mx-auto w-full" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 96px)" }}>
           <div className="flex gap-2 mb-4">
             <button type="button" onClick={() => setSetup("auto")}
@@ -11397,7 +11522,7 @@ function AppMain() {
 
   /* テーマカラーを画面全体へ反映する */
   useEffect(() => {
-    const theme = THEMES.find((t) => t.key === prefs.theme) || THEMES[0];
+    const theme = themeOf(prefs.theme);
     const root = document.documentElement;
     Object.entries(theme.vars).forEach(([k, v]) => root.style.setProperty(`--th-${k}`, v));
   }, [prefs]);
@@ -11856,8 +11981,8 @@ function AppMain() {
     const g = getGoogleSync();
     if (g) g.notifyChange();
   }, [loaded, records, folders, artworks, garden, tagMaster, prefs, captions, typeDesc, headerBg]);
-  /* ヘッダーの雲から開く小窓。"open"＝雲を押した、"launch"＝起動したときにログインが切れていた（2.17.0〜）。
-     **起動の小窓は、起動の画面（スプラッシュ）が消えてから出すこと。** 消える前に出すと、覆いの下に隠れたまま開く */
+  /* 雲の長押し（未連携なら押す）で開く紙（3.0.0〜。起動したときの "launch" の紙はやめた）。
+     **起動したときの知らせは、起動の画面（スプラッシュ）が消えてから出すこと。** 消える前に出すと、覆いの下に隠れて見えない */
   const [syncSheet, setSyncSheet] = useState(null);
   const [splashGone, setSplashGone] = useState(false);
   useEffect(() => {
@@ -11872,8 +11997,23 @@ function AppMain() {
     look();
     return () => clearTimeout(t);
   }, [loaded, splashGone]);
+  /* 起動したとき（と長く離れて戻ったとき）にログインが切れていても、**紙を出さないこと（3.0.0〜。My手帳 10.6.0 と同じ）。**
+     開いたらすぐ使えるようにする。雲が「！」になり、押せばその場でログインして同期する（SyncHeaderButton）。
+     ログインが切れていなければ、同期は前から裏で進んでいる（雲の中の矢印が点滅する）。
+     Google の通行証（トークン）は1時間ほどで切れ、取り直すには指の操作が要る（ウェブのアプリの決まり）ので、
+     ログインそのものを指なしで済ませることはできない。代わりに、下に短く知らせる */
+  const [syncToast, setSyncToast] = useState(null);
+  const syncToastT = useRef(null);
+  useEffect(() => () => clearTimeout(syncToastT.current), []);
   useEffect(() => {
-    if (splashGone && syncSt.enabled && syncSt.askLogin) setSyncSheet((p) => p || "launch");
+    if (!(splashGone && syncSt.enabled && syncSt.askLogin)) return;
+    const g = getGoogleSync();
+    if (g) g.dismissLogin();
+    /* **消す時計を、この effect の片づけで止めないこと。** dismissLogin で askLogin が下りると、
+       この effect の片づけが走り、知らせが出たまま消えなくなる */
+    setSyncToast("雲を押すと同期します");
+    clearTimeout(syncToastT.current);
+    syncToastT.current = setTimeout(() => setSyncToast(null), 3200);
   }, [splashGone, syncSt.enabled, syncSt.askLogin]);
   const syncUi = useMemo(() => ({ open: () => setSyncSheet("open") }), []);
   const closeSyncSheet = useCallback(() => {
@@ -12056,7 +12196,8 @@ function AppMain() {
         .ft-hasbg .ft-hdr h1,
         .ft-hasbg .ft-hdr h2,
         .ft-hasbg .ft-hdr [class*="text-neutral-"]:not(.ft-onbg-keep),
-        .ft-hasbg .ft-hdr [class*="text-th-"]:not(.ft-onbg-keep) {
+        .ft-hasbg .ft-hdr [class*="text-th-"]:not(.ft-onbg-keep),
+        .ft-hasbg .ft-hdr .gs-tone-ok, .ft-hasbg .ft-hdr .gs-tone-mute {
           color: #FFFFFF;
         }
         /* 見出しと印は、写真の明るいところでも沈まないよう、うっすら影を落とす */
@@ -12080,7 +12221,9 @@ function AppMain() {
         .font-semibold { font-weight: 600; }
         .font-sans, body { font-family: 'Noto Sans JP', sans-serif; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        .btn-h { min-height: 40px; }
+        /* ボタンの高さ（3.0.0〜 My手帳 に合わせて大きくした。指でねらいやすく） */
+        .btn-h { min-height: 48px; }
+        .btn-h-lg { min-height: 54px; }
         /* 1行ぶんの入力欄の高さ。ひと組で並ぶ「名前」と「説明」のように、
            1行の入力欄（input）と書き足せる欄（textarea）の高さをそろえるために使う */
         .ft-h-field { min-height: 48px; }
@@ -12175,19 +12318,81 @@ function AppMain() {
         .anim-fade-out  { animation: ft-fade-out 0.2s ease-out forwards; }
         .anim-pop       { animation: ft-pop 0.26s cubic-bezier(0.34,1.4,0.5,1) backwards; }
         .spin           { animation: ft-spin 0.75s linear infinite; }
-        /* 同期の図の矢印（2.17.0〜）。線は currentColor、先の三角は ::after。
-           ft-flow-run ＝ やりとり中（点線が矢印の向きへ流れる）、ft-flow-stop ＝ 止まっている（灰色の点線・動かない） */
-        .ft-flow { position: relative; height: 3px; border-radius: 3px; background: currentColor; margin: 5px 7px 3px; }
-        .ft-flow::after { content: ""; position: absolute; top: 50%; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; transform: translateY(-50%); }
-        .ft-flow-r::after { right: -8px; border-left: 9px solid currentColor; }
-        .ft-flow-l::after { left: -8px; border-right: 9px solid currentColor; }
-        .ft-flow-run, .ft-flow-stop { background: repeating-linear-gradient(90deg, currentColor 0 7px, transparent 7px 12px); background-size: 12px 3px; }
-        .ft-flow-run.ft-flow-r { animation: ft-flow-r 0.55s linear infinite; }
-        .ft-flow-run.ft-flow-l { animation: ft-flow-l 0.55s linear infinite; }
-        @keyframes ft-flow-r { from { background-position: 0 0; } to { background-position: 12px 0; } }
-        @keyframes ft-flow-l { from { background-position: 12px 0; } to { background-position: 0 0; } }
-        .ft-sync-bob { animation: ft-sync-bob 1s ease-in-out infinite; transform-origin: center; }
-        @keyframes ft-sync-bob { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+        /* ===== Googleドライブの同期（2.17.0〜。3.0.0 で My手帳 10.19.0 の形にそろえた）。色はテーマ（--th-*）と、状態の色（琥珀・赤）だけ ===== */
+        .gs-narrow { max-width: 32rem; margin-left: auto; margin-right: auto; }
+        .gs-tone-ok { color: var(--th-800); }
+        .gs-tone-warn { color: #B45309; }
+        .gs-tone-err { color: #BE123C; }
+        .gs-tone-mute { color: var(--tx-5); }
+        .gs-badge { position: absolute; top: -7px; right: -10px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9999px;
+          background: #F59E0B; color: #fff; display: flex; align-items: center; justify-content: center; line-height: 1;
+          font-size: 11px; font-weight: 700; box-shadow: 0 0 0 2px #fff; }
+        .gs-dot { position: absolute; top: -3px; right: -4px; width: 12px; height: 12px; border-radius: 9999px; box-shadow: 0 0 0 2px #fff; }
+        .gs-dot-warn { background: #F59E0B; }
+        .gs-dot-err { background: #E11D48; }
+        .gs-node { width: 52px; height: 52px; border-radius: 16px; display: flex; align-items: center; justify-content: center;
+          background: var(--th-50); border: 1px solid var(--th-200); color: var(--th-800); }
+        .gs-chip { border-radius: 9999px; padding: 0 6px; line-height: 17px; background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E; }
+        /* 矢印。線は currentColor、先の三角は ::after。
+           gs-arrow-run ＝ やりとり中（点線が矢印の向きへ流れる）、gs-arrow-stop ＝ 止まっている（灰色の点線・動かない） */
+        .gs-arrow { color: var(--th-700); }
+        .gs-arrow-wait { color: #D97706; }
+        .gs-arrow-stop { color: var(--tx-6); }
+        .gs-arrow-label { color: var(--th-900); }
+        .gs-arrow-wait .gs-arrow-label { color: #B45309; }
+        .gs-arrow-stop .gs-arrow-label { color: var(--tx-5); }
+        .gs-flow { position: relative; height: 3px; border-radius: 3px; background: currentColor; margin: 5px 7px 3px; }
+        .gs-flow::after { content: ""; position: absolute; top: 50%; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; transform: translateY(-50%); }
+        .gs-flow-r::after { right: -8px; border-left: 9px solid currentColor; }
+        .gs-flow-l::after { left: -8px; border-right: 9px solid currentColor; }
+        .gs-arrow-run .gs-flow, .gs-arrow-stop .gs-flow { background: repeating-linear-gradient(90deg, currentColor 0 7px, transparent 7px 12px); background-size: 12px 3px; }
+        .gs-arrow-run .gs-flow-r { animation: gs-flow-r 0.55s linear infinite; }
+        .gs-arrow-run .gs-flow-l { animation: gs-flow-l 0.55s linear infinite; }
+        @keyframes gs-flow-r { from { background-position: 0 0; } to { background-position: 12px 0; } }
+        @keyframes gs-flow-l { from { background-position: 12px 0; } to { background-position: 0 0; } }
+        /* ヘッダーの雲：同期中は、雲はそのまま・中の矢印だけ点滅（矢印の絵を包む span ごと。svg の中の動きは iPhone で描き直されないことがある）。
+           **keyframes の 0% と 100% はふだんの姿にすること。** 動きを止める設定では1回だけ一瞬で回すので、終わりの姿が残る */
+        .gs-pulse { animation: gs-pulse 1.1s ease-in-out infinite; will-change: opacity; }
+        .gs-arrows { position: absolute; inset: 0; display: block; }
+        @keyframes gs-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.12; } }
+        /* 紙の見出し・図の中の小さな雲は、svg の中の動き */
+        .gs-cloud-blink { animation: gs-cloud-blink 1.1s ease-in-out infinite; }
+        @keyframes gs-cloud-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.22; } }
+        .gs-cloud-glow { opacity: 0; animation: gs-cloud-glow 1.1s ease-in-out infinite; }
+        @keyframes gs-cloud-glow { 0%, 100% { opacity: 0; } 50% { opacity: 0.42; } }
+        .gs-cloud-live { animation: gs-cloud-breathe 1.1s ease-in-out infinite; transform-origin: 50% 60%; }
+        @keyframes gs-cloud-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+        .gs-arr-up, .gs-arr-dn { animation: gs-arr-up 1.1s ease-in-out infinite; }
+        .gs-arr-dn { animation-name: gs-arr-dn; animation-delay: -0.55s; }
+        @keyframes gs-arr-up { 0%, 100% { transform: translateY(0); opacity: 1; } 45% { transform: translateY(-1.6px); opacity: 1; } 50% { transform: translateY(-1.6px); opacity: 0; } 55% { transform: translateY(1.6px); opacity: 0; } }
+        @keyframes gs-arr-dn { 0%, 100% { transform: translateY(0); opacity: 1; } 45% { transform: translateY(1.6px); opacity: 1; } 50% { transform: translateY(1.6px); opacity: 0; } 55% { transform: translateY(-1.6px); opacity: 0; } }
+        /* 同期の進み具合（紙・カードの中。同期中だけ） */
+        .gs-prog { margin: 14px 0 4px; }
+        .gs-prog-bar { height: 8px; border-radius: 4px; background: #E7EBEE; overflow: hidden; }
+        .gs-prog-bar i { display: block; height: 100%; border-radius: 4px; background: var(--th-800); transition: width .35s ease; }
+        .gs-prog-t { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font-size: 12.5px; color: var(--tx-3); }
+        .gs-prog-t b { color: var(--tx-1); }
+
+        /* ===== 見出し（3.0.0〜。My手帳 の HeaderTail / OverlayHeader と同じ決まり） =====
+           ボタンはどれも 48px（.ft-hbtn）。右はしは .ft-htail（右の余白 6px）。題はまん中（.ft-htitle、左右の幅は部品が決める） */
+        /* app.css に無い小さな決まり（3.0.0 で使いはじめたもの） */
+        .gap-x-3 { column-gap: 12px; } .gap-y-1 { row-gap: 4px; }
+        .shadow-lg { box-shadow: 0 10px 15px -3px rgb(0 0 0 / .1), 0 4px 6px -4px rgb(0 0 0 / .1); }
+        .ft-hbtn { min-width: 48px; min-height: 48px; }
+        .ft-htail { position: relative; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 2px; margin-right: 6px; min-width: 48px; }
+        .ft-htitle, .ft-hdr > .ft-htitle { position: absolute; top: 50%; transform: translateY(-50%); margin: 0; }
+        .ft-ohead { min-height: 0; }
+        /* 札・箱のふち。**影を落とさないこと。** 影が並ぶと、それだけで画面が重く見える。面ではなく、細い線と余白で組む */
+        .card-soft { box-shadow: none; border: 1px solid #E6E6E9; }
+        /* 見出しの左に添える、テーマ色の短い棒 */
+        .head-bar::before { content: ""; display: inline-block; width: 3px; height: 13px; border-radius: 2px;
+          background: var(--th-800); margin-right: 8px; vertical-align: -2px; }
+        /* その場で押せるピル（PillTabs）。下じきはテーマのいちばん淡い色。幅は選択肢の数で決める */
+        .ft-pill-track { background: var(--th-50); }
+        .ft-pill-s2 { width: 156px; }
+        .ft-pill-s3 { width: 186px; }
+        /* テーマカラーの紙の色の丸（4列×3段） */
+        .ft-csel-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
         .no-anim, .no-anim * { animation: none !important; }
 
         /* ============================================================
@@ -12489,14 +12694,15 @@ function AppMain() {
            ・カスタマイズ画面の「動きの演出」を切ったとき（.ft-still）
            止めるのは動きだけ。読み込み中のくるくる（.spin）は残す
            ============================================================ */
-        .ft-still *:not(.spin), .ft-still *:not(.spin)::before, .ft-still *:not(.spin)::after {
+        /* 同期中の点滅（.gs-pulse / .gs-cloud-blink / .gs-cloud-glow）は「知らせ」なので、くるくると同じく止めない（3.0.0〜） */
+        .ft-still *:not(.spin):not(.gs-pulse):not(.gs-cloud-blink):not(.gs-cloud-glow), .ft-still *:not(.spin)::before, .ft-still *:not(.spin)::after {
           animation-duration: 0.01ms !important;
           animation-iteration-count: 1 !important;
           transition-duration: 0.01ms !important;
         }
         .ft-still .ft-sparkle { animation: none !important; opacity: 1; transform: none; }
         @media (prefers-reduced-motion: reduce) {
-          .ft-root *:not(.spin), .ft-root *:not(.spin)::before, .ft-root *:not(.spin)::after {
+          .ft-root *:not(.spin):not(.gs-pulse):not(.gs-cloud-blink):not(.gs-cloud-glow), .ft-root *:not(.spin)::before, .ft-root *:not(.spin)::after {
             animation-duration: 0.01ms !important;
             animation-iteration-count: 1 !important;
             transition-duration: 0.01ms !important;
@@ -12505,15 +12711,15 @@ function AppMain() {
         }
 
         :root{
-          --th-50:#F0FDFA; --th-100:#CCFBF1; --th-200:#99F6E4; --th-300:#5EEAD4;
-          --th-600:#0D9488; --th-700:#0F766E; --th-800:#115E59; --th-900:#134E4A;
+          --th-50:#E6F9F3; --th-100:#CDF0E6; --th-200:#9CE1CC; --th-300:#63CDAC;
+          --th-600:#39A986; --th-700:#2D9374; --th-800:#26795F; --th-900:#1E604B;
         }
 
         /* テーマカラー。--th-* を差し替えると配色が一括で変わる */
-        /* 画面の下地。**ここはテーマ色にしないこと。**
+        /* 画面の下地（3.0.0〜 白。My手帳 2.19.0 と同じ。札は細い線（.card-soft など）で区切る）。**ここはテーマ色にしないこと。**
            いちばん淡い調子を敷いてみたが、画面ぜんたいが色づいて主張が強すぎた。
            テーマ色は、小見出し・細い線・印など、小さな場所だけに置く */
-        .ft-page{background-color:#FAFAFA}
+        .ft-page{background-color:#FFFFFF}
         /* 文字を選んだときの色と、入力中の縦棒も、選んだ色でそろえる */
         .ft-root ::selection{background-color:var(--th-200)}
         .ft-root .ft-input{caret-color:var(--th-800)}
@@ -12675,8 +12881,18 @@ function AppMain() {
         )}
 
         {syncSheet && (
-          <SyncSheet launch={syncSheet === "launch"} onClose={closeSyncSheet}
+          <SyncSheet onClose={closeSyncSheet}
             onOpenBackup={() => { closeSyncSheet(); if (goFromMenuRef.current) goFromMenuRef.current("backup"); }} />
+        )}
+        {/* 起動したときにログインが切れていたときの、短い知らせ（3.0.0〜）。
+            **中央寄せの transform と、現れる動き（anim-pop）の transform を同じ箱に乗せないこと**（出た瞬間に横へずれて見える） */}
+        {syncToast && (
+          <div className="fixed pointer-events-none" role="status"
+            style={{ left: "50%", transform: "translateX(-50%)", bottom: "calc(var(--ft-nav-h) + 56px)", zIndex: 2147483250 }}>
+            <div className="anim-pop">
+              <div className="bg-neutral-900 text-white text-[13.5px] font-bold px-4 py-2.5 rounded-full shadow-xl text-center whitespace-nowrap">{syncToast}</div>
+            </div>
+          </div>
         )}
 
         {backupOpen && <BackupScreen zIndex={menuLift === "backup" ? MENU_LIFT_Z : undefined} records={records} folders={folders} artworks={artworks} garden={garden} tagMaster={tagMaster}

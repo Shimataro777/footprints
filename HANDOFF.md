@@ -231,6 +231,7 @@ Chromium（`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`、playwright 経
 - `pending`（まだ送っていない数）＝前回の同期の目録（base）と今のちがい。`indexOf` / `diffCount`。最後に送った・受け取った数と時刻は cfg の `sentN/sentAt/recvN/recvAt`
 - つないでいるときは `unsavedNow` を0にする（「書き出していない」の印を出さない）
 - 未確認：iPhoneのホーム画面アプリでのGoogleログイン
+- **3.0.0 で、雲の働きと起動時の流れを変えた（My手帳 10.6.0〜10.19.0 と同じ形）。上の2.17.0の2行より、下の節（3.0.0）を優先すること**
 
 ---
 
@@ -1412,6 +1413,38 @@ linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))
 **消した記録の数え方**：`noteDeleted(n)` が `prefs.folderDeletes` に消した時刻を足す（名前はフォルダ用のまま。前の版の設定・バックアップと食い違わないように）。
 
 **キーボード跡（`pollDown` / `releaseKb`、installKeyboardInset の中）**：My手帳 8.1.1 をそのまま移した。❌ 引っ込みきった知らせを待つだけに戻さないこと。❌ 見に行っている途中で回数を数え直さないこと。iPhone 実機では未確認。
+
+### 3.0.0 My手帳 に合わせた見直し（Google連携の動き・色・見出し・設定）
+
+**雲（`SyncHeaderButton`）**
+- 押す＝その場で `syncManual()`。紙は開かない。未連携 → `SyncUiContext.open()`（紙）。`needsAuth` → `ready` なら `loginNow()`、まだなら `preload()` して紙。同期の最中 → 何もしない。
+- **長押し 520ms で紙**（`press` の ref。長押しのあとに来る click は `fired` で捨てる）。
+- ❌ `onTap` の中で await を挟まないこと（Google のログインは指の操作の流れの中でしか開けない）。
+- 同期中は、しるし無しの雲（`CloudGlyph mark="none"`）の上に矢印だけの絵（`CloudMarks`）を重ね、それを包む `span.gs-pulse.gs-arrows` ごと点滅。❌ svg の中の path に動きを付けないこと（iPhone の WebKit は描き直さないことがある。My手帳 10.16.0 の実機の件）。❌ 件数の札（`.gs-badge`）・点（`.gs-dot`）を点滅する箱の中に入れないこと。
+- すぐ終わっても最低 2.2 秒は点滅（`hold`）。
+- `.gs-pulse` `.gs-cloud-blink` `.gs-cloud-glow` は「動きの演出」オフ・視差効果を減らすでも止めない（`.ft-still` と `prefers-reduced-motion` の `:not()` に入れてある）。
+- **起動時の紙（launch）はやめた。** `askLogin` が立ったら AppMain が `dismissLogin()` して、下に「雲を押すと同期します」（`syncToast`、3.2秒）。❌ 消す時計を effect の片づけで止めないこと（askLogin が下りた瞬間に片づけが走り、知らせが消えなくなった。試験で見つけた）。
+- 紙（`SyncSheet`）とカード（`GoogleSyncCard`）に `SyncProgress`（`status.progress` 0〜1・`status.step`）。エンジン（gsync.js の `cycle`）が写真1枚＝1こまで知らせる。試験 19件。
+- 色は `<style>` の `.gs-*`（`gs-tone-ok/warn/err/mute`、`gs-arrow-run/ok/wait/stop` など）。ヘッダーの写真の上では `gs-tone-ok/mute` を白に。
+
+**見出し（`HeaderTail` / `OverlayHeader` / `ScreenHeader`）**
+- どの見出しも右はしは `HeaderTail`：その画面のボタン（`right`）→ 雲 → 三本線。ボタンは 48px（`.ft-hbtn`）、右の余白は `.ft-htail`。
+- 題はまん中（`.ft-htitle`、absolute）。左右の幅は `useTitleInset(右のボタンの数)`。**題は、見出しの箱でなく、その中の行の箱（relative・min-h 48px）の中で top:50% に置くこと**（見出しの箱には安全域の上の余白があり、iPhone で題だけ上にずれる）。
+- 重なる画面は `OverlayHeader`（‹ だけ・題・HeaderTail）。zIndex 20 で、左端を払う帯（data-ft-edge, z-10）より上。
+- `MenuButton` は `HeaderTail` を呼ぶだけの名残。新しい見出しは `OverlayHeader` を使うこと。
+- 試し方：`.ft-hdr` ごとに題とボタンの縦のまん中のずれ（1.5px 未満）・重なり・画面のまん中からのずれを測る（幅 320 / 390 / 1024）。
+
+**色**
+- `THEMES` は12色。My手帳 10.54.0 の値を、このアプリの段に1つずらして入れた（50〜300 は同じ、600＝My手帳700、700＝800、800＝900、900＝950）。**key は変えないこと**（"indigo" は空、藍は "navy"）。既定は teal（`themeOf` が見つからないときも teal）。
+- 下地は白（`.ft-page`）。箱は `card-soft`（影なし・#E6E6E9 の線）。
+
+**設定の部品（新しい画面にも使うこと）**
+- `SectionLabel`（`.head-bar` の短い棒＋小見出し、help つき）、`RowCard` ＋ `SheetRow`（左に名前・右で決める 58px の行）、`PillTabs`（`sm` と `.ft-pill-s2` / `.ft-pill-s3` の幅）、`Switch`、`ThemeSelect`（`PickSheet` に 4列×3段の `.ft-csel-grid`）。
+- ボタンの高さ：`.btn-h` 48px、`.btn-h-lg` 54px。
+
+**バックアップ画面のボタンは 2.22 までの並び・高さのまま**（大きい2つ＋横に小さい2つ、どれも 40px。`min-h-[40px]` を直に書いている）。❌「書き出す」「読み込む」の区切りに分けて4段にしないこと（3.0.0 の作りかけで試し、持ち主に「元の方が良い」と言われて戻した）。
+
+**app.css は作り直していない**（Tailwind v3 がこの環境に無い）。足りなかった `gap-x-3` `gap-y-1` `shadow-lg` は `<style>` に足した。**新しいクラスを書いたら、app.css か `<style>` にあるか確かめること**（無いと黙って効かない）。
 
 ### 2.22.1 ぶどうの房
 - 房は `GRAPE_BEADS`（14粒の位置）＋うしろに一段濃い粒。❌ 粒を少なく・規則正しく並べないこと（三角に見えると言われた）。軸のつけねは `grapeTop(y, r)`。

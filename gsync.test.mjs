@@ -383,4 +383,21 @@ await test("2.17.0 送っていない数・受け取った数", async () => {
   } finally { A.sync.stop(); B.sync.stop(); }
 });
 
+await test("3.0.0 同期の進み具合（progress・step）を出す", async () => {
+  const drive = fakeDrive();
+  const A = device("A", drive);
+  A.st.records = [rec("r1", "one")];
+  await A.sync.connect();
+  const seen = [];
+  const off = A.sync.subscribe(() => { const s = A.sync.getStatus(); if (s.phase === "syncing") seen.push([s.progress, s.step]); });
+  try {
+  A.st.records = [rec("r1", "one"), rec("r2", "two")];
+  await A.run();
+  assert.ok(seen.length >= 2, "同期中に何度か知らせる");
+  assert.equal(seen[0][1], "つないでいます");
+  for (let i = 1; i < seen.length; i++) assert.ok(seen[i][0] >= seen[i - 1][0], "進み具合は戻らない");
+  assert.ok(seen.every(([p]) => p > 0 && p < 1), "0〜1 のあいだ");
+  } finally { off(); A.sync.stop(); }
+});
+
 console.log(`\n${pass} passed${process.exitCode ? " (失敗あり)" : ""}`);
