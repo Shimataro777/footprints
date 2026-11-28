@@ -1,14 +1,16 @@
 /* ============================================================
-   gsync.js — Googleドライブとの同期（2.15.0〜）
+   gsync.js — Googleドライブとの同期（2.15.0〜。3.3.0 から My手帳 と同じ1つのエンジン。My手帳 では gsync.src.mjs）
 
    ・画面（React）にも、このアプリの保存まわりにも依存しない。必要なものは createGoogleSync に渡す。
      （だから Node でも試験できる。試験は gsync.test.mjs）
    ・Googleに預けるのは、ドライブの「Footprints-Sync」フォルダ1つだけ。
      スコープは drive.file（このアプリが作ったファイルしか見えない）。ドライブの他のファイルは読めない。
-   ・フォルダの中身
-       footprints-sync.json      … 記録・フォルダ・設定など（写真の中身は除く）
-       photo_<番号>.txt          … 写真1枚ごと（data URL）
-       Footprints-backup-日付.txt … 1日1回の控え（メニューの「データを保存」と同じ形式。7日ぶん残す）
+   ・フォルダの中身（My手帳 10.63.0／Footprints 3.3.0〜）
+       footprints-sync.json        … 記録・フォルダ・設定など（写真の中身は除く）
+       photos-<端末の札>-<番号>.json … 写真をまとめたもの（端末ごと。1つ4MBくらいまで）
+       バックアップ/               … 毎日の控えを入れるフォルダ
+         Footprints-backup-日付.txt … 1日1回の控え（メニューの「データを保存」と同じ形式。7日ぶん残す）
+     （前の版の photo_<番号>.txt（写真1枚1ファイル）は読むだけ。まとめに入れたら消す。直下の控えは「バックアップ」へ移す）
 
    ■ 同期のしくみ（いちばん大事なところ）
    端末ごとに「前回の同期のあとの姿（base）」を覚えておき、base・この端末・ドライブの3つを比べて混ぜる（3者マージ）。
@@ -23,18 +25,25 @@
    ■ 認証
    Google Identity Services のトークン方式（サーバー不要）。トークンは約1時間で切れる。
    取り直すには、Googleの小さな画面（ポップアップ）が一瞬開く。これは指の操作の中でしか開けない。
-   **使っている途中に、勝手にこの画面を出さないこと（2.17.0〜）。**
-   以前は「切れたら、次にどこかをタップしたときに取り直す」形で、記録を書いている途中に
+   **使っている途中に、勝手にこの画面を出さないこと（Footprints 2.17.0 / My手帳 2.30.0〜）。**
+   以前は「切れたら、次にどこかをタップしたときに取り直す」形で、書いている途中に
    Googleの画面が一瞬はさまり、何が起きたのか分からなかった（依頼により廃止）。
    いまは、起動したとき（と、しばらく離れてから戻ったとき）だけ askLogin を立て、
-   画面が「Googleとつなぎ直す」の小窓を出す。そこで押したときにだけ取り直す。
+   画面が「Googleドライブとつなぎ直す」の小窓を出す。そこで押したときにだけ取り直す。
    使っている途中で切れたときは、ヘッダーの雲のしるしが変わるだけ（押せばログインできる）。
    ============================================================ */
 
 export const SYNC_FOLDER = "Footprints-Sync";
 export const DATA_FILE = "footprints-sync.json";
-export const PHOTO_PREFIX = "photo_";
+export const PHOTO_PREFIX = "photo_"; // 2つ前までの持ち方（1枚1ファイル）。読むだけ。まとめ終わったら消す
+/* 写真のまとめファイル（My手帳 10.63.0／Footprints 3.3.0〜）。「photos-端末の札-番号.json」に、何枚もまとめて入れる */
+export const PHOTO_PACK_PREFIX = "photos-";
+/* 毎日の控えを入れる、同期フォルダの中のフォルダ（10.63.0／3.3.0〜） */
+export const BACKUP_FOLDER = "バックアップ";
+const PACK_MAX = 4 * 1024 * 1024; // まとめファイル1つの大きさの目安（これを超えたら次の番号へ）
+const PACK_KEY = "packs";         // まとめファイルの中身の目録（端末に置く。変わったファイルだけ読み直す）
 export const BACKUP_PREFIX = "Footprints-backup-";
+/* 毎日の控えを残す日数（My手帳 10.60.0 で 7 → 10、10.62.0 で 7 に戻した）。これより古い日のものは、同期のたびに片づける */
 export const BACKUP_KEEP = 7;
 export const SCOPE = "https://www.googleapis.com/auth/drive.file";
 const FORMAT = 1;
@@ -68,11 +77,28 @@ export const hashOf = (v) => cyrb53(stable(v));
 export const setHash = (arr) => cyrb53((arr || []).map(hashOf).sort().join("|"));
 
 /* ------------------------------------------------------------
-   混ぜる：番号つきの一覧（記録・フォルダ・イラスト・タグ・収穫）
+   混ぜる：番号つきの一覧（記録・フォルダ・イラスト・タグ・収穫 など）
    ------------------------------------------------------------ */
-const stampOf = (x) => (x && typeof x === "object" ? String(x.updatedAt || x.createdAt || "") : "");
+/* 直した時刻。updatedAt・checkedAt（印を付け外しした時刻）・createdAt のうち、いちばん新しいもの */
+const stampOf = (x) => {
+  if (!x || typeof x !== "object") return "";
+  let m = "";
+  for (const k of ["createdAt", "updatedAt", "checkedAt"]) { const v = x[k]; if (typeof v === "string" && v > m) m = v; }
+  return m;
+};
+const stampMs = (x) => { const t = Date.parse(stampOf(x)); return Number.isFinite(t) ? t : 0; };
 
-export function mergeKeyed({ local, remote, base, tombs, getId, now }) {
+/* base … 前回この端末が同期したときの { id: ハッシュ }。baseAt … その時刻（ミリ秒）
+   tombs … 消した印 { id: { h: 消したときのハッシュ, t: 印をつけた時刻, since: 消した「あとの」下限の時刻 } }
+
+   **消す条件は2つ。どちらかに当てはまれば、ほかの端末でも消す。**
+   ① 中身が、消したときとまったく同じ（ハッシュが一致）
+   ② 直した時刻が since 以前（＝消した人が見ていた状態から、その後は誰も直していない）
+   ②が必要な理由：記録は読み込むたびに自動で整えられる（migrateRecord など）ので、
+   中身が少し違うだけで①が合わなくなり、消したはずの記録が戻ってきた。
+   since は「消した端末が最後に同期した時刻」。消す端末が長く圏外だったときも、
+   そのあいだに別の端末で直した記録（直した時刻が since より新しい）は消さずに残る */
+export function mergeKeyed({ local, remote, base, baseAt, tombs, getId, now }) {
   const L = new Map();
   const R = new Map();
   for (const it of local || []) { const id = getId(it); if (id !== undefined && id !== null && id !== "" && !L.has(id)) L.set(id, it); }
@@ -80,7 +106,7 @@ export function mergeKeyed({ local, remote, base, tombs, getId, now }) {
   const B = base || {};
   const T = { ...(tombs || {}) };
   /* 前回あったのに、いまこの端末に無いもの ＝ この端末で消した。印を残す（古い印は上書き） */
-  for (const id of Object.keys(B)) if (!L.has(id)) T[id] = { h: B[id], t: now };
+  for (const id of Object.keys(B)) if (!L.has(id)) T[id] = { h: B[id], t: now, since: baseAt || now };
 
   const order = [...L.keys(), ...[...R.keys()].filter((k) => !L.has(k))];
   const items = [];
@@ -99,8 +125,12 @@ export function mergeKeyed({ local, remote, base, tombs, getId, now }) {
       pick = l !== undefined ? l : r;
     }
     const tomb = T[id];
-    if (tomb && tomb.h === hashOf(pick)) continue; // 消した時と同じ中身 → 消えたまま
-    delete T[id];                                  // 書き直されている → 生かす
+    if (tomb) {
+      const same = tomb.h === hashOf(pick);
+      const untouched = typeof tomb.since === "number" && stampMs(pick) > 0 && stampMs(pick) <= tomb.since;
+      if (same || untouched) continue;          // 消えたまま
+      delete T[id];                              // 消したあとに書き直されている → 生かす
+    }
     items.push(pick);
   }
   const newBase = {};
@@ -126,115 +156,131 @@ export function mergeValue({ local, remote, remoteExists, baseHash, hasBase }) {
   return { value: l, hash: hl };
 }
 
-const COLLECTIONS = ["records", "folders", "artworks", "tags", "harvests"];
-const VALUES = ["prefs", "captions", "typeDesc", "headerBg", "cycle"];
-const idOf = {
-  records: (x) => (x && x.id) || null,
-  folders: (x) => (x && x.id) || null,
-  artworks: (x) => (x && x.id) || null,
-  tags: (x) => (typeof x === "string" && x ? x : null),
-  harvests: (x) => (x && (x.id || (x.date && x.fruit ? x.date + "|" + x.fruit : null))) || null,
+/* ------------------------------------------------------------
+   何を同期するか（アプリごとの形）
+   collections … 番号つきの一覧（get で取り出し、id で番号を決める）
+   values      … 1つの値（設定など）
+   build       … 混ぜ終わった一覧と値から、snapshot を組み立てる
+   ------------------------------------------------------------ */
+const byId = (x) => (x && x.id) || null;
+const byName = (x) => (typeof x === "string" && x ? x : null);
+
+/* Footprints（聖書学習記録） */
+export const FOOTPRINTS_SCHEMA = {
+  collections: [
+    { key: "records", get: (s) => s.records, id: byId },
+    { key: "folders", get: (s) => s.folders, id: byId },
+    { key: "artworks", get: (s) => s.artworks, id: byId },
+    { key: "tags", get: (s) => s.tags, id: byName },
+    { key: "harvests", get: (s) => (s.garden || {}).harvests, id: (x) => (x && (x.id || (x.date && x.fruit ? x.date + "|" + x.fruit : null))) || null },
+  ],
+  values: [
+    { key: "prefs", get: (s) => s.prefs }, { key: "captions", get: (s) => s.captions },
+    { key: "typeDesc", get: (s) => s.typeDesc }, { key: "headerBg", get: (s) => s.headerBg },
+    { key: "cycle", get: (s) => (s.garden || {}).cycle },
+  ],
+  build: (c, v) => ({
+    records: c.records, folders: c.folders, artworks: c.artworks, tags: c.tags,
+    garden: { cycle: v.cycle, harvests: c.harvests },
+    prefs: v.prefs, captions: v.captions, typeDesc: v.typeDesc, headerBg: v.headerBg,
+  }),
 };
 
-/* 同期する中身の形（snapshot）
-   { records, folders, artworks, tags, garden:{cycle,harvests}, prefs, captions, typeDesc, headerBg } */
-export function contentHash(s) {
-  const g = (s && s.garden) || {};
+/* My手帳 */
+export const MYTECHO_SCHEMA = {
+  collections: [
+    { key: "records", get: (s) => s.records, id: byId },
+    { key: "plans", get: (s) => s.plans, id: byId },
+    { key: "kinds", get: (s) => s.kinds, id: byId },
+    { key: "folders", get: (s) => s.folders, id: byId },
+    { key: "tags", get: (s) => s.tags, id: byName },
+  ],
+  values: [{ key: "prefs", get: (s) => s.prefs }],
+  build: (c, v) => ({ records: c.records, plans: c.plans, kinds: c.kinds, folders: c.folders, tags: c.tags, prefs: v.prefs }),
+};
+
+/* 同期する中身（snapshot）が同じかどうか。並びには左右されない */
+export function contentHash(s, schema) {
+  const sc = schema || FOOTPRINTS_SCHEMA;
+  const x = s || {};
   return cyrb53([
-    setHash(s && s.records), setHash(s && s.folders), setHash(s && s.artworks), setHash(s && s.tags),
-    setHash(g.harvests), hashOf(g.cycle), hashOf(s && s.prefs), hashOf(s && s.captions),
-    hashOf(s && s.typeDesc), hashOf(s && s.headerBg),
+    ...sc.collections.map((c) => setHash(c.get(x))),
+    ...sc.values.map((v) => hashOf(v.get(x))),
   ].join("/"));
 }
-/* 中身の目録（{ records: {番号: ハッシュ}, …, values: {prefs: ハッシュ, …} }）。前回の同期の姿（base）と同じ形 */
-export function indexOf(s) {
-  const g = (s && s.garden) || {};
-  const lists = { records: s && s.records, folders: s && s.folders, artworks: s && s.artworks, tags: s && s.tags, harvests: g.harvests };
+/* 中身の目録（{ 一覧の名前: {番号: ハッシュ}, …, values: {設定の名前: ハッシュ} }）。前回の同期の姿（base）と同じ形 */
+export function indexOf(s, schema) {
+  const sc = schema || FOOTPRINTS_SCHEMA;
+  const x = s || {};
   const out = { values: {} };
-  for (const c of COLLECTIONS) {
+  for (const c of sc.collections) {
     const m = {};
-    for (const it of lists[c] || []) { const id = idOf[c](it); if (id !== null && id !== undefined && id !== "" && !(id in m)) m[id] = hashOf(it); }
-    out[c] = m;
+    for (const it of c.get(x) || []) { const id = c.id(it); if (id !== null && id !== undefined && id !== "" && !(id in m)) m[id] = hashOf(it); }
+    out[c.key] = m;
   }
-  const vals = { prefs: s && s.prefs, captions: s && s.captions, typeDesc: s && s.typeDesc, headerBg: s && s.headerBg, cycle: g.cycle };
-  for (const v of VALUES) out.values[v] = hashOf(vals[v] === undefined ? null : vals[v]);
+  for (const v of sc.values) { const val = v.get(x); out.values[v.key] = hashOf(val === undefined ? null : val); }
   return out;
 }
 /* 2つの目録のちがいの数（足した・変えた・消した、を1件ずつ）。b に values が無いときは、設定は数えない */
-export function diffCount(a, b) {
+export function diffCount(a, b, schema) {
+  const sc = schema || FOOTPRINTS_SCHEMA;
   let n = 0;
-  for (const c of COLLECTIONS) {
-    const A = (a && a[c]) || {};
-    const B = (b && b[c]) || {};
+  for (const c of sc.collections) {
+    const A = (a && a[c.key]) || {};
+    const B = (b && b[c.key]) || {};
     for (const id of Object.keys(A)) if (A[id] !== B[id]) n++;
     for (const id of Object.keys(B)) if (!(id in A)) n++;
   }
-  if (a && a.values && b && b.values) for (const v of VALUES) if (b.values[v] !== undefined && a.values[v] !== b.values[v]) n++;
+  if (a && a.values && b && b.values) for (const v of sc.values) if (b.values[v.key] !== undefined && a.values[v.key] !== b.values[v.key]) n++;
   return n;
 }
-const tombsHash = (t) => hashOf(Object.fromEntries(COLLECTIONS.map((c) => [c, Object.keys((t && t[c]) || {}).sort()])));
+const tombsHash = (sc, t) => hashOf(Object.fromEntries(sc.collections.map((c) => [c.key, Object.keys((t && t[c.key]) || {}).sort()])));
 
-function unionTombs(a, b) {
+function unionTombs(sc, a, b) {
   const out = {};
-  for (const c of COLLECTIONS) {
-    const m = { ...((a && a[c]) || {}) };
-    const o = (b && b[c]) || {};
+  for (const c of sc.collections) {
+    const m = { ...((a && a[c.key]) || {}) };
+    const o = (b && b[c.key]) || {};
     for (const id of Object.keys(o)) if (!m[id] || (o[id] && o[id].t > m[id].t)) m[id] = o[id];
-    out[c] = m;
+    out[c.key] = m;
   }
   return out;
 }
 
-/* local・remote は snapshot（remote は無いこともある）。ctx = { base, hasBase, tombs, now } */
+/* local・remote は snapshot（remote は無いこともある）。ctx = { schema, base, baseAt, hasBase, tombs, now } */
 export function mergeSnapshots(local, remote, ctx) {
+  const sc = ctx.schema || FOOTPRINTS_SCHEMA;
   const now = ctx.now;
   const baseAll = ctx.base || {};
-  const tombsAll = unionTombs(ctx.tombs, remote && remote.tombs);
-  const rg = (remote && remote.garden) || {};
-  const lg = local.garden || {};
-  const pick = {
-    records: [local.records, remote && remote.records],
-    folders: [local.folders, remote && remote.folders],
-    artworks: [local.artworks, remote && remote.artworks],
-    tags: [local.tags, remote && remote.tags],
-    harvests: [lg.harvests, rg.harvests],
-  };
-  const out = {};
+  const tombsAll = unionTombs(sc, ctx.tombs, remote && remote.tombs);
+  const cols = {};
   const newBase = { values: {} };
   const newTombs = {};
-  for (const c of COLLECTIONS) {
+  for (const c of sc.collections) {
     const m = mergeKeyed({
-      local: pick[c][0] || [], remote: pick[c][1] || [], base: baseAll[c] || {}, tombs: tombsAll[c] || {},
-      getId: idOf[c], now,
+      local: c.get(local) || [], remote: (remote && c.get(remote)) || [], base: baseAll[c.key] || {}, baseAt: ctx.baseAt,
+      tombs: tombsAll[c.key] || {}, getId: c.id, now,
     });
-    out[c] = m.items;
-    newBase[c] = m.base;
-    newTombs[c] = m.tombs;
+    cols[c.key] = m.items;
+    newBase[c.key] = m.base;
+    newTombs[c.key] = m.tombs;
   }
   const vals = {};
-  const localVals = { prefs: local.prefs, captions: local.captions, typeDesc: local.typeDesc, headerBg: local.headerBg, cycle: lg.cycle };
-  const remoteVals = remote
-    ? { prefs: remote.prefs, captions: remote.captions, typeDesc: remote.typeDesc, headerBg: remote.headerBg, cycle: rg.cycle }
-    : {};
-  for (const v of VALUES) {
-    const exists = !!remote && Object.prototype.hasOwnProperty.call(remoteVals, v) && remoteVals[v] !== undefined;
+  for (const v of sc.values) {
+    const rv = remote ? v.get(remote) : undefined;
     const r = mergeValue({
-      local: localVals[v], remote: remoteVals[v], remoteExists: exists,
-      baseHash: (baseAll.values || {})[v], hasBase: !!ctx.hasBase,
+      local: v.get(local), remote: rv, remoteExists: !!remote && rv !== undefined,
+      baseHash: (baseAll.values || {})[v.key], hasBase: !!ctx.hasBase,
     });
-    vals[v] = r.value;
-    newBase.values[v] = r.hash;
+    vals[v.key] = r.value;
+    newBase.values[v.key] = r.hash;
   }
-  const merged = {
-    records: out.records, folders: out.folders, artworks: out.artworks, tags: out.tags,
-    garden: { cycle: vals.cycle, harvests: out.harvests },
-    prefs: vals.prefs, captions: vals.captions, typeDesc: vals.typeDesc, headerBg: vals.headerBg,
-  };
-  const mh = contentHash(merged);
+  const merged = sc.build(cols, vals);
+  const mh = contentHash(merged, sc);
   return {
     merged, base: newBase, tombs: newTombs,
-    localChanged: mh !== contentHash(local),
-    remoteChanged: !remote || mh !== contentHash(remote) || tombsHash(newTombs) !== tombsHash(remote.tombs),
+    localChanged: mh !== contentHash(local, sc),
+    remoteChanged: !remote || mh !== contentHash(remote, sc) || tombsHash(sc, newTombs) !== tombsHash(sc, remote.tombs),
   };
 }
 
@@ -279,15 +325,21 @@ export function createDrive(fetchFn, getToken) {
       const j = await json(API + "/about?fields=user(emailAddress,displayName)");
       return (j && j.user) || {};
     },
-    async findFolder(name) {
-      const q = "mimeType='application/vnd.google-apps.folder' and name='" + qs(name) + "' and trashed=false";
+    async findFolder(name, parentId) {
+      const q = "mimeType='application/vnd.google-apps.folder' and name='" + qs(name) + "'" + (parentId ? " and '" + qs(parentId) + "' in parents" : "") + " and trashed=false";
       const j = await json(API + "/files?q=" + encodeURIComponent(q) + "&orderBy=createdTime&pageSize=10&fields=files(id,name)");
       return (j.files && j.files[0]) || null;
     },
-    async createFolder(name) {
+    async createFolder(name, parentId) {
       return json(API + "/files?fields=id,name", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder" }),
+        body: JSON.stringify(parentId ? { name, mimeType: "application/vnd.google-apps.folder", parents: [parentId] } : { name, mimeType: "application/vnd.google-apps.folder" }),
+      });
+    },
+    /* ファイルを別のフォルダへ移す（中身はそのまま） */
+    async move(id, toId, fromId) {
+      await call(API + "/files/" + encodeURIComponent(id) + "?addParents=" + encodeURIComponent(toId) + "&removeParents=" + encodeURIComponent(fromId) + "&fields=id", {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}",
       });
     },
     async folderAlive(id) {
@@ -326,8 +378,8 @@ export function createDrive(fetchFn, getToken) {
 /* ------------------------------------------------------------
    Googleのログイン（Google Identity Services・トークン方式）
    ------------------------------------------------------------ */
-const TOKEN_KEY = "ft-gsync-token";
-export function createGisAuth({ getClientId, ls, doc, win }) {
+export function createGisAuth({ getClientId, ls, doc, win, tokenKey }) {
+  const TOKEN_KEY = tokenKey || "ft-gsync-token";
   let client = null;
   let clientFor = "";
   let pending = null;
@@ -405,13 +457,15 @@ export function createGisAuth({ getClientId, ls, doc, win }) {
      onBackedUp()       … 控えをドライブに置けたとき
      auth（試験用に差し替え可）, now()
    ------------------------------------------------------------ */
-const CFG_KEY = "ft-gsync-cfg";
 const STATE_KEY = "state";
 const AUTO_MIN_GAP_MS = 20000;   // 自動の同期の最短の間隔
 const DEBOUNCE_MS = 6000;        // 書きかえてから同期するまで
 const PERIOD_MS = 5 * 60 * 1000; // 開いたままのときの定期確認
 
 export function createGoogleSync(opts) {
+  /* **同じサイト（github.io）に別のアプリがあっても、保存のキーが重ならないよう、アプリごとに prefix を変えること** */
+  const PREFIX = opts.storagePrefix || "ft-gsync";
+  const CFG_KEY = PREFIX + "-cfg";
   const now = opts.now || (() => Date.now());
   const ls = opts.ls;
   const fetchFn = opts.fetch;
@@ -423,11 +477,17 @@ export function createGoogleSync(opts) {
   try { Object.assign(cfg, JSON.parse(ls.getItem(CFG_KEY) || "{}")); } catch (e) { /* 初回 */ }
   const saveCfg = () => { try { ls.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) { /* noop */ } };
 
+  const schema = opts.schema || FOOTPRINTS_SCHEMA;
+  const NAMES = { folder: SYNC_FOLDER, data: DATA_FILE, backup: BACKUP_PREFIX, photos: PHOTO_PACK_PREFIX, backupFolder: BACKUP_FOLDER, ...(opts.names || {}) };
+  /* この端末の札（写真のまとめファイルの名前に入れる）。**端末ごとに自分のまとめファイルにだけ書く**（2台が同じファイルを上書きし合わない） */
+  if (!cfg.devTag) { cfg.devTag = Math.random().toString(36).slice(2, 8) || "dev"; saveCfg(); }
+  const escRe = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const packRe = new RegExp("^" + escRe(NAMES.photos) + "([a-z0-9]+)-(\\d+)\\.json$");
   const clientId = () => cfg.clientId || opts.defaultClientId || "";
-  const auth = opts.auth || createGisAuth({ getClientId: clientId, ls, doc: opts.doc, win: opts.win });
+  const auth = opts.auth || createGisAuth({ getClientId: clientId, ls, doc: opts.doc, win: opts.win, tokenKey: PREFIX + "-token" });
 
   /* pending … この端末で書きかえて、まだドライブへ送っていない数（前回の同期の姿とのちがい）
-     askLogin … 起動したときにログインが切れていた。画面が「Googleとつなぎ直す」の小窓を出す
+     askLogin … 起動したときにログインが切れていた。画面が「Googleドライブとつなぎ直す」の小窓を出す
      （最後に送った数・時刻、受け取った数・時刻は cfg の sentN/sentAt・recvN/recvAt。何も動かなかった同期では変えない） */
   let status = { phase: cfg.enabled ? "idle" : "off", message: "", pending: 0, askLogin: false };
   const setStatus = (patch) => { status = { ...status, ...patch }; listeners.forEach((fn) => { try { fn(); } catch (e) { /* noop */ } }); };
@@ -445,9 +505,11 @@ export function createGoogleSync(opts) {
   let periodic = null;
   let lastAuto = 0;
   let folderVerified = false;
+  let backupFolderVerified = false;
   let started = false;
   let memBase = undefined; // 前回の同期の姿（目録）。undefined＝まだ読んでいない、null＝一度も同期していない
   let hiddenAt = 0;
+  let lastMoved = { sent: 0, received: 0 };
 
   async function loadState() { try { return (await opts.kv.get(STATE_KEY)) || {}; } catch (e) { return {}; } }
   async function saveState(s) { memBase = s && s.base ? s.base : null; try { await opts.kv.set(STATE_KEY, s); } catch (e) { /* noop */ } }
@@ -458,7 +520,7 @@ export function createGoogleSync(opts) {
     try {
       if (memBase === undefined) { const st = await loadState(); if (memBase === undefined) memBase = st.base || null; }
       const snap = await opts.getSnapshot();
-      const n = diffCount(indexOf(snap), memBase || {});
+      const n = diffCount(indexOf(snap, schema), memBase || {}, schema);
       if (n !== status.pending) setStatus({ pending: n });
     } catch (e) { /* 数えられなくても同期には差し支えない */ }
   }
@@ -469,8 +531,8 @@ export function createGoogleSync(opts) {
       if (await drive.folderAlive(cfg.folderId)) { folderVerified = true; return cfg.folderId; }
       cfg.folderId = "";
     }
-    const found = await drive.findFolder(SYNC_FOLDER);
-    const f = found || (await drive.createFolder(SYNC_FOLDER));
+    const found = await drive.findFolder(NAMES.folder);
+    const f = found || (await drive.createFolder(NAMES.folder));
     cfg.folderId = f.id; folderVerified = true; saveCfg();
     return f.id;
   }
@@ -480,25 +542,32 @@ export function createGoogleSync(opts) {
   function parseRemote(text) {
     let d;
     try { d = JSON.parse(text); } catch (e) { throw new SyncError("drive", "同期データを読めません。上書きはしません"); }
-    if (!d || typeof d !== "object" || d.format !== FORMAT || !Array.isArray(d.records)) {
+    if (!d || typeof d !== "object" || d.format !== FORMAT || !Array.isArray(schema.collections[0].get(d))) {
       throw new SyncError("drive", "同期データの形式が新しすぎます。アプリを更新してください");
     }
     return d;
   }
 
-  let lastMoved = { sent: 0, received: 0 };
   /* 1回ぶん。中で書きかえが見つかったら false（やり直し） */
   async function cycle(drive, token) {
     const folderId = await ensureFolder(drive);
     const files = await drive.list(folderId);
-    const dataFiles = files.filter((f) => f.name === DATA_FILE).sort((a, b) => String(b.modifiedTime).localeCompare(String(a.modifiedTime)));
+    const dataFiles = files.filter((f) => f.name === NAMES.data).sort((a, b) => String(b.modifiedTime).localeCompare(String(a.modifiedTime)));
     const dataFile = dataFiles[0] || null;
     const st = await loadState();
     const local0 = await opts.getSnapshot();
-    const localHash = contentHash(local0);
+    const localHash = contentHash(local0, schema);
     const hasBase = !!st.base;
 
     if (dataFile && hasBase && st.lastRemoteModified === dataFile.modifiedTime && st.lastLocalHash === localHash) {
+      /* 中身は変わっていなくても、古い持ち方の写真が残っている日・その日はじめての同期なら、写真の整頓だけする */
+      if (files.some((f) => photoIdOfName(f.name)) || cfg.lastTidyDay !== dayStr(now())) {
+        const ps = await photoStore(drive, files);
+        const refs0 = Array.from(new Set(opts.listPhotoRefs(local0)));
+        await packNewPhotos(drive, folderId, ps, refs0, () => {});
+        await tidyPhotos(drive, ps, refs0, local0);
+        await savePackCache(ps);
+      }
       await maybeBackup(drive, folderId, files, local0);
       lastMoved = { sent: 0, received: 0 };
       return true; // どちらも変わっていない
@@ -506,102 +575,247 @@ export function createGoogleSync(opts) {
 
     let remote = null;
     if (dataFile) remote = parseRemote(await drive.download(dataFile.id));
-    const res = mergeSnapshots(local0, remote, { base: st.base, hasBase, tombs: st.tombs, now: now() });
-    const localIdx = indexOf(local0);
-    const mergedIdx = indexOf(res.merged);
-    const received = res.localChanged ? diffCount(mergedIdx, localIdx) : 0;
-    const sent = res.remoteChanged ? (remote ? diffCount(mergedIdx, indexOf(remote)) : diffCount(mergedIdx, {})) : 0;
+    const res = mergeSnapshots(local0, remote, { schema, base: st.base, baseAt: st.baseAt, hasBase, tombs: st.tombs, now: now() });
+    const localIdx = indexOf(local0, schema);
+    const mergedIdx = indexOf(res.merged, schema);
+    const received = res.localChanged ? diffCount(mergedIdx, localIdx, schema) : 0;
+    const sent = res.remoteChanged ? diffCount(mergedIdx, remote ? indexOf(remote, schema) : {}, schema) : 0;
 
-    /* 写真：足りないものをドライブから取る（記録を反映する前に） */
+    /* 写真：足りないものをドライブから取る（記録を反映する前に）。まとめファイル → なければ古い1枚1ファイル */
     const refs = Array.from(new Set(opts.listPhotoRefs(res.merged)));
-    const onDrive = new Map();
-    for (const f of files) { const id = photoIdOfName(f.name); if (id) onDrive.set(id, f); }
-    /* 進み具合（3.0.0〜。My手帳 7.0.0 と同じ）。写真1枚＝1こま。画面には progress（0〜1）と step（いましていること）で知らせる */
-    const __need = refs.filter((id) => !onDrive.has(id));
-    const __tot = 4 + refs.length + __need.length;
+    const ps = await photoStore(drive, files);
+    /* 進み具合（7.0.0〜）。写真1枚＝1こま。画面には progress（0〜1）と step（いましていること）で知らせる */
+    const __tot = 4 + refs.length * 2;
     let __n = 2, __at = 0;
     const __p = (label, force) => { const t = Date.now(); if (!force && t - __at < 150) return; __at = t; setStatus({ progress: Math.min(0.97, __n / __tot), step: label }); };
     __p("受け取っています", true);
     for (const id of refs) {
       __n++; __p("受け取っています");
       if (await opts.photoHas(id)) continue;
-      const f = onDrive.get(id);
-      if (!f) continue;
-      const data = await drive.download(f.id);
+      const data = await ps.read(id);
       if (data) await opts.photoPut(id, data);
     }
 
     if (res.localChanged) {
       /* 通信しているあいだに書きかえられていたら、上書きせずやり直す */
       const again = await opts.getSnapshot();
-      if (contentHash(again) !== localHash) return false;
+      if (contentHash(again, schema) !== localHash) return false;
       await opts.applySnapshot(res.merged);
     }
 
-    /* 写真：ドライブに無いものを上げる（記録のデータより先に） */
-    for (const id of refs) {
-      if (onDrive.has(id)) continue;
-      __n++; __p("送っています");
-      const data = await opts.photoGet(id);
-      if (typeof data === "string" && data) {
-        const up = await drive.upload(PHOTO_PREFIX + id + ".txt", data, "text/plain", folderId);
-        onDrive.set(id, { id: up.id, name: PHOTO_PREFIX + id + ".txt", modifiedTime: up.modifiedTime });
-      }
-    }
+    /* 写真：まとめファイルに無いものを、この端末のまとめファイルに足して上げる（記録のデータより先に） */
+    await packNewPhotos(drive, folderId, ps, refs, () => { __n++; __p("送っています"); });
 
     __n = __tot - 2; __p("送っています", true);
     let modified = dataFile ? dataFile.modifiedTime : "";
     if (res.remoteChanged || !dataFile) {
       const payload = { app: "bible-tracker-sync", format: FORMAT, updatedAt: new Date(now()).toISOString(), ...res.merged, tombs: res.tombs };
-      const up = await drive.upload(DATA_FILE, JSON.stringify(payload), "application/json", folderId, dataFile ? dataFile.id : undefined);
+      const up = await drive.upload(NAMES.data, JSON.stringify(payload), "application/json", folderId, dataFile ? dataFile.id : undefined);
       modified = up.modifiedTime;
       /* 同じ名前が2つできていたら（2台が同時に初回同期した場合）、古いほうを片づける */
       for (const extra of dataFiles.slice(1)) { try { await drive.remove(extra.id); } catch (e) { /* 消せなくてもよい */ } }
     }
 
     __n = __tot - 1; __p("仕上げています", true);
-    await saveState({ base: res.base, tombs: res.tombs, lastRemoteModified: modified, lastLocalHash: contentHash(res.merged) });
+    await saveState({ base: res.base, tombs: res.tombs, lastRemoteModified: modified, lastLocalHash: contentHash(res.merged, schema), baseAt: now() });
     lastMoved = { sent, received };
-    await cleanOrphans(drive, files, refs, res.merged);
+    await tidyPhotos(drive, ps, refs, res.merged);
+    await savePackCache(ps);
     await maybeBackup(drive, folderId, files, res.merged);
     return true;
   }
 
-  /* 使われなくなった写真（30日以上たったもの）をドライブから片づける。
-     記録が空のとき・半分以上が対象になるときは、何かおかしいので何もしない */
-  async function cleanOrphans(drive, files, refs, merged) {
-    try {
-      if (!merged.records.length) return;
-      const used = new Set(refs);
-      const photoFiles = files.filter((f) => photoIdOfName(f.name));
-      const stale = photoFiles.filter((f) => !used.has(photoIdOfName(f.name)) && now() - Date.parse(f.modifiedTime || f.createdTime || 0) > ORPHAN_GRACE_MS);
-      if (!stale.length || stale.length * 2 > photoFiles.length) return;
-      for (const f of stale.slice(0, 50)) await drive.remove(f.id);
-    } catch (e) { /* 片づけは失敗しても構わない */ }
+  /* ------------------------------------------------------------
+     写真の持ち方（My手帳 10.63.0／Footprints 3.3.0〜）
+     ・写真は「photos-端末の札-番号.json」にまとめて入れる（1つ 4MB くらいまで。超えたら次の番号）。
+       中身は { photos: { 写真の番号: { d: 写真（data URL）, t: 入れた時刻 } } }
+     ・**端末は、自分の札のまとめファイルにだけ書く。** ほかの端末のものは読むだけ（2台が同じファイルを上書きし合わないように）
+     ・どのまとめファイルに何が入っているかは、端末に目録（PACK_KEY）を置き、ファイルの更新時刻が変わったものだけ読み直す
+     ・古い持ち方（photo_番号.txt）は読むだけ。まとめファイルに入ったことを確かめてから消す
+     ------------------------------------------------------------ */
+  async function photoStore(drive, files) {
+    let cache = {};
+    try { cache = (await opts.kv.get(PACK_KEY)) || {}; } catch (e) { cache = {}; }
+    const packs = files.filter((f) => packRe.test(f.name));
+    const legacy = new Map();
+    for (const f of files) { const id = photoIdOfName(f.name); if (id) legacy.set(id, f); }
+    const content = new Map();
+    const index = {};
+    const where = new Map();
+    async function load(f) {
+      if (content.has(f.id)) return content.get(f.id);
+      let obj = {};
+      try { const j = JSON.parse(await drive.download(f.id)); obj = (j && j.photos && typeof j.photos === "object") ? j.photos : {}; }
+      catch (e) { if (e instanceof SyncError && (e.kind === "auth" || e.kind === "network")) throw e; obj = {}; }
+      content.set(f.id, obj);
+      index[f.id] = { mt: f.modifiedTime, ids: Object.keys(obj) };
+      return obj;
+    }
+    for (const f of packs) {
+      if (!cache[f.id] || cache[f.id].mt !== f.modifiedTime) await load(f);
+      else index[f.id] = cache[f.id];
+      for (const id of index[f.id].ids) if (!where.has(id)) where.set(id, f);
+    }
+    return {
+      packs, legacy, where, index, load, content,
+      async read(id) {
+        const f = where.get(id);
+        if (f) { const e = (await load(f))[id]; const d = typeof e === "string" ? e : e && e.d; if (d) return d; }
+        const lf = legacy.get(id);
+        if (lf) return await drive.download(lf.id);
+        return null;
+      },
+    };
+  }
+  async function savePackCache(ps) { try { await opts.kv.set(PACK_KEY, ps.index); } catch (e) { /* noop */ } }
+  const packNum = (f) => { const m = packRe.exec(f.name); return m ? Number(m[2]) : 0; };
+  const packBody = (obj) => JSON.stringify({ app: "photo-pack", format: 1, photos: obj });
+
+  /* まとめファイルに無い写真（この端末にあるもの）を、この端末のまとめファイルに足す */
+  async function packNewPhotos(drive, folderId, ps, refs, tick) {
+    const todo = [];
+    for (const id of refs) { if (!ps.where.has(id) && (await opts.photoHas(id))) todo.push(id); }
+    if (!todo.length) return;
+    const mine = ps.packs.filter((f) => { const m = packRe.exec(f.name); return m && m[1] === cfg.devTag; }).sort((a, b) => packNum(a) - packNum(b));
+    let cur = mine.length ? mine[mine.length - 1] : null;
+    let n = cur ? packNum(cur) : 1;
+    let obj = cur ? { ...(await ps.load(cur)) } : {};
+    let size = packBody(obj).length;
+    let dirty = false;
+    const flush = async () => {
+      if (!dirty) return;
+      const name = NAMES.photos + cfg.devTag + "-" + n + ".json";
+      const up = await drive.upload(name, packBody(obj), "application/json", folderId, cur ? cur.id : undefined);
+      const f = { id: up.id, name, modifiedTime: up.modifiedTime };
+      if (!cur) ps.packs.push(f);
+      ps.content.set(f.id, obj);
+      ps.index[f.id] = { mt: up.modifiedTime, ids: Object.keys(obj) };
+      for (const id of Object.keys(obj)) ps.where.set(id, f);
+      cur = f; dirty = false;
+    };
+    for (const id of todo) {
+      tick();
+      const d = await opts.photoGet(id);
+      if (typeof d !== "string" || !d) continue;
+      if (size + d.length > PACK_MAX && Object.keys(obj).length) { await flush(); cur = null; n += 1; obj = {}; size = packBody(obj).length; }
+      obj = { ...obj, [id]: { d, t: now() } };
+      size += d.length + 64;
+      dirty = true;
+    }
+    await flush();
   }
 
-  async function maybeBackup(drive, folderId, files, merged) {
-    if (!cfg.autoBackup || !opts.buildBackupText) return;
-    const today = dayStr(now());
-    if (cfg.lastBackupDay === today) return;
+  /* 写真の整頓。**まとめファイルに入ったことを確かめてから**、古い1枚1ファイルを消す。
+     使われなくなった写真（入れてから ORPHAN_GRACE_MS 以上たったもの）は、この端末のまとめファイルから外す。
+     ほかの端末のまとめファイルは、中の写真がひとつも使われていなくなったら、ファイルごと消す。
+     止めるとき：記録が1件も無い（読み込みに失敗しているかもしれない）。
+     「使われていない」で消すのは、使っている写真が1枚以上数えられたときだけ（数え方がおかしいときに全部消さないように） */
+  async function tidyPhotos(drive, ps, refs, merged) {
     try {
-      const text = await opts.buildBackupText();
-      if (!text) return;
-      const name = BACKUP_PREFIX + today + ".txt";
-      const same = files.find((f) => f.name === name);
-      await drive.upload(name, text, "text/plain", folderId, same ? same.id : undefined);
-      const names = files.filter((f) => f.name.startsWith(BACKUP_PREFIX) && f.name !== name)
-        .sort((a, b) => b.name.localeCompare(a.name));
-      for (const old of names.slice(BACKUP_KEEP - 1)) { try { await drive.remove(old.id); } catch (e) { /* noop */ } }
-      cfg.lastBackupDay = today; saveCfg();
-      if (opts.onBackedUp) opts.onBackedUp();
+      if (!merged || !merged.records || !merged.records.length) return;
+      const used = new Set(refs);
+      const old = (ms) => now() - ms > ORPHAN_GRACE_MS;
+      let ops = 0;
+      for (const [id, f] of ps.legacy) {
+        if (ops >= 100) break;
+        const packed = ps.where.has(id);
+        const unusedOld = refs.length > 0 && !used.has(id) && old(Date.parse(f.modifiedTime || f.createdTime || 0) || now());
+        if (packed || unusedOld) { await drive.remove(f.id); ops++; }
+      }
+      if (!refs.length) { cfg.lastTidyDay = dayStr(now()); saveCfg(); return; }
+      for (const f of ps.packs.slice()) {
+        const m = packRe.exec(f.name);
+        const ids = (ps.index[f.id] && ps.index[f.id].ids) || [];
+        if (!m || !ids.some((id) => !used.has(id))) continue;
+        if (m[1] === cfg.devTag) {
+          const obj = await ps.load(f);
+          const keep = {};
+          let drop = 0;
+          for (const id of Object.keys(obj)) { const e = obj[id]; if (!used.has(id) && old((e && e.t) || 0)) drop++; else keep[id] = e; }
+          if (!drop) continue;
+          if (!Object.keys(keep).length) { await drive.remove(f.id); delete ps.index[f.id]; }
+          else { const up = await drive.upload(f.name, packBody(keep), "application/json", null, f.id); ps.index[f.id] = { mt: up.modifiedTime, ids: Object.keys(keep) }; ps.content.set(f.id, keep); }
+        } else if (ids.every((id) => !used.has(id)) && old(Date.parse(f.modifiedTime || 0) || now())) {
+          await drive.remove(f.id); delete ps.index[f.id];
+        }
+      }
+      cfg.lastTidyDay = dayStr(now()); saveCfg();
+    } catch (e) {
+      if (e instanceof SyncError && e.kind === "auth") throw e;
+      /* 整頓は失敗しても構わない（次の同期でもう一度） */
+    }
+  }
+
+  async function ensureBackupFolder(drive, rootId) {
+    if (cfg.backupFolderId && backupFolderVerified) return cfg.backupFolderId;
+    if (cfg.backupFolderId) {
+      if (await drive.folderAlive(cfg.backupFolderId)) { backupFolderVerified = true; return cfg.backupFolderId; }
+      cfg.backupFolderId = "";
+    }
+    const found = await drive.findFolder(NAMES.backupFolder, rootId);
+    const f = found || (await drive.createFolder(NAMES.backupFolder, rootId));
+    cfg.backupFolderId = f.id; backupFolderVerified = true; saveCfg();
+    return f.id;
+  }
+
+  /* 毎日の控えの片づけ（10.60.0〜）。**控えを作った日だけでなく、同期のたびに見ること。**
+     前は作った日にだけ片づけていたので、一度でも消しそびれる（通信が切れた・2台が同じ日に作った など）と、
+     そのぶんが残り続けた。いまは「日付ごとに新しい1つ」×「新しい日から BACKUP_KEEP 日分」だけを残す。
+     控えを切っている（autoBackup=false）ときも、残っている控えは同じ数にそろえる。
+     1回で消すのは40個まで（多すぎる分は次の同期で） */
+  async function pruneBackups(drive, files, justMade) {
+    try {
+      const pre = NAMES.backup;
+      const dateOf = (n) => { const m = /^(\d{4}-\d{2}-\d{2})/.exec(n.slice(pre.length)); return m ? m[1] : ""; };
+      const list = files.filter((f) => f.name && f.name.startsWith(pre) && dateOf(f.name));
+      if (justMade) list.push(justMade);
+      const byDay = new Map();
+      for (const f of list) {
+        const d = dateOf(f.name);
+        const cur = byDay.get(d);
+        if (!cur || String(f.modifiedTime || "") > String(cur.modifiedTime || "")) byDay.set(d, f);
+      }
+      const keepDays = new Set([...byDay.keys()].sort().reverse().slice(0, BACKUP_KEEP));
+      const keepIds = new Set([...keepDays].map((d) => byDay.get(d).id));
+      const drop = list.filter((f) => !keepIds.has(f.id));
+      for (const f of drop.slice(0, 40)) { try { await drive.remove(f.id); } catch (e) { if (e instanceof SyncError && (e.kind === "auth" || e.kind === "network")) throw e; } }
+    } catch (e) {
+      if (e instanceof SyncError && (e.kind === "auth" || e.kind === "network")) throw e;
+    }
+  }
+
+  /* 毎日の控え（10.63.0／3.3.0〜）。同期フォルダの中の「バックアップ」フォルダに置く（同期のファイルと混ぜない）。
+     前の版で同期フォルダの直下に置いた控えは、見つけたら「バックアップ」へ移す（消さない）。
+     控えのフォルダを見に行くのは、控えを作る日・移すものがある日・その日はじめての同期のときだけ */
+  async function maybeBackup(drive, folderId, files, merged) {
+    const today = dayStr(now());
+    const rootBackups = files.filter((f) => f.name && f.name.startsWith(NAMES.backup));
+    const make = !!(cfg.autoBackup && opts.buildBackupText && cfg.lastBackupDay !== today);
+    if (!make && !rootBackups.length && cfg.lastPruneDay === today) return;
+    try {
+      const bf = await ensureBackupFolder(drive, folderId);
+      for (const f of rootBackups.slice(0, 40)) await drive.move(f.id, bf, folderId);
+      let list = (await drive.list(bf)).filter((f) => f.name && f.name.startsWith(NAMES.backup));
+      if (make) {
+        const text = await opts.buildBackupText();
+        if (text) {
+          const name = NAMES.backup + today + (NAMES.backupExt || ".txt");
+          const same = list.find((f) => f.name === name);
+          const up = await drive.upload(name, text, "text/plain", bf, same ? same.id : undefined);
+          list = list.filter((f) => !(same && f.id === same.id)).concat([{ id: up.id, name, modifiedTime: "9999" }]);
+          cfg.lastBackupDay = today;
+          if (opts.onBackedUp) opts.onBackedUp();
+        }
+      }
+      await pruneBackups(drive, list, null);
+      cfg.lastPruneDay = today; saveCfg();
     } catch (e) {
       if (e instanceof SyncError && (e.kind === "auth" || e.kind === "network")) throw e;
       /* 控えが作れなくても同期は成功として扱う */
     }
   }
 
-  /* **ログインが切れても、次のタップで勝手にログイン画面を開かないこと（2.17.0で廃止）。**
+  /* **ログインが切れても、次のタップで勝手にログイン画面を開かないこと（2.30.0で廃止）。**
      使っている途中に Google の画面が一瞬はさまり、何が起きたのか分からなかった。
      取り直すのは、画面のボタン（起動時の小窓・ヘッダーの雲・バックアップのカード）を押したときだけ */
 
@@ -728,7 +942,7 @@ export function createGoogleSync(opts) {
       return syncNow({ reason: "manual", interactive: true });
     },
     syncManual() { return syncNow({ reason: "manual", interactive: !auth.getStored() }); },
-    /* 起動時の小窓の「つなぎ直す」。指の操作の中から、await を挟まずに呼ぶこと */
+    /* 起動時の小窓の「ログインして同期」。指の操作の中から、await を挟まずに呼ぶこと */
     loginNow() { setStatus({ askLogin: false }); return syncNow({ reason: "manual", interactive: true }); },
     /* 起動時の小窓の「あとで」 */
     dismissLogin() { setStatus({ askLogin: false }); },
@@ -737,7 +951,9 @@ export function createGoogleSync(opts) {
       memBase = undefined;
       cfg.enabled = false; cfg.email = ""; cfg.folderId = ""; cfg.lastSyncAt = 0; cfg.lastBackupDay = "";
       cfg.sentN = 0; cfg.sentAt = 0; cfg.recvN = 0; cfg.recvAt = 0; saveCfg();
-      folderVerified = false; clearTimeout(timer); timer = null;
+      folderVerified = false; backupFolderVerified = false; cfg.backupFolderId = ""; cfg.lastPruneDay = ""; cfg.lastTidyDay = ""; saveCfg();
+      clearTimeout(timer); timer = null;
+      try { await opts.kv.del(PACK_KEY); } catch (e) { /* noop */ }
       const t = auth.getStored(); if (t) auth.revoke(t);
       auth.clear();
       try { await opts.kv.del(STATE_KEY); } catch (e) { /* noop */ }
@@ -774,8 +990,8 @@ export function createGoogleSync(opts) {
 }
 
 /* 大きい控えの置き場（IndexedDB）。使えない端末では localStorage に置く */
-export function createKV(ls) {
-  const DB = "footprints-sync-meta";
+export function createKV(ls, dbName, lsPrefix) {
+  const DB = dbName || "footprints-sync-meta";
   let dbP = null;
   const open = () => {
     if (dbP) return dbP;
@@ -801,7 +1017,7 @@ export function createKV(ls) {
       t.onerror = () => reject(t.error); t.onabort = () => reject(t.error);
     } catch (e) { reject(e); }
   }));
-  const LK = "ft-gsync-kv-";
+  const LK = lsPrefix || "ft-gsync-kv-";
   return {
     async get(k) {
       try { const v = await tx("readonly", (s) => s.get(k)); return v === undefined ? null : v; }

@@ -95,6 +95,7 @@ export {
   LuFolder as Folder, LuFolderPlus as FolderPlus, LuFilter as Filter, LuSettings as Settings,
   LuLink as Link, LuImage as Image, // App.jsx は「Link as LinkIcon」「Image as ImageIcon」と読むので、元の名前でも出すこと（2.8.0〜）
   LuRefreshCw as RefreshCw, // 2.12.0 の「最新バージョンに更新」で使う。2.13.0 で手順に書き足した（抜けていると組み立てが止まる）
+  LuLayers as Layers, // 3.1.0 バックアップの「毎日の控え」の行
 } from "react-icons/lu";
 EOF
 
@@ -1886,3 +1887,35 @@ linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.56))
 - esbuild：`/opt/npm-tools/node_modules/esbuild/bin/esbuild`（2-2節の `tsx` の下には無かった）
 - Tailwind は使えず、`app.css` は作り直していない。**新しいクラスは `app.css` に在るものだけ**使い、
   無いもの（`pl-4` など）は `style` で直接書いた。マス目の並びは `<style>` の中の `.ft-numgrid` ほか
+
+
+---
+
+## 3.1.0 バックアップを My手帳（10.61.0）にそろえた
+
+- **毎日の控え**：`BACKUP_KEEP` 7→10。片づけ（`pruneBackups`）は**同期のたびに**走る：「日付ごとに新しい1つ」×「新しい日から10日分」だけ残す。控えを切っていても数はそろえる。1回40個まで
+- **バックアップ画面**（`BackupScreen`）はカード2枚
+  - `GoogleSyncCard`：見出し「Google連携」＋アカウント → `SyncFlow`（`.gs-card .gs-node` で 44px に小さく）→ 状態の1行・進み具合 → ボタン1つ（ふだんは2次ボタンの「今すぐ同期」、ログインが要るときは主ボタン、未連携は「Google連携」lg）→ 設定の行（`GsOptRow`：しるし＋名前＋?＋説明＋スイッチ）→ 下に小さく「Google連携を解除」（`.gs-off`、二度押し）
+    **カードの中に枠つきの箱（RowCard）を入れないこと**（二重の枠がごちゃつきの元）。行を足すときも `GsOptRow` の形で
+  - 「この端末の記録」：件数の札（`.gs-stat`）→ 前回の書き出し／まだ書き出していない（琥珀の字の1行。前の黄色い箱はやめた）→ ボタン4つ → 知らせ（msg）
+- **ボタンの高さ**：主ボタン（データを保存・Google連携）だけ `btn-h-lg`、ほかは `BTN_H`。2つ並びは `flex gap-2` ＋ `flex-1`。
+  2.22〜3.0 の「バックアップのボタンは40px」の指示は、3.1.0 の「My手帳 にそろえる」指示で置きかえた
+- ボタンの名前（データを保存・データ復元・文字でコピー・文字から復元）は、このアプリの呼び方のまま（My手帳 は「送る・保存する」など別の呼び方）
+- **説明文で「端末の中だけ」と言い切らないこと**（連携中は正しくない）。「この端末の記録」の？は `storeHelp` で連携の有無により言い分ける。ヘルプの「バックアップ」に「記録の置き場所」「Google連携」
+- 組み立て：react・react-dom・react-icons・esbuild は `/opt/npm-tools/node_modules` にある（2-2 の `/home/claude/.npm-global` が無い環境）。
+  3.0.0 の App.jsx をこの道具で組み立てると、配っていた app.js と同じ大きさ（680,728 バイト）になることを確かめてから組み立てた。`lucide-shim.js` に `LuLayers as Layers` を足した
+- `app.css` は作り直していない。新しい見た目は `.gs-*`（App.jsx の `<style>`）に書き、ユーティリティは app.css にあるものだけ使った
+
+## 3.2.0 毎日の控えを7日分に
+
+- `BACKUP_KEEP` 10→7（持ち主の指示。My手帳 10.62.0 と同じ）。片づけの仕組み（`pruneBackups`）は3.1.0のまま
+- ドライブの `photo_〜.txt` は控えではなく写真の置き場。使われなくなった写真の片づけ（`cleanOrphans`：30日・半分を超えたら何もしない）は変えていない
+
+## 3.3.0 ドライブのフォルダを整頓（My手帳 10.63.0 と同じ）
+
+- **gsync.js は My手帳 の gsync.src.mjs と同じもの**（3.3.0〜）。直すときは My手帳 側と一緒に直し、`node gsync.test.mjs`（25件）を両方で通すこと。
+  保存のキー（ft-gsync-cfg / -token / footprints-sync-meta）やフォルダ名は前と同じなので、入れ替えても連携し直す必要はない
+- フォルダの中身：直下は `footprints-sync.json` と `photos-<端末の札>-<番号>.json`（写真のまとめ）だけ。控えは「バックアップ」フォルダの中（7日分）
+- 前の版の `photo_番号.txt` はまとめに入れたのを確かめてから消す。直下の控えは「バックアップ」へ移す（消さない）
+- 前の版のアプリが残っている端末は、まとめを読めない（写真が届かない）。全部の端末を新しい版にすること
+- 詳しくは My手帳 の 引継書.md「10.63.0」

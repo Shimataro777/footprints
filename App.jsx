@@ -4,7 +4,7 @@ import {
   BookOpen, Search, TrendingUp, BookMarked, Plus, X, Check,
   Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Star, Award,
   Sparkles, Play, Home, Download, Link as LinkIcon, SlidersHorizontal, Upload, ImagePlus, Menu, GripVertical, Pin, Bookmark, Tag, Copy, ClipboardPaste, CalendarDays, Image as ImageIcon, Undo2, Redo2, ArrowUpDown,
-  Folder as FolderIc, FolderPlus, Filter, Settings, RefreshCw
+  Folder as FolderIc, FolderPlus, Filter, Settings, RefreshCw, Layers
 } from "lucide-react";
 
 /* ============================================================
@@ -9087,6 +9087,28 @@ function SyncSheet({ onClose, onOpenBackup }) {
 }
 
 /* バックアップ画面のいちばん上に置く、Googleドライブのカード。図はヘッダーの紙と同じもの */
+/* ============================================================
+   バックアップ画面の Google のカード（3.1.0〜 My手帳 10.58.0 と同じ形）
+   ・カードは1枚。見出し（Google連携＋アカウント）→ 図（SyncFlow、小さめ）→ 状態の1行 → 主ボタン1つ
+     → 細い線で区切って「設定の行」（しるし＋名前＋1行の説明＋スイッチ）→ いちばん下に小さく「連携を解除」
+   ・**カードの中にカード（枠つきの白い箱）を入れないこと。** 枠が二重になって、ごちゃついて見える
+   ・設定の行は GsOptRow ひとつの形。行を足すときもこの形にそろえる
+   ============================================================ */
+function GsOptRow({ icon, label, sub, help, right }) {
+  return (
+    <div className="gs-opt">
+      <span className="gs-opt-ic" aria-hidden="true">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1 min-w-0">
+          <span className="text-[14.5px] font-bold text-neutral-900 truncate">{label}</span>
+          {help && <HelpTip text={help} label={label} />}
+        </div>
+        {sub && <div className="gs-opt-sub text-[12.5px] text-neutral-500">{sub}</div>}
+      </div>
+      {right}
+    </div>
+  );
+}
 function GoogleSyncCard() {
   const sync = getGoogleSync();
   const st = useSyncStatus();
@@ -9100,46 +9122,45 @@ function GoogleSyncCard() {
   const busy = st.phase === "syncing";
 
   return (
-    <div data-gsync-card="" className="rounded-2xl bg-white card-soft p-4 mb-5">
-      <div className="flex items-center gap-2 mb-4">
-        <p className="text-[13.5px] font-bold text-neutral-900 shrink-0">Googleドライブ</p>
+    <section data-gsync-card="" className="gs-card rounded-2xl bg-white card-soft mb-4">
+      <div className="flex items-baseline gap-2 px-4 pt-4">
+        <h3 className="text-[14.5px] font-bold text-neutral-900 shrink-0">Google連携</h3>
         {st.enabled && <span className="text-neutral-500 truncate min-w-0 ml-auto" style={{ fontSize: 11.5 }}>{st.email || "アカウント確認中…"}</span>}
       </div>
-      <SyncFlow st={st} />
-      <SyncStatusLine st={st} />
-      <SyncProgress st={st} />
-
-      {!st.enabled && (
-        <button type="button" onClick={act.connect} className={BTN_PRIMARY + " w-full mt-4 btn-h-lg text-[15.5px]"}>Google連携</button>
-      )}
-
+      <div className="px-4 pt-3"><SyncFlow st={st} /></div>
+      <div className="px-4">
+        <SyncStatusLine st={st} />
+        <SyncProgress st={st} />
+      </div>
+      <div className="px-4 pt-3 pb-4">
+        {!st.enabled ? (
+          <button type="button" onClick={act.connect} className={BTN_PRIMARY + " w-full btn-h-lg text-[15.5px]"}>Google連携</button>
+        ) : st.phase === "needsAuth" ? (
+          <button type="button" onClick={act.login} className={BTN_PRIMARY + " w-full " + BTN_H + " text-[14.5px]"}>ログインして同期</button>
+        ) : (
+          <button type="button" onClick={act.syncNow} disabled={busy} className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
+            <UpDownGlyph size={16} /> 今すぐ同期
+          </button>
+        )}
+        {note && <p className="text-[12.5px] gs-tone-warn mt-2 text-center">{note}</p>}
+      </div>
       {st.enabled && (
-        <>
-          <div className="flex gap-2 mt-4">
-            {st.phase === "needsAuth" ? (
-              <button type="button" onClick={act.login} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"}>ログインして同期</button>
-            ) : (
-              <button type="button" onClick={act.syncNow} disabled={busy} className={BTN_PRIMARY + " flex-1 " + BTN_H + " text-[14.5px]"} style={busy ? { opacity: 0.6 } : undefined}>
-                <UpDownGlyph size={16} /> 今すぐ同期
-              </button>
-            )}
-            <button type="button"
-              onClick={() => { if (!askOff) { setAskOff(true); setTimeout(() => setAskOff(false), 4000); return; } setAskOff(false); sync.disconnect(); }}
-              className={BTN_SECONDARY + " flex-1 " + BTN_H + " text-[14.5px]"}>
-              {askOff ? "もう一度押すと解除" : "Google連携を解除"}
-            </button>
-          </div>
-          <RowCard className="mt-3">
-            <SheetRow label="毎日の控えもドライブに" last
-              help="1日1回、バックアップファイルをドライブに残します（7日分）。「データ復元」で戻せます。">
-              <Switch on={st.autoBackup} onChange={(v) => sync.setAutoBackup(v)} label="毎日の控えもドライブに" />
-            </SheetRow>
-          </RowCard>
-        </>
+        <div className="gs-opts">
+          <GsOptRow icon={<Layers size={18} />} label="毎日の控え" sub="ドライブに7日分を残す"
+            help="1日1回、ドライブの「Footprints-Sync」→「バックアップ」フォルダに控えを残します（7日分。古いものは自動で消えます）。そこから保存して「データ復元」で戻せます。"
+            right={<Switch on={st.autoBackup} onChange={(v) => sync.setAutoBackup(v)} label="毎日の控えもドライブに" />} />
+        </div>
       )}
-
-      {note && <p className="text-[12.5px] gs-tone-warn mt-2">{note}</p>}
-    </div>
+      {st.enabled && (
+        <div className="gs-foot">
+          <button type="button"
+            onClick={() => { if (!askOff) { setAskOff(true); setTimeout(() => setAskOff(false), 4000); return; } setAskOff(false); sync.disconnect(); }}
+            className={"gs-off ft-tap" + (askOff ? " ask" : "")}>
+            {askOff ? "もう一度押すと解除" : "Google連携を解除"}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -10094,9 +10115,10 @@ const HELP_SECTIONS = [
   {
     title: "バックアップ",
     items: [
-      ["保存しておく理由", "記録はこの端末の中だけにあります。機種変更やアプリを消したときは、保存したデータから戻せます。"],
+      ["記録の置き場所", "記録はこの端末に保存されます。Google連携をすると、ご自身のGoogleドライブにも同期されます。連携していないときは、機種変更やアプリを消したときに備えて「データを保存」しておいてください。"],
       ["ファイルか文字で", "「データを保存」でファイルに、「文字でコピー」でメモアプリなどに残せます。記録・設定・タグ・写真がまとめて入ります。"],
       ["1件だけ渡す", "記録を見る画面の右上から、その1件をファイルか文字で渡せます。受け取った側の記録は消えません。"],
+      ["Google連携", "メニューの「バックアップ」でGoogleアカウントとつなぐと、記録がGoogleドライブに同期され、同じアカウントの端末どうしで同じ記録を使えます。毎日の控えも7日分、ドライブに残ります。"],
       ["Googleドライブの雲", "Google連携をすると、画面の右上に雲が出ます。押すとその場で同期します（同期中は雲の中の矢印が点滅します）。長押しすると、送った・受け取った件数や連携の解除が見られます。"],
     ],
   },
@@ -10459,6 +10481,11 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
     : "";
 
   const unsaved = React.useContext(UnsavedContext);
+  /* 「この端末の記録」の？（3.1.0〜。My手帳 10.59.0 と同じ）。Google連携の有無で、実際の置き場所どおりに言い分ける。**短く** */
+  const syncSt = useSyncStatus();
+  const storeHelp = syncSt.hasClientId && syncSt.enabled
+    ? "記録はこの端末に保存され、Googleドライブにも同期されています。書き出したファイルは、手元の控えになります。"
+    : "記録はこの端末の中だけにあります。端末を替えたりデータを消したりすると失われます。" + (syncSt.hasClientId ? "Google連携か、「データを保存」で残せます。" : "「データを保存」で残せます。");
 
   return (
     <OverlayScreen from="right" closing={closing} zIndex={zIndex}>
@@ -10470,62 +10497,54 @@ function BackupScreen({ records, folders, artworks, garden, tagMaster, prefs, ca
           {/* **中身の幅に上限を置くこと（2.17.0〜）。** タブレットで画面いっぱいに広がり、ボタンが極端に横長になっていた */}
           <div className="gs-narrow">
           <GoogleSyncCard />
-          {/* 3.0.0〜「いまの記録」の箱は My手帳 と同じ形（件数・写真・ファイルの大きさ・前回の書き出し） */}
-          <div className="rounded-2xl card-soft bg-white p-4 mb-5">
-            <div className="flex items-center gap-1 mb-2">
-              <p className="text-[13.5px] font-bold text-neutral-900">いまの記録</p>
-              <HelpTip label="バックアップ" text="記録は、この端末の中だけにあります。履歴を消したり端末を替えたりすると失われます。書き出したファイルは「データ復元」で元に戻せます。" />
+          {/* 3.1.0〜 この端末の記録と、保存／復元のボタンを1枚のカードにまとめた（My手帳 10.58.0 と同じ形。Google のカードと並ぶ）。
+              「まだ書き出していない」は別の琥珀色の箱にせず、カードの中の1行（琥珀の字）で出す。
+              **控えを取っていない書きかえがあることは、ここで一度だけ知らせること。** あちこちに出すと読み飛ばされる。
+              Googleドライブとつないでいるときは出さない（unsavedNow が 0。ドライブに入っていれば控えがあるのと同じ）。
+              ボタンは4つ（「データを保存」「データ復元」、文字でのやりとり2つは横に並べる）。**足さないこと。**
+              大きさはボタンのマスターどおり（My手帳 10.56.1 と同じ考え）：主ボタンだけ btn-h-lg、ほかは BTN_H。
+              （2.22〜3.0 の「40px」の指示は、3.1.0 で My手帳 にそろえる指示により置きかえた） */}
+          <section className="rounded-2xl card-soft bg-white">
+            <div className="flex items-center gap-1 px-4 pt-4">
+              <h3 className="text-[14.5px] font-bold text-neutral-900">この端末の記録</h3>
+              <HelpTip label="この端末の記録" text={storeHelp} />
             </div>
-            <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-[12.5px] text-neutral-500 tabular-nums">
-              <span>記録 {records.length}件</span>
-              {(artworks || []).length > 0 && <span>イラスト {artworks.length}枚</span>}
-              <span>写真 {photoIds.length}枚</span>
-              <span>{photosReady ? `ファイル 約${sizeKb}KB` : "ファイル 計算中…"}</span>
+            <div className="flex flex-wrap gap-1.5 px-4 pt-2">
+              <span className="gs-stat tabular-nums">記録 <b>{records.length}</b>件</span>
+              {(artworks || []).length > 0 && <span className="gs-stat tabular-nums">イラスト <b>{artworks.length}</b>枚</span>}
+              <span className="gs-stat tabular-nums">写真 <b>{photoIds.length}</b>枚</span>
+              <span className="gs-stat tabular-nums">{photosReady ? <>ファイル <b>約{sizeKb}KB</b></> : "計算中…"}</span>
             </div>
-            {prefs && prefs.lastBackup && (
-              <p className="text-[12.5px] text-neutral-400 mt-1.5">前回の書き出し {fmtJpDate(prefs.lastBackup)}</p>
-            )}
-          </div>
-
-          {/* **控えを取っていない書きかえがあることは、ここで一度だけ知らせること。**
-              あちこちに出すと、ただの飾りになって読み飛ばされる。
-              Googleドライブとつないでいるときは出さない（unsavedNow が 0。ドライブに入っていれば控えがあるのと同じ。2.17.0〜） */}
-          {unsaved > 0 && (
-            <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 mb-5">
-              <p className="text-[13.5px] font-bold text-amber-800">
-                {prefs && prefs.lastBackup ? `前回の書き出しのあとに、${unsaved}件の書きかえがあります` : "まだ一度も書き出していません"}
+            {(unsaved > 0 || (prefs && prefs.lastBackup)) && (
+              <p className={"text-[12.5px] px-4 pt-2 " + (unsaved > 0 ? "gs-tone-warn font-bold" : "text-neutral-500")}>
+                {unsaved > 0
+                  ? (prefs && prefs.lastBackup ? `前回の書き出しのあとに、${unsaved}件の書きかえがあります` : "まだ一度も書き出していません")
+                  : `前回の書き出し ${fmtJpDate(prefs.lastBackup)}`}
               </p>
-            </div>
-          )}
-
-          {/* ボタンは 2.22 までの並びのまま（持ち主の指示。3.0.0 で「書き出す」「読み込む」に分けて4段にしたのを戻した）：
-              「データを保存」「データ復元」を大きく、文字でのやりとり2つは横に並べる。
-              高さも 2.22 までと同じ 40px（持ち主の指示。.btn-h は 3.0.0 で 48px にしたので、ここでは使わない） */}
-          <div className="space-y-2.5 mb-4">
-            <button type="button" onClick={saveData} className={BTN_PRIMARY + " w-full min-h-[40px] text-[15.5px]"}>
-              <Download size={18} /> データを保存
-            </button>
-            <button type="button" onClick={() => fileInputRef.current && fileInputRef.current.click()} className={BTN_SECONDARY + " w-full min-h-[40px] text-[15.5px]"}>
-              <Upload size={18} /> データ復元
-            </button>
-            {/* 種類で絞り込まない（Androidで選べなくなるため） */}
-            <input ref={fileInputRef} type="file" onChange={handleFile} className="hidden" />
-
-            {/* ファイルの行方が分かりにくい端末のために、文字でのやりとりも用意する。
-                メモ帳やチャットに貼っておけば、そこから戻せる */}
-            <div className="flex gap-2.5">
-              <button type="button" onClick={copyWholeBackup} className={BTN_SECONDARY + " flex-1 min-h-[40px] text-[14.5px]"}>
-                <Copy size={16} /> 文字でコピー
+            )}
+            <div className="space-y-2.5 px-4 pt-3 pb-4">
+              <button type="button" onClick={saveData} className={BTN_PRIMARY + " w-full btn-h-lg text-[15.5px]"}>
+                <Download size={18} /> データを保存
               </button>
-              <button type="button" onClick={() => setPasteOpen(true)} className={BTN_SECONDARY + " flex-1 min-h-[40px] text-[14.5px]"}>
-                <ClipboardPaste size={16} /> 文字から復元
+              <button type="button" onClick={() => fileInputRef.current && fileInputRef.current.click()} className={BTN_SECONDARY + " w-full " + BTN_H + " text-[14.5px]"}>
+                <Upload size={16} /> データ復元
               </button>
+              {/* 種類で絞り込まない（Androidで選べなくなるため） */}
+              <input ref={fileInputRef} type="file" onChange={handleFile} className="hidden" />
+              {/* ファイルの行方が分かりにくい端末のために、文字でのやりとりも用意する。メモ帳やチャットに貼っておけば、そこから戻せる */}
+              <div className="flex gap-2">
+                <button type="button" onClick={copyWholeBackup} className={BTN_SECONDARY + " flex-1 min-w-0 " + BTN_H + " text-[14.5px]"}>
+                  <Copy size={16} /> 文字でコピー
+                </button>
+                <button type="button" onClick={() => setPasteOpen(true)} className={BTN_SECONDARY + " flex-1 min-w-0 " + BTN_H + " text-[14.5px]"}>
+                  <ClipboardPaste size={16} /> 文字から復元
+                </button>
+              </div>
+              {msg && (
+                <div className={"rounded-xl border-2 px-3.5 py-3 text-[13.5px] font-bold " + msgStyle}>{msg.text}</div>
+              )}
             </div>
-          </div>
-
-          {msg && (
-            <div className={"rounded-xl border-2 px-3.5 py-3 mb-4 text-[13.5px] font-bold " + msgStyle}>{msg.text}</div>
-          )}
+          </section>
 
           {/* いちばん下の逃げ場。無いと帯や一覧が画面の端すれすれになる */}
           <div className="h-16" />
@@ -12320,6 +12339,19 @@ function AppMain() {
         .spin           { animation: ft-spin 0.75s linear infinite; }
         /* ===== Googleドライブの同期（2.17.0〜。3.0.0 で My手帳 10.19.0 の形にそろえた）。色はテーマ（--th-*）と、状態の色（琥珀・赤）だけ ===== */
         .gs-narrow { max-width: 32rem; margin-left: auto; margin-right: auto; }
+        /* バックアップ画面の Google のカード（3.1.0〜 My手帳 10.58.0 と同じ）。設定の行は区切り線だけ（枠つきの箱を重ねない） */
+        .gs-card .gs-node { width: 44px; height: 44px; border-radius: 14px; }
+        .gs-opts { border-top: 1px solid #EEF1F4; }
+        .gs-opt { display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 16px; min-height: 64px; }
+        .gs-opt + .gs-opt { border-top: 1px solid #EEF1F4; }
+        .gs-opt > button[role="switch"] { align-self: center; }
+        .gs-opt-ic { flex: none; width: 34px; height: 34px; margin-top: 1px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--th-50); color: var(--th-800); }
+        .gs-opt-sub { margin-top: 1px; line-height: 1.4; }
+        .gs-stat { display: inline-flex; align-items: baseline; gap: 1px; min-height: 26px; padding: 4px 10px; border-radius: 999px; background: #F3F5F7; color: var(--tx-3); font-size: 12.5px; }
+        .gs-stat > b { color: var(--tx-1); font-weight: 700; margin: 0 1px; }
+        .gs-foot { border-top: 1px solid #EEF1F4; display: flex; justify-content: center; padding: 4px 0; }
+        .gs-off { min-height: 44px; padding: 0 16px; font-size: 12.5px; font-weight: 700; color: var(--tx-4); }
+        .gs-off.ask { color: #BE123C; }
         .gs-tone-ok { color: var(--th-800); }
         .gs-tone-warn { color: #B45309; }
         .gs-tone-err { color: #BE123C; }
